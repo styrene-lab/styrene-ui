@@ -47,6 +47,12 @@ pub enum ApplyResult {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EndpointUpdate {
+    pub endpoint: String,
+    pub generation: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MobileStore {
     snapshot: MobileFixture,
 }
@@ -87,6 +93,20 @@ impl MobileStore {
 
         self.snapshot = snapshot;
         ApplyResult::Applied
+    }
+
+    pub fn apply_endpoint_update(&mut self, update: EndpointUpdate) -> ApplyResult {
+        if update.generation <= self.snapshot.generation {
+            return ApplyResult::IgnoredStale;
+        }
+
+        self.snapshot.session.endpoint = Some(update.endpoint);
+        self.begin_reconnect(update.generation, "endpoint_changed");
+        ApplyResult::Applied
+    }
+
+    pub fn apply_endpoint_failure(&mut self, failure: TypedFailure) {
+        self.snapshot.session.failure = Some(failure);
     }
 
     #[must_use]
