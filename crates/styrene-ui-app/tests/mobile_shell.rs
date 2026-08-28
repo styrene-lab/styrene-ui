@@ -156,3 +156,13 @@ fn tcp_only_state_renders_messaging_as_enabled_without_rnode() {
     assert!(markup.contains("id=\"mobile.send\""));
     assert!(markup.contains("data-enabled=\"true\""));
 }
+
+#[test]
+fn network_projection_exposes_the_backend_endpoint_as_an_editable_control() {
+    let store = MobileStore::new(fixture("direct-message-queued"));
+    let markup = render(store.snapshot().clone());
+
+    assert!(markup.contains("id=\"mobile.tcp-endpoint\""));
+    assert!(markup.contains("value=\"rns.styrene.io:4242\""));
+    assert!(markup.contains("id=\"mobile.tcp-endpoint-apply\""));
+}

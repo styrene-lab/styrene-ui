@@ -45,6 +45,11 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
             section { id: "mobile.people" }
             section {
                 id: "mobile.network",
+                input {
+                    id: "mobile.tcp-endpoint",
+                    value: fixture.session.endpoint.clone().unwrap_or_default(),
+                }
+                button { id: "mobile.tcp-endpoint-apply", "Apply endpoint" }
                 for bearer in &fixture.bearers {
                     div {
                         id: format!("mobile.bearer.{}", bearer.kind.as_str()),
