@@ -1,9 +1,10 @@
 use std::collections::HashSet;
 
 use styrene_ui_state::{
-    ApplyResult, BearerKind, BearerState, DeliveryEvidence, DeliveryMethod, EndpointUpdate,
-    LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus, MobileStore, PeerEvent, PeerSnapshot,
-    Profile, PropagationEvidence, SessionPhase, SyncState, TargetClass, TypedFailure,
+    ApplyResult, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
+    DraftClearDisposition, EndpointUpdate, LocalAnnounceOutcome, MessageEvent, MessageSnapshot,
+    MobileFixture, MobileMinimumCorpus, MobileStore, PeerEvent, PeerSnapshot, Profile,
+    PropagationEvidence, SendOutcome, SessionPhase, SyncState, TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -257,4 +258,95 @@ fn local_announce_outcome_never_implies_remote_reception() {
     assert_eq!(store.apply_local_announce_outcome(outcome.clone()), ApplyResult::Applied);
     assert_eq!(store.local_announce_outcome(), Some(&outcome));
     assert!(!store.local_announce_outcome().unwrap().remote_reception_confirmed);
+}
+
+#[test]
+fn newer_draft_revision_survives_an_older_send_clear_outcome() {
+    let initial = fixture("direct-message-queued");
+    let mut store = MobileStore::new(initial.clone());
+    let peer_hash = initial.conversations[0].peer_hash.clone();
+    assert_eq!(
+        store.apply_draft(Conversation {
+            peer_hash: peer_hash.clone(),
+            unread_count: 0,
+            draft: "submitted".into(),
+            draft_revision: 1,
+        }),
+        ApplyResult::Applied
+    );
+    assert_eq!(
+        store.apply_draft(Conversation {
+            peer_hash: peer_hash.clone(),
+            unread_count: 0,
+            draft: "newer edit".into(),
+            draft_revision: 2,
+        }),
+        ApplyResult::Applied
+    );
+
+    assert_eq!(
+        store.apply_send_outcome(SendOutcome {
+            generation: initial.generation,
+            message: initial.messages[0].clone(),
+            submitted_draft_revision: Some(1),
+            draft_clear: DraftClearDisposition::Cleared,
+        }),
+        ApplyResult::Applied
+    );
+    assert_eq!(store.snapshot().conversations[0].draft, "newer edit");
+    assert_eq!(store.snapshot().conversations[0].draft_revision, 2);
+}
+
+#[test]
+fn message_events_are_canonical_id_upserts_and_stale_generations_are_ignored() {
+    let initial = fixture("direct-message-queued");
+    let mut store = MobileStore::new(initial.clone());
+    let mut updated = initial.messages[0].clone();
+    updated.delivery = DeliveryEvidence::Delivered;
+
+    assert_eq!(
+        store.apply_message_event(MessageEvent {
+            generation: initial.generation,
+            message: updated.clone(),
+        }),
+        ApplyResult::Applied
+    );
+    assert_eq!(
+        store
+            .apply_message_event(MessageEvent { generation: initial.generation, message: updated }),
+        ApplyResult::Applied
+    );
+    assert_eq!(store.snapshot().messages.len(), 1);
+    assert_eq!(store.snapshot().messages[0].delivery, DeliveryEvidence::Delivered);
+
+    let mut stale = initial.messages[0].clone();
+    stale.content = "stale".into();
+    assert_eq!(
+        store.apply_message_event(MessageEvent {
+            generation: initial.generation - 1,
+            message: stale,
+        }),
+        ApplyResult::IgnoredStale
+    );
+    assert_ne!(store.snapshot().messages[0].content, "stale");
+}
+
+#[test]
+fn backend_message_snapshot_controls_unread_and_deduplicates_canonical_ids() {
+    let initial = fixture("direct-message-queued");
+    let mut store = MobileStore::new(initial.clone());
+    let mut conversation = initial.conversations[0].clone();
+    conversation.unread_count = 3;
+    let message = initial.messages[0].clone();
+
+    assert_eq!(
+        store.apply_message_snapshot(MessageSnapshot {
+            generation: initial.generation,
+            conversations: vec![conversation],
+            messages: vec![message.clone(), message],
+        }),
+        ApplyResult::Applied
+    );
+    assert_eq!(store.snapshot().conversations[0].unread_count, 3);
+    assert_eq!(store.snapshot().messages.len(), 1);
 }
