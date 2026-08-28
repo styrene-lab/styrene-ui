@@ -53,7 +53,7 @@
         {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
       ],
       "peers": [],
-      "conversations": [{"peer_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "unread_count": 0, "draft": ""}],
+      "conversations": [{"peer_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "unread_count": 0, "draft": "", "draft_revision": 0}],
       "messages": [{"id": "message-direct-1", "peer_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "content": "Direct message awaiting evidence", "requested_method": "direct", "actual_method": "direct", "persistence": "durable", "transport": "accepted", "propagation": "none", "delivery": "pending", "correlation_id": "correlation-direct-1", "failure": null}],
       "propagation": {"selected_destination": null, "ready": false, "sync_state": "idle", "new_messages": 0, "failure": null},
       "event": null,
@@ -68,7 +68,7 @@
         {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
       ],
       "peers": [],
-      "conversations": [{"peer_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "unread_count": 0, "draft": ""}],
+      "conversations": [{"peer_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "unread_count": 0, "draft": "", "draft_revision": 0}],
       "messages": [{"id": "message-propagated-1", "peer_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "content": "Stored on Brutus", "requested_method": "propagated", "actual_method": "propagated", "persistence": "durable", "transport": "accepted", "propagation": "uploaded", "delivery": "pending", "correlation_id": "correlation-propagated-1", "failure": null}],
       "propagation": {"selected_destination": "780e7aa7b2f175c88f28c7ba8ab1b714", "ready": true, "sync_state": "idle", "new_messages": 0, "failure": null},
       "event": null,
@@ -83,7 +83,7 @@
         {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
       ],
       "peers": [],
-      "conversations": [{"peer_hash": "cccccccccccccccccccccccccccccccc", "unread_count": 1, "draft": ""}],
+      "conversations": [{"peer_hash": "cccccccccccccccccccccccccccccccc", "unread_count": 1, "draft": "", "draft_revision": 0}],
       "messages": [{"id": "message-inbound-1", "peer_hash": "cccccccccccccccccccccccccccccccc", "content": "Retrieved exactly once", "requested_method": "propagated", "actual_method": "propagated", "persistence": "durable", "transport": "accepted", "propagation": "none", "delivery": "delivered", "correlation_id": "correlation-inbound-1", "failure": null}],
       "propagation": {"selected_destination": "780e7aa7b2f175c88f28c7ba8ab1b714", "ready": true, "sync_state": "complete", "new_messages": 1, "failure": null},
       "event": null,

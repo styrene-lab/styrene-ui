@@ -196,3 +196,38 @@ fn local_announce_status_discloses_local_acceptance_only() {
     assert!(markup.contains("Remote reception unconfirmed"));
     assert!(!markup.contains("Remote peer received"));
 }
+
+#[test]
+fn messaging_components_distinguish_queue_upload_delivery_and_empty_live_state() {
+    let queued = render(fixture("direct-message-queued"));
+    let uploaded = render(fixture("propagation-uploaded-not-delivered"));
+    let delivered = render(fixture("propagation-sync-complete"));
+    let empty = render(fixture("live-empty-connected"));
+
+    assert!(queued.contains("Accepted by local transport; recipient delivery pending"));
+    assert!(!queued.contains(">Delivered<"));
+    assert!(uploaded.contains("Uploaded to propagation node; recipient delivery pending"));
+    assert!(!uploaded.contains(">Delivered<"));
+    assert!(delivered.contains(">Delivered<"));
+    assert!(empty.contains("id=\"mobile.messages-empty\""));
+    assert!(empty.contains("No conversations yet"));
+    assert!(!empty.contains("message-direct-1"));
+}
+
+#[test]
+fn composer_projects_backend_draft_revision_and_retryability() {
+    let mut fixture = fixture("direct-message-queued");
+    fixture.conversations[0].draft = "newer draft".into();
+    fixture.conversations[0].draft_revision = 7;
+    fixture.messages[0].failure = Some(styrene_ui_state::TypedFailure {
+        code: "transport_unavailable".into(),
+        retryable: true,
+    });
+    let markup = render(fixture);
+
+    assert!(markup.contains("id=\"mobile.composer\""));
+    assert!(markup.contains("data-revision=7"));
+    assert!(markup.contains("newer draft"));
+    assert!(markup.contains("id=\"mobile.delivery-method\""));
+    assert!(markup.contains("id=\"mobile.retry.message-direct-1\""));
+}

@@ -173,6 +173,73 @@ impl MobileStore {
         ApplyResult::Applied
     }
 
+    pub fn apply_draft(&mut self, draft: Conversation) -> ApplyResult {
+        if let Some(current) = self
+            .snapshot
+            .conversations
+            .iter_mut()
+            .find(|conversation| conversation.peer_hash == draft.peer_hash)
+        {
+            if draft.draft_revision < current.draft_revision {
+                return ApplyResult::IgnoredStale;
+            }
+            current.draft = draft.draft;
+            current.draft_revision = draft.draft_revision;
+        } else {
+            self.snapshot.conversations.push(draft);
+        }
+        ApplyResult::Applied
+    }
+
+    pub fn apply_message_snapshot(&mut self, snapshot: MessageSnapshot) -> ApplyResult {
+        if snapshot.generation != self.snapshot.generation {
+            return ApplyResult::IgnoredStale;
+        }
+        self.snapshot.messages = canonical_messages(snapshot.messages);
+        self.snapshot.conversations = snapshot.conversations;
+        ApplyResult::Applied
+    }
+
+    pub fn apply_message_event(&mut self, event: MessageEvent) -> ApplyResult {
+        if event.generation != self.snapshot.generation {
+            return ApplyResult::IgnoredStale;
+        }
+        if let Some(current) =
+            self.snapshot.messages.iter_mut().find(|message| message.id == event.message.id)
+        {
+            *current = event.message;
+        } else {
+            self.snapshot.messages.push(event.message);
+        }
+        ApplyResult::Applied
+    }
+
+    pub fn apply_send_outcome(&mut self, outcome: SendOutcome) -> ApplyResult {
+        if outcome.generation != self.snapshot.generation {
+            return ApplyResult::IgnoredStale;
+        }
+        let peer_hash = outcome.message.peer_hash.clone();
+        self.apply_message_event(MessageEvent {
+            generation: outcome.generation,
+            message: outcome.message,
+        });
+        if outcome.draft_clear == DraftClearDisposition::Cleared {
+            if let Some(submitted_revision) = outcome.submitted_draft_revision {
+                if let Some(conversation) = self
+                    .snapshot
+                    .conversations
+                    .iter_mut()
+                    .find(|conversation| conversation.peer_hash == peer_hash)
+                {
+                    if conversation.draft_revision == submitted_revision {
+                        conversation.draft.clear();
+                    }
+                }
+            }
+        }
+        ApplyResult::Applied
+    }
+
     #[must_use]
     pub const fn local_announce_outcome(&self) -> Option<&LocalAnnounceOutcome> {
         self.local_announce_outcome.as_ref()
@@ -239,6 +306,48 @@ pub struct LocalAnnounceOutcome {
     pub failure: Option<TypedFailure>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageSnapshot {
+    pub generation: u64,
+    pub conversations: Vec<Conversation>,
+    pub messages: Vec<Message>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageEvent {
+    pub generation: u64,
+    pub message: Message,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DraftClearDisposition {
+    NotRequested,
+    Cleared,
+    Superseded,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SendOutcome {
+    pub generation: u64,
+    pub message: Message,
+    pub submitted_draft_revision: Option<u64>,
+    pub draft_clear: DraftClearDisposition,
+}
+
+fn canonical_messages(messages: Vec<Message>) -> Vec<Message> {
+    let mut canonical = Vec::with_capacity(messages.len());
+    for message in messages {
+        if let Some(current) =
+            canonical.iter_mut().find(|current: &&mut Message| current.id == message.id)
+        {
+            *current = message;
+        } else {
+            canonical.push(message);
+        }
+    }
+    canonical
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PeerSource {
@@ -251,6 +360,7 @@ pub struct Conversation {
     pub peer_hash: String,
     pub unread_count: u32,
     pub draft: String,
+    pub draft_revision: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

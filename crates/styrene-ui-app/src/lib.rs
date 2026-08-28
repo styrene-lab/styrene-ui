@@ -2,7 +2,8 @@
 
 use dioxus::prelude::*;
 use styrene_ui_state::{
-    LocalAnnounceOutcome, MobileFixture, MobileStore, RuntimeBoundary, TargetClass,
+    Conversation, DeliveryEvidence, LocalAnnounceOutcome, Message, MobileFixture, MobileStore,
+    PropagationEvidence, RuntimeBoundary, TargetClass, TransportEvidence,
 };
 
 #[component]
@@ -26,22 +27,11 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
             section { id: "mobile.identity", {fixture.session.identity_hash.clone()} }
             section {
                 id: "mobile.messages",
-                for message in &fixture.messages {
-                    article {
-                        id: format!("mobile.message.{}", message.id),
-                        {message.content.clone()}
-                    }
-                }
-                for conversation in &fixture.conversations {
-                    p {
-                        id: format!("mobile.draft.{}", conversation.peer_hash),
-                        {conversation.draft.clone()}
-                    }
-                }
-                button {
-                    id: "mobile.send",
-                    "data-enabled": messaging_available.to_string(),
-                    "Send"
+                ConversationList { conversations: fixture.conversations.clone() }
+                MessageHistory { messages: fixture.messages.clone() }
+                Composer {
+                    conversations: fixture.conversations.clone(),
+                    enabled: messaging_available,
                 }
             }
             section {
@@ -70,6 +60,100 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
                 }
             }
             section { id: "mobile.propagation" }
+        }
+    }
+}
+
+#[component]
+pub fn ConversationList(conversations: Vec<Conversation>) -> Element {
+    rsx! {
+        nav {
+            id: "mobile.conversations",
+            for conversation in conversations {
+                button {
+                    id: format!("mobile.conversation.{}", conversation.peer_hash),
+                    "data-peer": conversation.peer_hash.clone(),
+                    span { {conversation.peer_hash.clone()} }
+                    output {
+                        id: format!("mobile.conversation-unread.{}", conversation.peer_hash),
+                        {conversation.unread_count.to_string()}
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn MessageHistory(messages: Vec<Message>) -> Element {
+    rsx! {
+        section {
+            id: "mobile.message-history",
+            if messages.is_empty() {
+                p { id: "mobile.messages-empty", "No conversations yet" }
+            }
+            for message in messages {
+                article {
+                    id: format!("mobile.message.{}", message.id),
+                    p { {message.content.clone()} }
+                    DeliveryDetail { message: message.clone() }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn DeliveryDetail(message: Message) -> Element {
+    let state = if message.delivery == DeliveryEvidence::Delivered {
+        "Delivered"
+    } else if message.propagation == PropagationEvidence::Uploaded {
+        "Uploaded to propagation node; recipient delivery pending"
+    } else if message.transport == TransportEvidence::Accepted {
+        "Accepted by local transport; recipient delivery pending"
+    } else {
+        "Queued"
+    };
+    rsx! {
+        div {
+            id: format!("mobile.delivery-detail.{}", message.id),
+            output {
+                id: format!("mobile.message-state.{}", message.id),
+                {state}
+            }
+            if message.failure.as_ref().is_some_and(|failure| failure.retryable) {
+                button { id: format!("mobile.retry.{}", message.id), "Retry" }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn Composer(conversations: Vec<Conversation>, enabled: bool) -> Element {
+    let draft = conversations.first();
+    rsx! {
+        form {
+            id: "mobile.composer",
+            textarea {
+                id: draft.map_or_else(
+                    || "mobile.draft".to_string(),
+                    |conversation| format!("mobile.draft.{}", conversation.peer_hash),
+                ),
+                "data-revision": draft.map_or(0, |conversation| conversation.draft_revision),
+                value: draft.map_or("", |conversation| conversation.draft.as_str()),
+            }
+            select {
+                id: "mobile.delivery-method",
+                option { value: "direct", "Direct" }
+                option { value: "propagated", "Propagated" }
+            }
+            button {
+                id: "mobile.send",
+                r#type: "button",
+                "data-enabled": enabled.to_string(),
+                disabled: !enabled,
+                "Send"
+            }
         }
     }
 }
