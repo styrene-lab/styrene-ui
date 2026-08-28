@@ -264,6 +264,20 @@ impl MobileStore {
         ApplyResult::Applied
     }
 
+    pub fn apply_bearer_event(&mut self, event: BearerEvent) -> ApplyResult {
+        if event.generation != self.snapshot.generation {
+            return ApplyResult::IgnoredStale;
+        }
+        if let Some(bearer) =
+            self.snapshot.bearers.iter_mut().find(|bearer| bearer.kind == event.bearer.kind)
+        {
+            *bearer = event.bearer;
+        } else {
+            self.snapshot.bearers.push(event.bearer);
+        }
+        ApplyResult::Applied
+    }
+
     #[must_use]
     pub const fn local_announce_outcome(&self) -> Option<&LocalAnnounceOutcome> {
         self.local_announce_outcome.as_ref()
@@ -300,6 +314,12 @@ pub struct Bearer {
     pub kind: BearerKind,
     pub state: BearerState,
     pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BearerEvent {
+    pub generation: u64,
+    pub bearer: Bearer,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

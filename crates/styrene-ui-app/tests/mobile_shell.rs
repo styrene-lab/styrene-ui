@@ -159,6 +159,32 @@ fn tcp_only_state_renders_messaging_as_enabled_without_rnode() {
 }
 
 #[test]
+fn network_renders_independent_denied_interrupted_and_unverified_bearers() {
+    for (kind, state, reason) in [
+        ("bluetooth-rnode", "unavailable", "permission_denied"),
+        ("bluetooth-rnode", "disconnected", "connection_interrupted"),
+        ("android-usb", "unverified", "physical_evidence_absent"),
+    ] {
+        let mut state_fixture = fixture("direct-message-queued");
+        let bearer = state_fixture
+            .bearers
+            .iter_mut()
+            .find(|bearer| bearer.kind.as_str() == kind)
+            .expect("platform bearer");
+        bearer.state = serde_json::from_str(&format!("\"{state}\"")).unwrap();
+        bearer.reason = Some(reason.into());
+
+        let markup = render(state_fixture);
+        assert!(markup.contains("id=\"mobile.bearer.tcp\" data-state=\"connected\""));
+        assert!(markup.contains(&format!(
+            "id=\"mobile.bearer.{kind}\" data-state=\"{state}\" data-reason=\"{reason}\""
+        )));
+        assert!(markup.contains("id=\"mobile.send\""));
+        assert!(markup.contains("data-enabled=\"true\""));
+    }
+}
+
+#[test]
 fn network_projection_exposes_the_backend_endpoint_as_an_editable_control() {
     let store = MobileStore::new(fixture("direct-message-queued"));
     let markup = render(store.snapshot().clone());
