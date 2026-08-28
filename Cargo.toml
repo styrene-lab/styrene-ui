@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/styrene-ui-state"]
+members = ["crates/styrene-ui-app", "crates/styrene-ui-state"]
 exclude = ["apps/desktop"]
 
 [workspace.package]
@@ -12,8 +12,11 @@ repository = "https://github.com/styrene-lab/styrene-ui"
 authors = ["Styrene Labs"]
 
 [workspace.dependencies]
+dioxus = { version = "0.7", default-features = false, features = ["html", "macro", "signals"] }
+dioxus-ssr = { version = "0.7", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+styrene-ui-state = { path = "crates/styrene-ui-state" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

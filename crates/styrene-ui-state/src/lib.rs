@@ -133,6 +133,16 @@ pub enum TargetClass {
     Android,
 }
 
+impl TargetClass {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ios => "ios",
+            Self::Android => "android",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Profile {
