@@ -4,7 +4,8 @@ use styrene_ui_state::{
     ApplyResult, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
     DraftClearDisposition, EndpointUpdate, LocalAnnounceOutcome, MessageEvent, MessageSnapshot,
     MobileFixture, MobileMinimumCorpus, MobileStore, PeerEvent, PeerSnapshot, Profile,
-    PropagationEvidence, SendOutcome, SessionPhase, SyncState, TargetClass, TypedFailure,
+    PropagationEvidence, PropagationProgress, PropagationUpdate, SendOutcome, SessionPhase,
+    SyncState, TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -50,6 +51,87 @@ fn reducer_contract_keeps_upload_distinct_from_delivery() {
     assert_eq!(message.propagation, PropagationEvidence::Uploaded);
     assert_eq!(message.delivery, DeliveryEvidence::Pending);
     assert_eq!(fixture.propagation.sync_state, SyncState::Idle);
+}
+
+#[test]
+fn propagation_selection_survives_reconnect_but_readiness_does_not() {
+    let fixture = fixture("canonical-peer-discovery");
+    let selected = fixture.propagation.selected_destination.clone();
+    let mut store = MobileStore::new(fixture);
+
+    store.begin_reconnect(4, "socket_closed");
+
+    assert_eq!(store.propagation().selected_destination, selected);
+    assert!(!store.propagation().ready);
+    assert_eq!(store.propagation().sync_state, SyncState::Idle);
+}
+
+#[test]
+fn propagation_reducer_rejects_stale_generation_and_projects_stale_metadata() {
+    let fixture = fixture("canonical-peer-discovery");
+    let generation = fixture.generation;
+    let mut store = MobileStore::new(fixture);
+    let mut stale_metadata = store.propagation().clone();
+    stale_metadata.ready = false;
+
+    assert_eq!(store.apply_propagation_update(stale_metadata.clone()), ApplyResult::Applied);
+    assert!(!store.propagation().ready);
+    stale_metadata.generation = generation - 1;
+    stale_metadata.ready = true;
+    assert_eq!(store.apply_propagation_update(stale_metadata), ApplyResult::IgnoredStale);
+    assert!(!store.propagation().ready);
+}
+
+#[test]
+fn manual_sync_progress_and_repeat_completion_do_not_duplicate_messages() {
+    let fixture = fixture("propagation-sync-complete");
+    let message_id = fixture.messages[0].id.clone();
+    let mut store = MobileStore::new(fixture);
+    let mut in_progress = store.propagation().clone();
+    in_progress.sync_state = SyncState::InProgress;
+    in_progress.new_messages = 0;
+    in_progress.progress = Some(PropagationProgress {
+        attempt_id: "attempt-sync-2".into(),
+        received_count: 1,
+        received_bytes: 128,
+    });
+
+    assert_eq!(store.apply_propagation_update(in_progress), ApplyResult::Applied);
+    assert_eq!(store.propagation().sync_state, SyncState::InProgress);
+    assert_eq!(store.propagation().progress.as_ref().unwrap().received_count, 1);
+
+    let mut repeated = store.propagation().clone();
+    repeated.sync_state = SyncState::Complete;
+    repeated.new_messages = 0;
+    repeated.progress = None;
+    assert_eq!(store.apply_propagation_update(repeated), ApplyResult::Applied);
+    assert_eq!(store.propagation().new_messages, 0);
+    assert_eq!(store.snapshot().messages.len(), 1);
+    assert_eq!(store.snapshot().messages[0].id, message_id);
+}
+
+#[test]
+fn propagation_policy_and_recoverable_failure_are_backend_owned_projections() {
+    let fixture = fixture("recoverable-session-failure");
+    let mut store = MobileStore::new(fixture);
+    let update = PropagationUpdate {
+        generation: store.snapshot().generation,
+        selected_destination: Some("780e7aa7b2f175c88f28c7ba8ab1b714".into()),
+        ready: false,
+        sync_state: SyncState::Failed,
+        new_messages: 0,
+        failure: Some(TypedFailure { code: "transport_unavailable".into(), retryable: true }),
+        automatic_sync_enabled: true,
+        automatic_sync_cooldown_secs: 30,
+        sync_deadline_secs: 32,
+        progress: None,
+    };
+
+    assert_eq!(store.apply_propagation_update(update), ApplyResult::Applied);
+    assert!(store.propagation().automatic_sync_enabled);
+    assert_eq!(store.propagation().automatic_sync_cooldown_secs, 30);
+    assert_eq!(store.propagation().sync_deadline_secs, 32);
+    assert!(store.propagation().failure.as_ref().is_some_and(|failure| failure.retryable));
 }
 
 #[test]

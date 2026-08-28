@@ -1,8 +1,9 @@
 use dioxus::prelude::*;
-use styrene_ui_app::{LocalAnnounceStatus, MobileShell};
+use styrene_ui_app::{LocalAnnounceStatus, MobileShell, PropagationPanel};
 use styrene_ui_state::{
     ApplyResult, BearerState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
-    MobileStore, RuntimeBoundary, SessionPhase, TargetClass,
+    MobileStore, PropagationProgress, PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState,
+    TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -212,6 +213,70 @@ fn messaging_components_distinguish_queue_upload_delivery_and_empty_live_state()
     assert!(empty.contains("id=\"mobile.messages-empty\""));
     assert!(empty.contains("No conversations yet"));
     assert!(!empty.contains("message-direct-1"));
+}
+
+fn render_propagation(propagation: PropagationUpdate) -> String {
+    dioxus_ssr::render_element(rsx! { PropagationPanel { propagation } })
+}
+
+#[test]
+fn propagation_component_discloses_selection_readiness_and_automatic_policy() {
+    let fixture = fixture("canonical-peer-discovery");
+    let mut propagation = PropagationUpdate::from_fixture(&fixture);
+    propagation.automatic_sync_enabled = true;
+    propagation.automatic_sync_cooldown_secs = 30;
+    propagation.sync_deadline_secs = 32;
+
+    let markup = render_propagation(propagation);
+
+    assert!(markup.contains("id=\"mobile.propagation-selected\""));
+    assert!(markup.contains("780e7aa7b2f175c88f28c7ba8ab1b714"));
+    assert!(markup.contains("data-ready=\"true\""));
+    assert!(markup.contains("Automatic synchronization enabled"));
+    assert!(markup.contains("data-cooldown-secs=\"30\""));
+    assert!(markup.contains("data-deadline-secs=\"32\""));
+    assert!(markup.contains("id=\"mobile.propagation-sync\""));
+    assert!(!markup.contains("id=\"mobile.propagation-host"));
+}
+
+#[test]
+fn stale_propagation_metadata_disables_manual_sync_without_losing_selection() {
+    let fixture = fixture("tcp-reconnecting-rnode-unavailable");
+    let markup = render_propagation(PropagationUpdate::from_fixture(&fixture));
+
+    assert!(markup.contains("780e7aa7b2f175c88f28c7ba8ab1b714"));
+    assert!(markup.contains("data-ready=\"false\""));
+    assert!(markup.contains("id=\"mobile.propagation-sync\" disabled"));
+}
+
+#[test]
+fn propagation_component_renders_progress_repeat_sync_and_recoverable_failure() {
+    let completed_fixture = fixture("propagation-sync-complete");
+    let mut progress = PropagationUpdate::from_fixture(&completed_fixture);
+    progress.sync_state = SyncState::InProgress;
+    progress.progress = Some(PropagationProgress {
+        attempt_id: "attempt-mobile-sync".into(),
+        received_count: 1,
+        received_bytes: 256,
+    });
+    let progress_markup = render_propagation(progress);
+    assert!(progress_markup.contains("id=\"mobile.propagation-progress\""));
+    assert!(progress_markup.contains("data-attempt-id=\"attempt-mobile-sync\""));
+    assert!(progress_markup.contains("data-received-count=\"1\""));
+
+    let mut repeated = PropagationUpdate::from_fixture(&completed_fixture);
+    repeated.new_messages = 0;
+    let repeated_markup = render_propagation(repeated);
+    assert!(repeated_markup.contains("id=\"mobile.propagation-result\""));
+    assert!(repeated_markup.contains("0 new messages"));
+
+    let failed_fixture = fixture("recoverable-session-failure");
+    let mut failed = PropagationUpdate::from_fixture(&failed_fixture);
+    failed.failure = Some(TypedFailure { code: "transport_unavailable".into(), retryable: true });
+    let failure_markup = render_propagation(failed);
+    assert!(failure_markup.contains("id=\"mobile.propagation-failure\""));
+    assert!(failure_markup.contains("data-code=\"transport_unavailable\""));
+    assert!(failure_markup.contains("data-retryable=\"true\""));
 }
 
 #[test]
