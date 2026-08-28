@@ -150,6 +150,29 @@ pub enum Profile {
     Fixture,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RuntimeBoundary {
+    profile: Profile,
+}
+
+impl From<Profile> for RuntimeBoundary {
+    fn from(profile: Profile) -> Self {
+        Self { profile }
+    }
+}
+
+impl RuntimeBoundary {
+    #[must_use]
+    pub const fn live_network_allowed(self) -> bool {
+        matches!(self.profile, Profile::Live)
+    }
+
+    #[must_use]
+    pub const fn fixture_marker_visible(self) -> bool {
+        matches!(self.profile, Profile::Fixture)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionPhase {
