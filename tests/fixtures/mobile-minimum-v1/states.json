@@ -38,7 +38,7 @@
         {"kind": "bluetooth_rnode", "state": "disconnected", "reason": "approved_device_absent"},
         {"kind": "android_usb", "state": "unavailable", "reason": "not_selected"}
       ],
-      "peers": [{"destination_hash": "e01b09b22ccc4e2755d29eead962677b", "aspect": "lxmf.delivery", "display_name": "FPIG_SKYWAVE", "observed_at": 1787927000, "age_secs": 4}],
+      "peers": [{"destination_hash": "e01b09b22ccc4e2755d29eead962677b", "aspect": "lxmf.delivery", "display_name": "FPIG_SKYWAVE", "observed_at": 1787927000, "age_secs": 4, "source": "canonical_announce", "announce_count": 1}],
       "conversations": [], "messages": [],
       "propagation": {"selected_destination": "780e7aa7b2f175c88f28c7ba8ab1b714", "ready": true, "sync_state": "idle", "new_messages": 0, "failure": null},
       "event": {"generation": 3, "expected_applied": true},

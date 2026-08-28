@@ -55,12 +55,13 @@ pub struct EndpointUpdate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MobileStore {
     snapshot: MobileFixture,
+    local_announce_outcome: Option<LocalAnnounceOutcome>,
 }
 
 impl MobileStore {
     #[must_use]
     pub const fn new(snapshot: MobileFixture) -> Self {
-        Self { snapshot }
+        Self { snapshot, local_announce_outcome: None }
     }
 
     #[must_use]
@@ -109,6 +110,74 @@ impl MobileStore {
         self.snapshot.session.failure = Some(failure);
     }
 
+    pub fn apply_peer_snapshot(&mut self, snapshot: PeerSnapshot) -> ApplyResult {
+        if snapshot.generation != self.snapshot.generation {
+            return ApplyResult::IgnoredStale;
+        }
+
+        let mut peers = Vec::with_capacity(snapshot.peers.len());
+        for peer in snapshot.peers {
+            if let Some(existing) = peers
+                .iter_mut()
+                .find(|existing: &&mut Peer| existing.destination_hash == peer.destination_hash)
+            {
+                if peer.observed_at >= existing.observed_at {
+                    *existing = peer;
+                }
+            } else {
+                peers.push(peer);
+            }
+        }
+        for peer in &mut peers {
+            if let Some(current) = self
+                .snapshot
+                .peers
+                .iter()
+                .find(|current| current.destination_hash == peer.destination_hash)
+            {
+                if current.observed_at > peer.observed_at {
+                    *peer = current.clone();
+                }
+            }
+        }
+        self.snapshot.peers = peers;
+        ApplyResult::Applied
+    }
+
+    pub fn apply_peer_event(&mut self, event: PeerEvent) -> ApplyResult {
+        if event.generation != self.snapshot.generation {
+            return ApplyResult::IgnoredStale;
+        }
+
+        if let Some(existing) = self
+            .snapshot
+            .peers
+            .iter_mut()
+            .find(|peer| peer.destination_hash == event.peer.destination_hash)
+        {
+            if event.peer.observed_at < existing.observed_at {
+                return ApplyResult::IgnoredStale;
+            }
+            *existing = event.peer;
+        } else {
+            self.snapshot.peers.push(event.peer);
+        }
+        ApplyResult::Applied
+    }
+
+    pub fn apply_local_announce_outcome(&mut self, outcome: LocalAnnounceOutcome) -> ApplyResult {
+        if outcome.generation != self.snapshot.generation {
+            return ApplyResult::IgnoredStale;
+        }
+        self.local_announce_outcome = Some(outcome);
+        ApplyResult::Applied
+    }
+
+    #[must_use]
+    pub const fn local_announce_outcome(&self) -> Option<&LocalAnnounceOutcome> {
+        self.local_announce_outcome.as_ref()
+    }
+
     #[must_use]
     pub const fn snapshot(&self) -> &MobileFixture {
         &self.snapshot
@@ -145,6 +214,35 @@ pub struct Peer {
     pub display_name: Option<String>,
     pub observed_at: i64,
     pub age_secs: u64,
+    pub source: PeerSource,
+    pub announce_count: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeerSnapshot {
+    pub generation: u64,
+    pub peers: Vec<Peer>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeerEvent {
+    pub generation: u64,
+    pub peer: Peer,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalAnnounceOutcome {
+    pub generation: u64,
+    pub accepted_at: i64,
+    pub local_dispatch_accepted: bool,
+    pub remote_reception_confirmed: bool,
+    pub failure: Option<TypedFailure>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PeerSource {
+    CanonicalAnnounce,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use styrene_ui_state::{
     ApplyResult, BearerKind, BearerState, DeliveryEvidence, DeliveryMethod, EndpointUpdate,
-    MobileFixture, MobileMinimumCorpus, MobileStore, Profile, PropagationEvidence, SessionPhase,
-    SyncState, TargetClass, TypedFailure,
+    LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus, MobileStore, PeerEvent, PeerSnapshot,
+    Profile, PropagationEvidence, SessionPhase, SyncState, TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -178,4 +178,83 @@ fn malformed_endpoint_edit_is_recoverable_and_does_not_replace_current_state() {
     assert_eq!(store.snapshot().session.endpoint, endpoint);
     assert_eq!(store.snapshot().generation, generation);
     assert_eq!(store.snapshot().messages, messages);
+}
+
+#[test]
+fn repeated_peer_events_upsert_one_newer_destination_observation() {
+    let initial = fixture("canonical-peer-discovery");
+    let mut store = MobileStore::new(initial.clone());
+    let mut peer = initial.peers[0].clone();
+    peer.display_name = Some("Current Name".into());
+    peer.observed_at += 10;
+    peer.age_secs = 0;
+    peer.announce_count += 1;
+
+    assert_eq!(
+        store.apply_peer_event(PeerEvent { generation: initial.generation, peer }),
+        ApplyResult::Applied
+    );
+    assert_eq!(store.snapshot().peers.len(), 1);
+    assert_eq!(store.snapshot().peers[0].display_name.as_deref(), Some("Current Name"));
+    assert_eq!(store.snapshot().peers[0].announce_count, 2);
+
+    assert_eq!(
+        store.apply_peer_snapshot(PeerSnapshot {
+            generation: initial.generation,
+            peers: initial.peers.clone(),
+        }),
+        ApplyResult::Applied
+    );
+    assert_eq!(store.snapshot().peers[0].display_name.as_deref(), Some("Current Name"));
+    assert_eq!(store.snapshot().peers[0].announce_count, 2);
+}
+
+#[test]
+fn stale_peer_event_and_snapshot_cannot_replace_current_directory() {
+    let initial = fixture("canonical-peer-discovery");
+    let mut store = MobileStore::new(initial.clone());
+    let mut stale_peer = initial.peers[0].clone();
+    stale_peer.display_name = Some("Stale Name".into());
+
+    assert_eq!(
+        store.apply_peer_event(PeerEvent { generation: initial.generation - 1, peer: stale_peer }),
+        ApplyResult::IgnoredStale
+    );
+    assert_eq!(
+        store.apply_peer_snapshot(PeerSnapshot {
+            generation: initial.generation - 1,
+            peers: Vec::new(),
+        }),
+        ApplyResult::IgnoredStale
+    );
+    assert_eq!(store.snapshot().peers, initial.peers);
+}
+
+#[test]
+fn empty_current_generation_snapshot_preserves_a_genuine_empty_live_directory() {
+    let live = fixture("live-empty-connected");
+    let mut store = MobileStore::new(live.clone());
+
+    assert_eq!(
+        store.apply_peer_snapshot(PeerSnapshot { generation: live.generation, peers: Vec::new() }),
+        ApplyResult::Applied
+    );
+    assert!(store.snapshot().peers.is_empty());
+}
+
+#[test]
+fn local_announce_outcome_never_implies_remote_reception() {
+    let fixture = fixture("canonical-peer-discovery");
+    let mut store = MobileStore::new(fixture.clone());
+    let outcome = LocalAnnounceOutcome {
+        generation: fixture.generation,
+        accepted_at: 1_787_927_100,
+        local_dispatch_accepted: true,
+        remote_reception_confirmed: false,
+        failure: None,
+    };
+
+    assert_eq!(store.apply_local_announce_outcome(outcome.clone()), ApplyResult::Applied);
+    assert_eq!(store.local_announce_outcome(), Some(&outcome));
+    assert!(!store.local_announce_outcome().unwrap().remote_reception_confirmed);
 }

@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
-use styrene_ui_app::MobileShell;
+use styrene_ui_app::{LocalAnnounceStatus, MobileShell};
 use styrene_ui_state::{
-    ApplyResult, BearerState, MobileFixture, MobileMinimumCorpus, MobileStore, RuntimeBoundary,
-    SessionPhase, TargetClass,
+    ApplyResult, BearerState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
+    MobileStore, RuntimeBoundary, SessionPhase, TargetClass,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -165,4 +165,34 @@ fn network_projection_exposes_the_backend_endpoint_as_an_editable_control() {
     assert!(markup.contains("id=\"mobile.tcp-endpoint\""));
     assert!(markup.contains("value=\"rns.styrene.io:4242\""));
     assert!(markup.contains("id=\"mobile.tcp-endpoint-apply\""));
+}
+
+#[test]
+fn repeated_announces_render_one_person_and_live_empty_renders_none() {
+    let directory = render(fixture("canonical-peer-discovery"));
+    let live_empty = render(fixture("live-empty-connected"));
+
+    assert_eq!(directory.matches("id=\"mobile.peer.e01b09b22ccc4e2755d29eead962677b\"").count(), 1);
+    assert!(directory.contains("FPIG_SKYWAVE"));
+    assert!(!live_empty.contains("id=\"mobile.peer."));
+    assert!(!live_empty.contains("FPIG_SKYWAVE"));
+}
+
+#[test]
+fn local_announce_status_discloses_local_acceptance_only() {
+    let markup = dioxus_ssr::render_element(rsx! {
+        LocalAnnounceStatus {
+            outcome: LocalAnnounceOutcome {
+                generation: 3,
+                accepted_at: 1_787_927_100,
+                local_dispatch_accepted: true,
+                remote_reception_confirmed: false,
+                failure: None,
+            }
+        }
+    });
+
+    assert!(markup.contains("Accepted by local transport"));
+    assert!(markup.contains("Remote reception unconfirmed"));
+    assert!(!markup.contains("Remote peer received"));
 }
