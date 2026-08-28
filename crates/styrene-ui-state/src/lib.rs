@@ -40,6 +40,66 @@ impl MobileFixture {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ApplyResult {
+    Applied,
+    IgnoredStale,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MobileStore {
+    snapshot: MobileFixture,
+}
+
+impl MobileStore {
+    #[must_use]
+    pub const fn new(snapshot: MobileFixture) -> Self {
+        Self { snapshot }
+    }
+
+    #[must_use]
+    pub fn cold_restore(snapshot: MobileFixture, generation: u64) -> Self {
+        let mut store = Self::new(snapshot);
+        store.begin_reconnect(generation, "cold_restore");
+        store
+    }
+
+    pub fn begin_reconnect(&mut self, generation: u64, reason: impl Into<String>) {
+        if generation <= self.snapshot.generation {
+            return;
+        }
+
+        self.snapshot.generation = generation;
+        self.snapshot.session.phase = SessionPhase::Reconnecting;
+        self.snapshot.session.failure = None;
+        if let Some(tcp) =
+            self.snapshot.bearers.iter_mut().find(|bearer| bearer.kind == BearerKind::Tcp)
+        {
+            tcp.state = BearerState::Reconnecting;
+            tcp.reason = Some(reason.into());
+        }
+    }
+
+    pub fn apply_snapshot(&mut self, generation: u64, snapshot: MobileFixture) -> ApplyResult {
+        if generation != self.snapshot.generation || snapshot.generation != generation {
+            return ApplyResult::IgnoredStale;
+        }
+
+        self.snapshot = snapshot;
+        ApplyResult::Applied
+    }
+
+    #[must_use]
+    pub const fn snapshot(&self) -> &MobileFixture {
+        &self.snapshot
+    }
+
+    #[must_use]
+    pub fn messaging_available(&self) -> bool {
+        self.snapshot.bearers.iter().any(|bearer| bearer.state == BearerState::Connected)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Session {
@@ -181,12 +241,34 @@ pub enum SessionPhase {
     Failed,
 }
 
+impl SessionPhase {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Connected => "connected",
+            Self::Reconnecting => "reconnecting",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BearerKind {
     Tcp,
     BluetoothRnode,
     AndroidUsb,
+}
+
+impl BearerKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            Self::BluetoothRnode => "bluetooth-rnode",
+            Self::AndroidUsb => "android-usb",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
