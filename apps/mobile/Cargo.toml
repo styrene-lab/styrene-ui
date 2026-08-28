@@ -1,0 +1,17 @@
+[package]
+name = "styrene-mobile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+dioxus = { workspace = true, features = ["launch", "mobile"] }
+serde_json.workspace = true
+styrene-ui-app = { path = "../../crates/styrene-ui-app" }
+styrene-ui-state.workspace = true
+
+[lints]
+workspace = true
