@@ -428,6 +428,25 @@ pub struct PropagationProgress {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct PropagationPolicy {
+    pub transfer_limit_kb: u64,
+    pub sync_limit_kb: u64,
+    pub stamp_cost: u32,
+    pub stamp_flexibility: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropagationCandidate {
+    pub destination_hash: String,
+    pub active: bool,
+    pub observed_at: i64,
+    pub age_secs: u64,
+    pub policy: Option<PropagationPolicy>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct PropagationUpdate {
     pub generation: u64,
     pub selected_destination: Option<String>,
@@ -439,6 +458,8 @@ pub struct PropagationUpdate {
     pub automatic_sync_cooldown_secs: u64,
     pub sync_deadline_secs: u64,
     pub progress: Option<PropagationProgress>,
+    pub candidates: Vec<PropagationCandidate>,
+    pub selected_policy: Option<PropagationPolicy>,
 }
 
 impl PropagationUpdate {
@@ -455,6 +476,8 @@ impl PropagationUpdate {
             automatic_sync_cooldown_secs: 0,
             sync_deadline_secs: 0,
             progress: None,
+            candidates: Vec::new(),
+            selected_policy: None,
         }
     }
 }

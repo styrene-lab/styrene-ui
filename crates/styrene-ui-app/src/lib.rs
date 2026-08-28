@@ -74,6 +74,35 @@ pub fn PropagationPanel(propagation: PropagationUpdate) -> Element {
             "data-ready": propagation.ready.to_string(),
             "data-sync-state": propagation.sync_state.as_str(),
             output { id: "mobile.propagation-selected", {selected} }
+            label {
+                r#for: "mobile.propagation-node",
+                "Propagation node"
+            }
+            select {
+                id: "mobile.propagation-node",
+                option { value: "", "No node selected" }
+                for candidate in &propagation.candidates {
+                    option {
+                        value: candidate.destination_hash.clone(),
+                        selected: propagation.selected_destination.as_deref()
+                            == Some(candidate.destination_hash.as_str()),
+                        disabled: !candidate.active || candidate.policy.is_none(),
+                        "data-active": candidate.active.to_string(),
+                        "data-age-secs": candidate.age_secs.to_string(),
+                        {candidate.destination_hash.clone()}
+                    }
+                }
+            }
+            if let Some(policy) = &propagation.selected_policy {
+                output {
+                    id: "mobile.propagation-policy",
+                    "data-transfer-limit-kb": policy.transfer_limit_kb.to_string(),
+                    "data-sync-limit-kb": policy.sync_limit_kb.to_string(),
+                    "data-stamp-cost": policy.stamp_cost.to_string(),
+                    "data-stamp-flexibility": policy.stamp_flexibility.to_string(),
+                    "Backend-enforced propagation policy"
+                }
+            }
             output {
                 id: "mobile.propagation-automatic-policy",
                 "data-enabled": propagation.automatic_sync_enabled.to_string(),

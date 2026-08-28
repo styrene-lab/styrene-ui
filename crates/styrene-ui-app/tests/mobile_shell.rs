@@ -2,8 +2,8 @@ use dioxus::prelude::*;
 use styrene_ui_app::{LocalAnnounceStatus, MobileShell, PropagationPanel};
 use styrene_ui_state::{
     ApplyResult, BearerState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
-    MobileStore, PropagationProgress, PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState,
-    TargetClass, TypedFailure,
+    MobileStore, PropagationCandidate, PropagationPolicy, PropagationProgress, PropagationUpdate,
+    RuntimeBoundary, SessionPhase, SyncState, TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -226,6 +226,29 @@ fn propagation_component_discloses_selection_readiness_and_automatic_policy() {
     propagation.automatic_sync_enabled = true;
     propagation.automatic_sync_cooldown_secs = 30;
     propagation.sync_deadline_secs = 32;
+    let policy = PropagationPolicy {
+        transfer_limit_kb: 256,
+        sync_limit_kb: 4_000,
+        stamp_cost: 16,
+        stamp_flexibility: 3,
+    };
+    propagation.candidates = vec![
+        PropagationCandidate {
+            destination_hash: "780e7aa7b2f175c88f28c7ba8ab1b714".into(),
+            active: true,
+            observed_at: 1_787_927_000,
+            age_secs: 4,
+            policy: Some(policy.clone()),
+        },
+        PropagationCandidate {
+            destination_hash: "99999999999999999999999999999999".into(),
+            active: false,
+            observed_at: 1_787_926_000,
+            age_secs: 1_004,
+            policy: Some(policy.clone()),
+        },
+    ];
+    propagation.selected_policy = Some(policy);
 
     let markup = render_propagation(propagation);
 
@@ -236,7 +259,14 @@ fn propagation_component_discloses_selection_readiness_and_automatic_policy() {
     assert!(markup.contains("data-cooldown-secs=\"30\""));
     assert!(markup.contains("data-deadline-secs=\"32\""));
     assert!(markup.contains("id=\"mobile.propagation-sync\""));
-    assert!(!markup.contains("id=\"mobile.propagation-host"));
+    assert!(markup.contains("id=\"mobile.propagation-node\""));
+    assert!(markup.contains("value=\"780e7aa7b2f175c88f28c7ba8ab1b714\" selected"));
+    assert!(markup.contains("value=\"99999999999999999999999999999999\" disabled"));
+    assert!(markup.contains("id=\"mobile.propagation-policy\""));
+    assert!(markup.contains("data-stamp-cost=\"16\""));
+    for excluded in ["propagation-host", "peering-control", "capacity-control", "expiry-control"] {
+        assert!(!markup.contains(excluded));
+    }
 }
 
 #[test]
