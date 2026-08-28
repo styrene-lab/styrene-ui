@@ -125,6 +125,8 @@ fn propagation_policy_and_recoverable_failure_are_backend_owned_projections() {
         automatic_sync_cooldown_secs: 30,
         sync_deadline_secs: 32,
         progress: None,
+        candidates: Vec::new(),
+        selected_policy: None,
     };
 
     assert_eq!(store.apply_propagation_update(update), ApplyResult::Applied);
