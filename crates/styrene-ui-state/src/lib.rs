@@ -56,12 +56,14 @@ pub struct EndpointUpdate {
 pub struct MobileStore {
     snapshot: MobileFixture,
     local_announce_outcome: Option<LocalAnnounceOutcome>,
+    propagation: PropagationUpdate,
 }
 
 impl MobileStore {
     #[must_use]
-    pub const fn new(snapshot: MobileFixture) -> Self {
-        Self { snapshot, local_announce_outcome: None }
+    pub fn new(snapshot: MobileFixture) -> Self {
+        let propagation = PropagationUpdate::from_fixture(&snapshot);
+        Self { snapshot, local_announce_outcome: None, propagation }
     }
 
     #[must_use]
@@ -79,6 +81,12 @@ impl MobileStore {
         self.snapshot.generation = generation;
         self.snapshot.session.phase = SessionPhase::Reconnecting;
         self.snapshot.session.failure = None;
+        self.snapshot.propagation.ready = false;
+        self.propagation.generation = generation;
+        self.propagation.ready = false;
+        self.propagation.sync_state = SyncState::Idle;
+        self.propagation.progress = None;
+        self.propagation.failure = None;
         if let Some(tcp) =
             self.snapshot.bearers.iter_mut().find(|bearer| bearer.kind == BearerKind::Tcp)
         {
@@ -93,6 +101,7 @@ impl MobileStore {
         }
 
         self.snapshot = snapshot;
+        self.propagation = PropagationUpdate::from_fixture(&self.snapshot);
         ApplyResult::Applied
     }
 
@@ -240,6 +249,21 @@ impl MobileStore {
         ApplyResult::Applied
     }
 
+    pub fn apply_propagation_update(&mut self, update: PropagationUpdate) -> ApplyResult {
+        if update.generation != self.snapshot.generation {
+            return ApplyResult::IgnoredStale;
+        }
+        self.snapshot.propagation = Propagation {
+            selected_destination: update.selected_destination.clone(),
+            ready: update.ready,
+            sync_state: update.sync_state,
+            new_messages: update.new_messages,
+            failure: update.failure.clone(),
+        };
+        self.propagation = update;
+        ApplyResult::Applied
+    }
+
     #[must_use]
     pub const fn local_announce_outcome(&self) -> Option<&LocalAnnounceOutcome> {
         self.local_announce_outcome.as_ref()
@@ -248,6 +272,11 @@ impl MobileStore {
     #[must_use]
     pub const fn snapshot(&self) -> &MobileFixture {
         &self.snapshot
+    }
+
+    #[must_use]
+    pub const fn propagation(&self) -> &PropagationUpdate {
+        &self.propagation
     }
 
     #[must_use]
@@ -387,6 +416,47 @@ pub struct Propagation {
     pub sync_state: SyncState,
     pub new_messages: u32,
     pub failure: Option<TypedFailure>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropagationProgress {
+    pub attempt_id: String,
+    pub received_count: u64,
+    pub received_bytes: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropagationUpdate {
+    pub generation: u64,
+    pub selected_destination: Option<String>,
+    pub ready: bool,
+    pub sync_state: SyncState,
+    pub new_messages: u32,
+    pub failure: Option<TypedFailure>,
+    pub automatic_sync_enabled: bool,
+    pub automatic_sync_cooldown_secs: u64,
+    pub sync_deadline_secs: u64,
+    pub progress: Option<PropagationProgress>,
+}
+
+impl PropagationUpdate {
+    #[must_use]
+    pub fn from_fixture(fixture: &MobileFixture) -> Self {
+        Self {
+            generation: fixture.generation,
+            selected_destination: fixture.propagation.selected_destination.clone(),
+            ready: fixture.propagation.ready,
+            sync_state: fixture.propagation.sync_state,
+            new_messages: fixture.propagation.new_messages,
+            failure: fixture.propagation.failure.clone(),
+            automatic_sync_enabled: false,
+            automatic_sync_cooldown_secs: 0,
+            sync_deadline_secs: 0,
+            progress: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -559,6 +629,19 @@ pub enum DeliveryEvidence {
 #[serde(rename_all = "snake_case")]
 pub enum SyncState {
     Idle,
+    InProgress,
     Complete,
     Failed,
+}
+
+impl SyncState {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::InProgress => "in_progress",
+            Self::Complete => "complete",
+            Self::Failed => "failed",
+        }
+    }
 }

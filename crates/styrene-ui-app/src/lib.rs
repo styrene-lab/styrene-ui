@@ -3,7 +3,8 @@
 use dioxus::prelude::*;
 use styrene_ui_state::{
     Conversation, DeliveryEvidence, LocalAnnounceOutcome, Message, MobileFixture, MobileStore,
-    PropagationEvidence, RuntimeBoundary, TargetClass, TransportEvidence,
+    PropagationEvidence, PropagationUpdate, RuntimeBoundary, SyncState, TargetClass,
+    TransportEvidence,
 };
 
 #[component]
@@ -59,7 +60,59 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
                     }
                 }
             }
-            section { id: "mobile.propagation" }
+            PropagationPanel { propagation: PropagationUpdate::from_fixture(&fixture) }
+        }
+    }
+}
+
+#[component]
+pub fn PropagationPanel(propagation: PropagationUpdate) -> Element {
+    let selected = propagation.selected_destination.as_deref().unwrap_or("No node selected");
+    rsx! {
+        section {
+            id: "mobile.propagation",
+            "data-ready": propagation.ready.to_string(),
+            "data-sync-state": propagation.sync_state.as_str(),
+            output { id: "mobile.propagation-selected", {selected} }
+            output {
+                id: "mobile.propagation-automatic-policy",
+                "data-enabled": propagation.automatic_sync_enabled.to_string(),
+                "data-cooldown-secs": propagation.automatic_sync_cooldown_secs.to_string(),
+                "data-deadline-secs": propagation.sync_deadline_secs.to_string(),
+                if propagation.automatic_sync_enabled {
+                    "Automatic synchronization enabled"
+                } else {
+                    "Automatic synchronization disabled"
+                }
+            }
+            button {
+                id: "mobile.propagation-sync",
+                disabled: !propagation.ready || propagation.sync_state == SyncState::InProgress,
+                "Sync now"
+            }
+            if let Some(progress) = propagation.progress {
+                output {
+                    id: "mobile.propagation-progress",
+                    "data-attempt-id": progress.attempt_id,
+                    "data-received-count": progress.received_count.to_string(),
+                    "data-received-bytes": progress.received_bytes.to_string(),
+                    "Synchronizing"
+                }
+            }
+            if propagation.sync_state == SyncState::Complete {
+                output {
+                    id: "mobile.propagation-result",
+                    "{propagation.new_messages} new messages"
+                }
+            }
+            if let Some(failure) = propagation.failure {
+                output {
+                    id: "mobile.propagation-failure",
+                    "data-code": failure.code,
+                    "data-retryable": failure.retryable.to_string(),
+                    "Synchronization failed"
+                }
+            }
         }
     }
 }
