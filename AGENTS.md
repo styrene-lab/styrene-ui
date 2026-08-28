@@ -1,41 +1,21 @@
-# styrene-dx
+# Styrene UI
 
-**Status: Desktop operator console. Not in default workspace members. `publish = false`.**
+This repository owns shared Dioxus presentation, renderer-neutral presentation
+state, mobile and desktop packaging, platform-service adapters, and UI tests.
 
-Dioxus 0.7 desktop operator console for Live, Embedded, and Fixture sessions. It uses typed daemon and interoperability-runner contracts without owning protocol behavior.
+`styrene-rs` remains authoritative for Reticulum, LXMF, runtime, transport,
+daemon, persistence, and backend fixture contracts. Do not duplicate protocol or
+delivery decisions in this repository.
 
-## Structure
+## Boundaries
 
-```
-src/
-  main.rs          - Dioxus app root, profile lifecycle, routes
-  backend.rs       - Live, Embedded, and Fixture backend sessions
-  daemon_bridge.rs - Typed IPC request broker
-  scenario.rs      - Protocol Lab runner boundary and evidence projection
-  state.rs         - Presentation domain types
-  stores.rs        - Generation-gated domain stores and diagnostics
-  components/      - Routed operator pages and controls
-  assets/          - Static assets (CSS, images)
-```
+- `crates/styrene-ui-state`: framework-independent state, reducers, and selectors.
+- `apps/desktop`: extracted desktop Dioxus source; excluded until its old relative
+  dependencies are replaced with immutable public contracts.
+- `tests/fixtures`: versioned copies of backend-owned fixtures with source revision
+  provenance.
 
-## Build
+Keep product state and workflows in Rust. Platform launcher glue must not own
+navigation, product state, protocol state, or workflow decisions.
 
-```bash
-cargo build -p styrene-dx          # desktop
-dx serve                           # dev server (requires dioxus-cli)
-```
-
-Not included in default members. `just test` runs its deterministic Fixture and component coverage explicitly.
-
-## Dependencies
-
-- `dioxus 0.7` (desktop + web features)
-- `styrene-ipc` and `styrene-ipc-server` for typed local daemon sessions
-- `styrene-interop-runner` for bounded Protocol Lab execution
-
-## Notes
-
-- Runtime profiles are explicit. Live connection failure never starts Embedded mode.
-- Fixture mode opens no daemon process or external network interface.
-- Live Protocol Lab scenarios run in a separate `styrene-interop` process. Set `STYRENE_DX_LIVE_INTEROP=1`. Install `styrene-interop` beside `styrene-dx`, or set `STYRENE_DX_INTEROP_RUNNER` to its executable path.
-- The primary terminal client remains `styrene-tui` (ratatui).
+Run formatting, focused tests, and warning-denied Clippy before committing.
