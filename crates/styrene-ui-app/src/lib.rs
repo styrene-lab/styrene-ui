@@ -57,6 +57,10 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
                     div {
                         id: format!("mobile.bearer.{}", bearer.kind.as_str()),
                         "data-state": bearer.state.to_string(),
+                        "data-reason": bearer.reason.clone().unwrap_or_default(),
+                        if let Some(reason) = &bearer.reason {
+                            output { {reason.clone()} }
+                        }
                     }
                 }
             }

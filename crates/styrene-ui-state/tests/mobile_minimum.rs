@@ -1,11 +1,11 @@
 use std::collections::HashSet;
 
 use styrene_ui_state::{
-    ApplyResult, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
-    DraftClearDisposition, EndpointUpdate, LocalAnnounceOutcome, MessageEvent, MessageSnapshot,
-    MobileFixture, MobileMinimumCorpus, MobileStore, PeerEvent, PeerSnapshot, Profile,
-    PropagationEvidence, PropagationProgress, PropagationUpdate, SendOutcome, SessionPhase,
-    SyncState, TargetClass, TypedFailure,
+    ApplyResult, Bearer, BearerEvent, BearerKind, BearerState, Conversation, DeliveryEvidence,
+    DeliveryMethod, DraftClearDisposition, EndpointUpdate, LocalAnnounceOutcome, MessageEvent,
+    MessageSnapshot, MobileFixture, MobileMinimumCorpus, MobileStore, PeerEvent, PeerSnapshot,
+    Profile, PropagationEvidence, PropagationProgress, PropagationUpdate, SendOutcome,
+    SessionPhase, SyncState, TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -224,6 +224,57 @@ fn tcp_enables_messaging_when_rnode_is_unavailable() {
         BearerState::Unavailable
     );
     assert!(store.messaging_available());
+}
+
+#[test]
+fn platform_bearer_events_remain_independent_from_connected_tcp() {
+    let fixture = fixture("direct-message-queued");
+    let generation = fixture.generation;
+    let mut store = MobileStore::new(fixture);
+
+    for bearer in [
+        Bearer {
+            kind: BearerKind::BluetoothRnode,
+            state: BearerState::Unavailable,
+            reason: Some("permission_denied".into()),
+        },
+        Bearer {
+            kind: BearerKind::BluetoothRnode,
+            state: BearerState::Disconnected,
+            reason: Some("connection_interrupted".into()),
+        },
+        Bearer {
+            kind: BearerKind::AndroidUsb,
+            state: BearerState::Unverified,
+            reason: Some("physical_evidence_absent".into()),
+        },
+    ] {
+        assert_eq!(
+            store.apply_bearer_event(BearerEvent { generation, bearer: bearer.clone() }),
+            ApplyResult::Applied
+        );
+        assert_eq!(store.snapshot().session.phase, SessionPhase::Connected);
+        assert_eq!(
+            store.snapshot().bearer(BearerKind::Tcp).expect("TCP bearer").state,
+            BearerState::Connected
+        );
+        assert_eq!(store.snapshot().bearer(bearer.kind), Some(&bearer));
+        assert!(store.messaging_available());
+    }
+
+    let current = store.snapshot().bearer(BearerKind::AndroidUsb).cloned();
+    assert_eq!(
+        store.apply_bearer_event(BearerEvent {
+            generation: generation - 1,
+            bearer: Bearer {
+                kind: BearerKind::AndroidUsb,
+                state: BearerState::Connected,
+                reason: None,
+            },
+        }),
+        ApplyResult::IgnoredStale
+    );
+    assert_eq!(store.snapshot().bearer(BearerKind::AndroidUsb), current.as_ref());
 }
 
 #[test]
