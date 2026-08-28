@@ -8,10 +8,14 @@ with renderer-neutral presentation state. Extracted desktop source is retained
 under `apps/desktop` while its dependencies are converted to standalone,
 immutable `styrene-rs` references.
 
+`apps/mobile` is the Rust-only Dioxus launcher for iOS and Android. Its initial
+bootstrap renders a visibly marked fixture while the embedded backend session
+and Rust platform services are connected.
+
 ## Validation
 
 ```bash
 cargo fmt --all -- --check
-cargo test -p styrene-ui-state
-cargo clippy -p styrene-ui-state --all-targets --no-deps -- -D warnings
+cargo test --workspace
+cargo clippy --workspace --all-targets --no-deps -- -D warnings
 ```
