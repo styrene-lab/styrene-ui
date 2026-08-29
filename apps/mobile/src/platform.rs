@@ -1350,6 +1350,11 @@ pub async fn android_usb_attachments() -> Result<Vec<AndroidUsbAttachment>, Plat
     WebViewPlatformService.android_usb_attachments().await
 }
 
+#[cfg(all(target_os = "ios", not(feature = "ui-test")))]
+pub async fn request_permission(kind: PermissionKind) -> Result<PermissionStatus, PlatformFailure> {
+    WebViewPlatformService.request_permission(kind).await
+}
+
 #[cfg(all(target_os = "android", not(feature = "ui-test")))]
 pub async fn native_android_usb_attachments() -> Result<Vec<AndroidUsbAttachment>, PlatformFailure>
 {

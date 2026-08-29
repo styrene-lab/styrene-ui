@@ -4973,6 +4973,7 @@ dependencies = [
 name = "styrene-ui-apple-bridge"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "block2",
  "objc2",
  "objc2-av-foundation",
