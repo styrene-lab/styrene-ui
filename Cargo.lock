@@ -3843,6 +3843,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-ui-platform"
+version = "0.1.0"
+
+[[package]]
 name = "styrene-ui-state"
 version = "0.1.0"
 dependencies = [
