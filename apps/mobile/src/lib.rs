@@ -15,6 +15,7 @@ use styrene_ui_state::{MobileFixture, MobileMinimumCorpus};
 
 #[cfg(all(target_os = "android", not(feature = "ui-test")))]
 mod android_usb;
+pub mod ble_session;
 mod platform;
 #[cfg(all(
     any(target_os = "android", target_os = "ios", target_os = "macos"),
