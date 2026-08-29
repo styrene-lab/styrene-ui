@@ -4842,9 +4842,11 @@ dependencies = [
  "async-channel",
  "dioxus",
  "manganis",
+ "serde",
  "serde_json",
  "styrene-ipc",
  "styrene-ui-app",
+ "styrene-ui-platform",
  "styrene-ui-state",
  "styrened",
  "tokio",
@@ -4929,6 +4931,7 @@ dependencies = [
  "dioxus",
  "dioxus-ssr",
  "serde_json",
+ "styrene-ui-platform",
  "styrene-ui-state",
 ]
 

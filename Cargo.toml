@@ -25,6 +25,7 @@ dioxus-ssr = { version = "=0.8.0-alpha.1", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 styrene-ui-state = { path = "crates/styrene-ui-state" }
+styrene-ui-platform = { path = "crates/styrene-ui-platform" }
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 
 [workspace.lints.rust]

@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 dioxus = { workspace = true, features = ["asset", "document", "hooks"] }
 styrene-ui-state.workspace = true
+styrene-ui-platform.workspace = true
 
 [dev-dependencies]
 dioxus-ssr.workspace = true

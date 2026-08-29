@@ -2,6 +2,11 @@ use dioxus::prelude::*;
 use styrene_ui_app::{
     BackNavigation, Composer, LocalAnnounceStatus, MobileShell, PropagationPanel,
 };
+use styrene_ui_platform::{
+    AccessibilityPreferences, Appearance, ApplicationLifecycle, AuthorizationState, Contrast,
+    KeyboardGeometry, MotionPreference, PlatformGeometry, PlatformInsets, PlatformSnapshot,
+    TextScale, WindowClass, WindowMetrics,
+};
 use styrene_ui_state::{
     ApplyResult, BearerState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
     MobileStore, PropagationCandidate, PropagationPolicy, PropagationProgress, PropagationUpdate,
@@ -121,6 +126,53 @@ fn shared_shell_exposes_semantic_landmarks_labels_and_statuses() {
 
     assert!(!markup.contains("tabindex=\"1\""));
     assert!(!markup.contains("onclick="));
+}
+
+#[test]
+fn shared_shell_exposes_typed_platform_facts_without_inventing_text_scale() {
+    let platform_snapshot = PlatformSnapshot {
+        generation: 3,
+        sequence: 7,
+        window: WindowMetrics {
+            class: WindowClass::Compact,
+            width_css_px: 390,
+            height_css_px: 844,
+        },
+        accessibility: AccessibilityPreferences {
+            text_scale: TextScale::Unavailable,
+            appearance: Appearance::Dark,
+            contrast: Contrast::Increased,
+            motion: MotionPreference::Reduced,
+        },
+        geometry: PlatformGeometry {
+            insets: PlatformInsets::CssEnvironment,
+            keyboard: KeyboardGeometry::WebViewManaged { visible: true },
+        },
+        lifecycle: ApplicationLifecycle::Active,
+        permissions: Vec::new(),
+        notification_authorization: AuthorizationState::Unavailable,
+    };
+    let markup = dioxus_ssr::render_element(rsx! {
+        MobileShell {
+            target: TargetClass::Android,
+            fixture: fixture("direct-message-queued"),
+            platform_snapshot,
+        }
+    });
+
+    for fact in [
+        "data-window-class=\"compact\"",
+        "data-appearance=\"dark\"",
+        "data-contrast=\"increased\"",
+        "data-motion=\"reduced\"",
+        "data-text-scale=\"unavailable\"",
+        "data-lifecycle=\"active\"",
+        "data-keyboard-visible=\"true\"",
+        "data-insets=\"css-environment\"",
+    ] {
+        assert!(markup.contains(fact), "missing platform fact: {fact}");
+    }
+    assert!(!markup.contains("data-text-scale-percent"));
 }
 
 #[test]

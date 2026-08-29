@@ -42,6 +42,7 @@ fn bootstrap_fixture() -> MobileFixture {
 #[component]
 pub fn App() -> Element {
     platform::use_back_navigation();
+    let platform_snapshot = platform::use_platform_snapshot();
 
     #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
     {
@@ -63,6 +64,7 @@ pub fn App() -> Element {
                 target: target_class(),
                 fixture: current.fixture,
                 propagation: current.propagation,
+                platform_snapshot: platform_snapshot.read().clone(),
                 back_navigation: BackNavigation::web_history(),
                 action_sink: move |action| session.read().dispatch(action),
             }
@@ -74,6 +76,7 @@ pub fn App() -> Element {
         MobileShell {
             target: target_class(),
             fixture: bootstrap_fixture(),
+            platform_snapshot: platform_snapshot.read().clone(),
             back_navigation: BackNavigation::web_history(),
         }
     }

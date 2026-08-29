@@ -2,7 +2,7 @@ use styrene_ui_platform::{
     AccessibilityPreferences, Appearance, ApplicationLifecycle, AuthorizationState, Contrast,
     EdgeInsets, KeyboardGeometry, MotionPreference, PermissionKind, PermissionStatus,
     PlatformApplyResult, PlatformChange, PlatformEvent, PlatformGeometry, PlatformInsets,
-    PlatformSnapshot, PlatformState, WindowClass, WindowMetrics,
+    PlatformSnapshot, PlatformState, TextScale, WindowClass, WindowMetrics,
 };
 
 fn snapshot(generation: u64, sequence: u64) -> PlatformSnapshot {
@@ -15,7 +15,7 @@ fn snapshot(generation: u64, sequence: u64) -> PlatformSnapshot {
             height_css_px: 844,
         },
         accessibility: AccessibilityPreferences {
-            text_scale_percent: 100,
+            text_scale: TextScale::Percent(100),
             appearance: Appearance::Light,
             contrast: Contrast::Standard,
             motion: MotionPreference::Full,
@@ -39,7 +39,7 @@ fn current_generation_events_update_typed_platform_facts() {
             generation: 4,
             sequence: 11,
             change: PlatformChange::Accessibility(AccessibilityPreferences {
-                text_scale_percent: 200,
+                text_scale: TextScale::Percent(200),
                 appearance: Appearance::Dark,
                 contrast: Contrast::Increased,
                 motion: MotionPreference::Reduced,
@@ -47,7 +47,7 @@ fn current_generation_events_update_typed_platform_facts() {
         }),
         PlatformApplyResult::Applied
     );
-    assert_eq!(state.snapshot().accessibility.text_scale_percent, 200);
+    assert_eq!(state.snapshot().accessibility.text_scale, TextScale::Percent(200));
     assert_eq!(state.snapshot().accessibility.contrast, Contrast::Increased);
     assert_eq!(state.snapshot().accessibility.motion, MotionPreference::Reduced);
 
