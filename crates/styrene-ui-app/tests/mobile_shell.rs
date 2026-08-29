@@ -3,9 +3,9 @@ use styrene_ui_app::{
     BackNavigation, Composer, LocalAnnounceStatus, MobileShell, PropagationPanel,
 };
 use styrene_ui_platform::{
-    AccessibilityPreferences, Appearance, ApplicationLifecycle, AuthorizationState, Contrast,
-    KeyboardGeometry, MotionPreference, PlatformGeometry, PlatformInsets, PlatformSnapshot,
-    TextScale, TextScaleCategory, WindowClass, WindowMetrics,
+    AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
+    AuthorizationState, Contrast, KeyboardGeometry, MotionPreference, PlatformGeometry,
+    PlatformInsets, PlatformSnapshot, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
 };
 use styrene_ui_state::{
     ApplyResult, BearerState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
@@ -30,6 +30,46 @@ fn render(fixture: MobileFixture) -> String {
     dioxus_ssr::render_element(rsx! {
         MobileShell { target: TargetClass::Ios, fixture }
     })
+}
+
+#[test]
+fn android_usb_fallback_requires_an_explicit_attachment_action() {
+    let live_fixture = fixture("live-empty-connected");
+    let markup = dioxus_ssr::render_element(rsx! {
+        MobileShell {
+            target: TargetClass::Android,
+            fixture: live_fixture,
+            android_usb_attachments: vec![AndroidUsbAttachment {
+                device_id: 7,
+                vendor_id: 0x10c4,
+                product_id: 0xea60,
+                device_name: "/dev/bus/usb/001/007".into(),
+            }],
+            android_usb_authorization: AuthorizationState::NotDetermined,
+        }
+    });
+
+    assert!(markup.contains("id=\"mobile.android-usb\""));
+    assert!(markup.contains("Explicitly choose an attached USB device"));
+    assert!(markup.contains("10c4:ea60"));
+    assert!(markup.contains("Use USB"));
+    assert!(markup.contains("USB authorization: not determined"));
+
+    let busy = dioxus_ssr::render_element(rsx! {
+        MobileShell {
+            target: TargetClass::Android,
+            fixture: fixture("live-empty-connected"),
+            android_usb_attachments: vec![AndroidUsbAttachment {
+                device_id: 7,
+                vendor_id: 0x10c4,
+                product_id: 0xea60,
+                device_name: "/dev/bus/usb/001/007".into(),
+            }],
+            android_usb_busy: true,
+        }
+    });
+    assert!(busy.contains("USB request in progress"));
+    assert!(busy.contains("disabled"));
 }
 
 fn opening_tag_with_id<'a>(markup: &'a str, id: &str) -> &'a str {

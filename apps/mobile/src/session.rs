@@ -1,9 +1,11 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use async_channel::{Receiver, Sender};
 use styrene_ipc::types::{MessageInfo, MessageLifecycleState};
+use styrene_ui_platform::AndroidUsbAttachment;
 use styrene_ui_state::{
     Bearer, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
     ExpectedProjection, Message, MessageLifecycle, MobileAction, MobileActionKind, MobileFixture,
@@ -16,7 +18,7 @@ use styrened::mobile::{
     MobileConnectionPhase, MobileDeliveryMethod, MobileInterfaceConfig, MobileNode,
     MobilePeerAspect, MobilePropagationSnapshot, MobilePropagationSyncState, MobileSendRequest,
     MobileStateEvent, MobileStateSubscription, MobileStateSubscriptionError,
-    persist_mobile_tcp_endpoint,
+    MobileUsbFallbackDisposition, persist_mobile_tcp_endpoint,
 };
 
 const DEFAULT_ENDPOINT: &str = "rns.styrene.io:4242";
@@ -27,6 +29,8 @@ const SUBSCRIPTION_RETRY_DELAY: Duration = Duration::from_millis(250);
 pub struct MobileSession {
     actions: Sender<MobileAction>,
     updates: Receiver<SessionUpdate>,
+    usb_fallbacks: Sender<UsbFallbackRequest>,
+    usb_connections: Sender<UsbConnectionRequest>,
 }
 
 #[derive(Clone, Debug)]
@@ -39,19 +43,47 @@ struct SessionOwner {
     generation: u64,
     backend_generation: u64,
     config: MobileConfig,
-    node: MobileNode,
+    node: Arc<MobileNode>,
     state_events: MobileStateSubscription,
     updates: Sender<SessionUpdate>,
+    usb_worker: Option<UsbWorker>,
+}
+
+struct UsbFallbackRequest {
+    response: Sender<Result<(), String>>,
+}
+
+struct UsbConnectionRequest {
+    kind: UsbConnectionRequestKind,
+    response: Sender<Result<(), String>>,
+}
+
+enum UsbConnectionRequestKind {
+    Connect(AndroidUsbAttachment),
+    PermissionDenied,
+}
+
+struct UsbWorker {
+    cancel: Sender<()>,
+    task: tokio::task::JoinHandle<()>,
 }
 
 impl MobileSession {
     pub fn start() -> Self {
         let (actions, action_receiver) = async_channel::bounded(ACTION_CAPACITY);
         let (update_sender, updates) = async_channel::bounded(1);
+        let (usb_fallbacks, usb_fallback_receiver) = async_channel::bounded(1);
+        let (usb_connections, usb_connection_receiver) = async_channel::bounded(1);
         let startup_failures = update_sender.clone();
-        if let Err(error) = thread::Builder::new()
-            .name("styrene-mobile-session".into())
-            .spawn(move || run_owner(action_receiver, update_sender))
+        if let Err(error) =
+            thread::Builder::new().name("styrene-mobile-session".into()).spawn(move || {
+                run_owner(
+                    action_receiver,
+                    usb_fallback_receiver,
+                    usb_connection_receiver,
+                    update_sender,
+                );
+            })
         {
             let _ = startup_failures.force_send(failed_update(
                 1,
@@ -59,7 +91,7 @@ impl MobileSession {
                 error.to_string(),
             ));
         }
-        Self { actions, updates }
+        Self { actions, updates, usb_fallbacks, usb_connections }
     }
 
     pub fn dispatch(&self, action: MobileAction) {
@@ -68,6 +100,51 @@ impl MobileSession {
 
     pub async fn next_update(&self) -> Option<SessionUpdate> {
         self.updates.recv().await.ok()
+    }
+
+    pub async fn request_android_usb_fallback(&self) -> Result<(), String> {
+        let (response, result) = async_channel::bounded(1);
+        self.usb_fallbacks
+            .send(UsbFallbackRequest { response })
+            .await
+            .map_err(|_| "mobile session is unavailable".to_string())?;
+        result
+            .recv()
+            .await
+            .map_err(|_| "mobile session closed the USB fallback request".to_string())?
+    }
+
+    pub async fn connect_android_usb(
+        &self,
+        attachment: AndroidUsbAttachment,
+    ) -> Result<(), String> {
+        let (response, result) = async_channel::bounded(1);
+        self.usb_connections
+            .send(UsbConnectionRequest {
+                kind: UsbConnectionRequestKind::Connect(attachment),
+                response,
+            })
+            .await
+            .map_err(|_| "mobile session is unavailable".to_string())?;
+        result
+            .recv()
+            .await
+            .map_err(|_| "mobile session closed the USB connection request".to_string())?
+    }
+
+    pub async fn report_android_usb_permission_denied(&self) -> Result<(), String> {
+        let (response, result) = async_channel::bounded(1);
+        self.usb_connections
+            .send(UsbConnectionRequest {
+                kind: UsbConnectionRequestKind::PermissionDenied,
+                response,
+            })
+            .await
+            .map_err(|_| "mobile session is unavailable".to_string())?;
+        result
+            .recv()
+            .await
+            .map_err(|_| "mobile session closed the USB denial report".to_string())?
     }
 
     pub fn starting_update() -> SessionUpdate {
@@ -79,7 +156,12 @@ impl MobileSession {
     }
 }
 
-fn run_owner(actions: Receiver<MobileAction>, updates: Sender<SessionUpdate>) {
+fn run_owner(
+    actions: Receiver<MobileAction>,
+    usb_fallbacks: Receiver<UsbFallbackRequest>,
+    usb_connections: Receiver<UsbConnectionRequest>,
+    updates: Sender<SessionUpdate>,
+) {
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -87,10 +169,15 @@ fn run_owner(actions: Receiver<MobileAction>, updates: Sender<SessionUpdate>) {
             return;
         }
     };
-    runtime.block_on(owner_loop(actions, updates));
+    runtime.block_on(owner_loop(actions, usb_fallbacks, usb_connections, updates));
 }
 
-async fn owner_loop(actions: Receiver<MobileAction>, updates: Sender<SessionUpdate>) {
+async fn owner_loop(
+    actions: Receiver<MobileAction>,
+    usb_fallbacks: Receiver<UsbFallbackRequest>,
+    usb_connections: Receiver<UsbConnectionRequest>,
+    updates: Sender<SessionUpdate>,
+) {
     let generation = 1;
     let config = match mobile_config(DEFAULT_ENDPOINT) {
         Ok(config) => config,
@@ -101,7 +188,7 @@ async fn owner_loop(actions: Receiver<MobileAction>, updates: Sender<SessionUpda
         }
     };
     let node = match MobileNode::boot(config.clone()).await {
-        Ok(node) => node,
+        Ok(node) => Arc::new(node),
         Err(error) => {
             let _ = updates.force_send(failed_update(
                 generation,
@@ -113,15 +200,47 @@ async fn owner_loop(actions: Receiver<MobileAction>, updates: Sender<SessionUpda
     };
     let state_events = node.subscribe_state_events();
     let backend_generation = node.session_snapshot().await.generation;
-    let mut owner =
-        SessionOwner { generation, backend_generation, config, node, state_events, updates };
+    let mut owner = SessionOwner {
+        generation,
+        backend_generation,
+        config,
+        node,
+        state_events,
+        updates,
+        usb_worker: None,
+    };
     publish_snapshot(&owner.node, owner.generation, owner.backend_generation, &owner.updates).await;
 
     loop {
         tokio::select! {
             event = owner.state_events.recv() => owner.handle_event(event).await,
+            request = usb_fallbacks.recv(), if !usb_fallbacks.is_closed() => {
+                let Ok(request) = request else {
+                    continue;
+                };
+                let result = match owner.node.platform_service().request_android_usb_fallback().await {
+                    MobileUsbFallbackDisposition::Accepted => Ok(()),
+                    MobileUsbFallbackDisposition::BluetoothActive => {
+                        Err("approved Bluetooth is active; USB fallback was not requested".into())
+                    }
+                };
+                let _ = request.response.try_send(result);
+            }
+            request = usb_connections.recv(), if !usb_connections.is_closed() => {
+                let Ok(request) = request else {
+                    continue;
+                };
+                let result = match request.kind {
+                    UsbConnectionRequestKind::Connect(attachment) => {
+                        owner.start_usb_worker(attachment).await
+                    }
+                    UsbConnectionRequestKind::PermissionDenied => owner.report_usb_denied().await,
+                };
+                let _ = request.response.try_send(result);
+            }
             action = actions.recv() => {
                 let Ok(action) = action else {
+                    owner.stop_usb_worker().await;
                     let _ = owner.node.shutdown().await;
                     return;
                 };
@@ -134,6 +253,39 @@ async fn owner_loop(actions: Receiver<MobileAction>, updates: Sender<SessionUpda
 }
 
 impl SessionOwner {
+    async fn report_usb_denied(&mut self) -> Result<(), String> {
+        self.stop_usb_worker().await;
+        self.node.stop_rnode_bytes(MobileBearerReason::PermissionDenied).await.map(|_| ())
+    }
+
+    async fn start_usb_worker(&mut self, attachment: AndroidUsbAttachment) -> Result<(), String> {
+        self.stop_usb_worker().await;
+        #[cfg(target_os = "android")]
+        {
+            let (cancel, cancelled) = async_channel::bounded(1);
+            let node = Arc::clone(&self.node);
+            let task = tokio::spawn(run_android_usb(node, attachment, cancelled));
+            self.usb_worker = Some(UsbWorker { cancel, task });
+            Ok(())
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            let _ = attachment;
+            Err("Android USB is unavailable on this platform".into())
+        }
+    }
+
+    async fn stop_usb_worker(&mut self) {
+        if let Some(mut worker) = self.usb_worker.take() {
+            let _ = worker.cancel.try_send(());
+            if tokio::time::timeout(Duration::from_secs(2), &mut worker.task).await.is_err() {
+                worker.task.abort();
+                let _ = worker.task.await;
+            }
+            let _ = self.node.stop_rnode_bytes(MobileBearerReason::ConnectionInterrupted).await;
+        }
+    }
+
     async fn handle_event(
         &mut self,
         event: Result<MobileStateEvent, MobileStateSubscriptionError>,
@@ -207,6 +359,7 @@ impl SessionOwner {
                 .await;
                 return true;
             }
+            self.stop_usb_worker().await;
             let _ = self.node.shutdown().await;
             self.generation = self.generation.saturating_add(1);
             self.config.interfaces =
@@ -222,7 +375,7 @@ impl SessionOwner {
                     return false;
                 }
             };
-            self.node = replacement;
+            self.node = Arc::new(replacement);
             self.state_events = self.node.subscribe_state_events();
             self.backend_generation = self.node.session_snapshot().await.generation;
         } else if let Err(failure) = execute_action(&self.node, action.kind).await {
@@ -248,6 +401,71 @@ impl SessionOwner {
         )
         .await
     }
+}
+
+#[cfg(target_os = "android")]
+async fn run_android_usb(
+    node: Arc<MobileNode>,
+    attachment: AndroidUsbAttachment,
+    cancelled: Receiver<()>,
+) {
+    use styrened::mobile::{MobileBearerObservation, MobileBearerReason};
+
+    let Ok(mut link) = crate::android_usb::AndroidUsbLink::open(attachment.clone()).await else {
+        let _ = node
+            .platform_service()
+            .report(MobileBearerObservation {
+                kind: MobileBearerKind::AndroidUsb,
+                state: MobileBearerState::Unavailable,
+                reason: Some(MobileBearerReason::ConnectionInterrupted),
+            })
+            .await;
+        return;
+    };
+    let result = async {
+        for frame in node.start_rnode_bytes().await? {
+            link.write(frame).await.map_err(|error| error.code)?;
+        }
+        let startup_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        let mut attachment_check = tokio::time::Instant::now();
+        loop {
+            if cancelled.try_recv().is_ok() {
+                return Ok::<(), String>(());
+            }
+            if attachment_check.elapsed() >= Duration::from_secs(1) {
+                let attached = crate::platform::native_android_usb_attachments()
+                    .await
+                    .map_err(|error| error.code)?
+                    .contains(&attachment);
+                if !attached {
+                    return Err("android_usb_detached".into());
+                }
+                attachment_check = tokio::time::Instant::now();
+            }
+            if let Some(bytes) = link.read().await.map_err(|error| error.code)? {
+                for response in node.submit_rnode_bytes(&bytes).await? {
+                    link.write(response).await.map_err(|error| error.code)?;
+                }
+            }
+            if let Some(frame) = node.poll_rnode_bytes().await? {
+                link.write(frame).await.map_err(|error| error.code)?;
+            }
+            let connected = node
+                .session_snapshot()
+                .await
+                .bearer(MobileBearerKind::AndroidUsb)
+                .is_some_and(|bearer| bearer.state == MobileBearerState::Connected);
+            if !connected && tokio::time::Instant::now() >= startup_deadline {
+                return Err("android_usb_rnode_startup_timeout".into());
+            }
+        }
+    }
+    .await;
+    if let Ok(shutdown) = node.stop_rnode_bytes(MobileBearerReason::ConnectionInterrupted).await {
+        let _ = link.write(shutdown).await;
+    }
+    link.close();
+    let _ = result;
 }
 
 async fn synchronize_backend_generation(
@@ -596,7 +814,7 @@ fn mobile_config(endpoint: &str) -> Result<MobileConfig, String> {
         display_name: None,
         identity_backend,
         interfaces: vec![MobileInterfaceConfig::TcpClient { remote_address: endpoint.into() }],
-        enable_rnode_channel: false,
+        enable_rnode_channel: cfg!(target_os = "android"),
     })
 }
 

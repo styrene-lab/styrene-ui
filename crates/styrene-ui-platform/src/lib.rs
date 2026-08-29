@@ -145,6 +145,29 @@ pub struct PermissionStatus {
     pub state: AuthorizationState,
 }
 
+/// Identity of one currently attached Android USB device.
+///
+/// Android device IDs and names identify an attachment, not a durable physical
+/// device. Callers must re-enumerate after detach or permission completion.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AndroidUsbAttachment {
+    pub device_id: i32,
+    pub vendor_id: i32,
+    pub product_id: i32,
+    pub device_name: String,
+}
+
+/// One authorized Android USB ordered-byte attempt.
+///
+/// Implementations own native handles, use bounded buffering, and make `close`
+/// idempotent. Discovery, permission, reconnect, and `RNode` protocol state are
+/// intentionally outside this byte-link contract.
+pub trait AndroidUsbByteLink {
+    fn read(&self) -> PlatformFuture<'_, Result<Option<Vec<u8>>, PlatformFailure>>;
+    fn write(&self, data: Vec<u8>) -> PlatformFuture<'_, Result<(), PlatformFailure>>;
+    fn close(&mut self);
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlatformSnapshot {
     pub generation: u64,
@@ -200,6 +223,20 @@ impl PlatformState {
         if snapshot.generation < self.snapshot.generation
             || (snapshot.generation == self.snapshot.generation
                 && snapshot.sequence <= self.snapshot.sequence)
+        {
+            return PlatformApplyResult::IgnoredStale;
+        }
+
+        self.snapshot = snapshot;
+        PlatformApplyResult::Applied
+    }
+
+    /// Replace an authoritative snapshot requested after stream loss or a native-only change.
+    /// Equal sequence values are accepted because native facts are not sequenced by JavaScript.
+    pub fn replace_resynced_snapshot(&mut self, snapshot: PlatformSnapshot) -> PlatformApplyResult {
+        if snapshot.generation < self.snapshot.generation
+            || (snapshot.generation == self.snapshot.generation
+                && snapshot.sequence < self.snapshot.sequence)
         {
             return PlatformApplyResult::IgnoredStale;
         }
@@ -279,5 +316,14 @@ pub trait PlatformService {
 
     fn request_notification_authorization(
         &self,
+    ) -> PlatformFuture<'_, Result<AuthorizationState, PlatformFailure>>;
+
+    fn android_usb_attachments(
+        &self,
+    ) -> PlatformFuture<'_, Result<Vec<AndroidUsbAttachment>, PlatformFailure>>;
+
+    fn request_android_usb_authorization(
+        &self,
+        attachment: AndroidUsbAttachment,
     ) -> PlatformFuture<'_, Result<AuthorizationState, PlatformFailure>>;
 }

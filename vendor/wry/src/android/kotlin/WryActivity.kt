@@ -5,7 +5,14 @@
 package {{package}}
 
 import android.annotation.SuppressLint
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.res.Configuration
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import android.webkit.WebView
@@ -48,6 +55,8 @@ object WryLifecycleObserver : DefaultLifecycleObserver {
 
 abstract class WryActivity : AppCompatActivity() {
     private lateinit var mWebView: RustWebView
+    private var usbPermissionReceiver: BroadcastReceiver? = null
+    private var usbPermissionPendingIntent: PendingIntent? = null
     var id: Int = 0
     open val handleBackNavigation: Boolean = true
 
@@ -142,6 +151,7 @@ abstract class WryActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        cancelUsbPermissionRequest()
         super.onDestroy()
         Rust.onActivityDestroy(this)
         Rust.onWebviewDestroy(this, if (::mWebView.isInitialized) { mWebView.id } else { "" })
@@ -152,9 +162,73 @@ abstract class WryActivity : AppCompatActivity() {
         Rust.onActivityLowMemory()
     }
 
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Rust.onConfigurationChanged()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         Rust.onNewIntent(intent)
+    }
+
+    fun requestUsbPermission(device: UsbDevice, action: String): Boolean {
+        if (usbPermissionReceiver != null) {
+            return false
+        }
+        val expectedName = device.deviceName
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                if (intent.action != action) {
+                    return
+                }
+                val resultDevice = if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                }
+                if (resultDevice?.deviceName != expectedName) {
+                    return
+                }
+                val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                cancelUsbPermissionRequest()
+                Rust.onUsbPermissionResult(expectedName, granted)
+            }
+        }
+        usbPermissionReceiver = receiver
+        try {
+            val filter = IntentFilter(action)
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(receiver, filter)
+            }
+            val intent = Intent(action).setPackage(packageName)
+            val flags = PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_CANCEL_CURRENT or
+                if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
+            val pendingIntent = PendingIntent.getBroadcast(this, 0, intent, flags)
+            usbPermissionPendingIntent = pendingIntent
+            val manager = getSystemService(Context.USB_SERVICE) as? UsbManager
+                ?: throw IllegalStateException("USB service unavailable")
+            manager.requestPermission(device, pendingIntent)
+            return true
+        } catch (_: RuntimeException) {
+            cancelUsbPermissionRequest()
+            return false
+        }
+    }
+
+    fun cancelUsbPermissionRequest() {
+        usbPermissionPendingIntent?.cancel()
+        usbPermissionPendingIntent = null
+        val receiver = usbPermissionReceiver ?: return
+        usbPermissionReceiver = null
+        try {
+            unregisterReceiver(receiver)
+        } catch (_: IllegalArgumentException) {
+            // Registration failed or the activity was already tearing down.
+        }
     }
 
     fun getAppClass(name: String): Class<*> {

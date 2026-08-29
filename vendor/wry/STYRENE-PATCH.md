@@ -11,6 +11,14 @@ The public Android `try_dispatch` bridge also reports a missing activity or full
 main-thread queue instead of panicking or blocking. Native Styrene platform
 adapters use this path during activity startup and teardown.
 
+The Android activity template forwards `onConfigurationChanged` to an optional
+Rust callback. Styrene uses the callback to request a generation-safe WebView
+platform resnapshot after native font-scale and configuration changes.
+
+The activity template also owns the bounded lifetime of Android's dynamic USB
+permission receiver. It validates the callback against the requested device
+name before forwarding the one-shot result to safe application code.
+
 The fallback remains unavailable when multiple activities are registered, so
 ambiguous multi-window routing still fails closed. Remove this patch after the
 equivalent behavior is available in the pinned upstream Wry release.

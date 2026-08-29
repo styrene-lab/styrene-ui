@@ -35,9 +35,9 @@ a new generation, and stale callbacks cannot replace the current generation.
 | Lifecycle | Document visibility | The WebView reports active or background, not native inactive state |
 | Keyboard | Focus plus visual viewport occlusion | The WebView manages layout resizing |
 | Insets | CSS environment variables | Native inset values are not duplicated |
-| Android permissions | Runtime permission APIs | Bluetooth scan/connect, camera, and notification gates are queried and requested. USB remains unavailable until the explicit device flow exists |
-| iOS permissions | Typed unavailable state | Bluetooth and camera request adapters are not implemented |
-| iOS notifications | `UNUserNotificationCenter` request callback | Request results are granted or denied. Snapshot status remains unavailable because the pinned safe binding cannot read notification settings under the workspace unsafe-code prohibition |
+| Android permissions and USB | Runtime permission APIs, exact-device `UsbManager` requests, and a bounded Rust JNI byte worker | Bluetooth scan/connect, camera, and notification gates are queried and requested. USB requires an explicit attachment choice after Bluetooth fallback is accepted. Serial opening currently covers CDC ACM and Silicon Labs CP210x devices only |
+| iOS permissions | AVFoundation and CoreBluetooth authorization APIs | Camera and Bluetooth status is queried and requested. USB remains unavailable because it has no generic iOS authorization flow |
+| iOS notifications | `UNUserNotificationCenter` settings and request callbacks | Snapshots and post-request results use the exact current authorization setting |
 
 Native Android calls use Wry's bounded main-thread pipe and a one-slot result
 channel. Dispatch fails closed when no activity or queue capacity is available.
@@ -48,6 +48,20 @@ replace the current platform state.
 
 Android stores a request marker before it opens a permission prompt. This marker
 distinguishes an unrequested permission from a denied or revoked permission
-after restart. Native scale changes are re-read when the app returns from system
-settings. A scale change that does not cause a WebView event while the app stays
-active can remain stale until the next authoritative resnapshot.
+after restart. Android configuration callbacks and iOS Dynamic Type notifications
+request an immediate authoritative resnapshot after native text-scale changes.
+
+iOS Objective-C calls that cannot satisfy the application workspace's
+`unsafe_code = "forbid"` policy are isolated in `styrene-ui-apple-bridge`. Its
+safe API exposes only plain authorization values and bounded request tokens;
+native objects and pointers do not cross into the application crate.
+
+Android USB enumeration identifies only the current attachment by device ID,
+vendor ID, product ID, and device path. Permission callbacks and the current
+device list must match that complete identity. Authorization alone does not
+imply an open serial link or a connected RNode. After authorization, a dedicated
+bounded Rust worker opens a CDC ACM or CP210x byte stream, while the backend owns
+KISS framing, RNode detection, radio configuration readback, packet admission,
+and bearer truth. Detach closes the attempt and changes the backend USB bearer;
+only exact successful configuration readback changes it to connected. Physical
+USB behavior and additional USB-to-serial chipsets remain unverified.

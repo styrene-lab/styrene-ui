@@ -4,6 +4,7 @@ members = [
     "apps/mobile",
     "apps/mobile-android",
     "apps/mobile-ios",
+    "crates/styrene-ui-apple-bridge",
     "crates/styrene-ui-app",
     "crates/styrene-ui-platform",
     "crates/styrene-ui-state",

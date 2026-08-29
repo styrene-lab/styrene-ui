@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use dioxus::prelude::*;
 use styrene_ui_platform::{
-    Appearance, ApplicationLifecycle, Contrast, KeyboardGeometry, MotionPreference, PlatformInsets,
-    PlatformSnapshot, TextScale, WindowClass,
+    AndroidUsbAttachment, Appearance, ApplicationLifecycle, AuthorizationState, Contrast,
+    KeyboardGeometry, MotionPreference, PlatformInsets, PlatformSnapshot, TextScale, WindowClass,
 };
 use styrene_ui_state::{
     Conversation, DeliveryEvidence, DeliveryMethod, LocalAnnounceOutcome, Message, MobileAction,
@@ -103,6 +103,16 @@ fn peer_name(hash: &str, peers: &[Peer]) -> String {
         .unwrap_or_else(|| format!("Peer {}", short_hash(hash)))
 }
 
+const fn authorization_state(state: AuthorizationState) -> &'static str {
+    match state {
+        AuthorizationState::NotDetermined => "not determined",
+        AuthorizationState::Granted => "granted",
+        AuthorizationState::Denied => "denied",
+        AuthorizationState::Restricted => "restricted",
+        AuthorizationState::Unavailable => "unavailable",
+    }
+}
+
 #[component]
 pub fn MobileShell(
     target: TargetClass,
@@ -111,6 +121,12 @@ pub fn MobileShell(
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
     #[props(default)] propagation: Option<PropagationUpdate>,
     #[props(default)] platform_snapshot: Option<PlatformSnapshot>,
+    #[props(default)] android_usb_attachments: Vec<AndroidUsbAttachment>,
+    #[props(default)] android_usb_authorization: Option<AuthorizationState>,
+    #[props(default)] android_usb_failure: Option<String>,
+    #[props(default)] android_usb_busy: bool,
+    #[props(default)] android_usb_refresh: Option<EventHandler<()>>,
+    #[props(default)] android_usb_select: Option<EventHandler<AndroidUsbAttachment>>,
 ) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let messaging_available = MobileStore::new(fixture.clone()).messaging_available();
@@ -438,6 +454,66 @@ pub fn MobileShell(
                     generation: fixture.generation,
                     enabled: live_actions_enabled,
                     action_sink,
+                }
+                if target == TargetClass::Android
+                    && (android_usb_refresh.is_some() || !android_usb_attachments.is_empty())
+                {
+                    article {
+                        id: "mobile.android-usb",
+                        class: "settings-card",
+                        "aria-labelledby": "mobile.android-usb-heading",
+                        div {
+                            h3 { id: "mobile.android-usb-heading", "Android USB fallback" }
+                            p { class: "field-hint", "Explicitly choose an attached USB device. Bluetooth remains preferred." }
+                        }
+                        button {
+                            r#type: "button",
+                            class: "secondary-action",
+                            disabled: android_usb_busy,
+                            onclick: move |_| {
+                                if let Some(handler) = android_usb_refresh {
+                                    handler.call(());
+                                }
+                            },
+                            if android_usb_busy { "USB request in progress" } else { "Refresh USB devices" }
+                        }
+                        if android_usb_attachments.is_empty() {
+                            p { class: "field-hint", "No attached USB host devices." }
+                        }
+                        for attachment in android_usb_attachments.clone() {
+                            article {
+                                class: "bearer-card",
+                                "data-device-id": attachment.device_id.to_string(),
+                                "data-vendor-id": attachment.vendor_id.to_string(),
+                                "data-product-id": attachment.product_id.to_string(),
+                                div {
+                                    h3 { "USB device {attachment.device_id}" }
+                                    p { class: "technical-value", {format!("{:04x}:{:04x}", attachment.vendor_id, attachment.product_id)} }
+                                }
+                                button {
+                                    r#type: "button",
+                                    class: "secondary-action",
+                                    disabled: android_usb_busy,
+                                    onclick: move |_| {
+                                        if let Some(handler) = android_usb_select {
+                                            handler.call(attachment.clone());
+                                        }
+                                    },
+                                    "Use USB"
+                                }
+                            }
+                        }
+                        if let Some(authorization) = android_usb_authorization {
+                            p {
+                                class: "field-hint",
+                                role: "status",
+                                "USB authorization: {authorization_state(authorization)}"
+                            }
+                        }
+                        if let Some(failure) = &android_usb_failure {
+                            p { class: "field-error", role: "alert", {failure.clone()} }
+                        }
+                    }
                 }
                 h3 { class: "group-heading", "Bearers" }
                 for bearer in &fixture.bearers {

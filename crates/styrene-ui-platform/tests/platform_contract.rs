@@ -1,8 +1,9 @@
 use styrene_ui_platform::{
-    AccessibilityPreferences, Appearance, ApplicationLifecycle, AuthorizationState, Contrast,
-    EdgeInsets, KeyboardGeometry, MotionPreference, PermissionKind, PermissionStatus,
-    PlatformApplyResult, PlatformChange, PlatformEvent, PlatformGeometry, PlatformInsets,
-    PlatformSnapshot, PlatformState, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
+    AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
+    AuthorizationState, Contrast, EdgeInsets, KeyboardGeometry, MotionPreference, PermissionKind,
+    PermissionStatus, PlatformApplyResult, PlatformChange, PlatformEvent, PlatformGeometry,
+    PlatformInsets, PlatformSnapshot, PlatformState, TextScale, TextScaleCategory, WindowClass,
+    WindowMetrics,
 };
 
 fn snapshot(generation: u64, sequence: u64) -> PlatformSnapshot {
@@ -38,6 +39,21 @@ fn text_scale_categories_have_stable_platform_attributes() {
         "accessibility-extra-extra-extra-large"
     );
     assert_eq!(TextScaleCategory::Unknown.as_str(), "unknown");
+}
+
+#[test]
+fn android_usb_identity_is_attachment_scoped() {
+    let attachment = AndroidUsbAttachment {
+        device_id: 7,
+        vendor_id: 0x10c4,
+        product_id: 0xea60,
+        device_name: "/dev/bus/usb/001/007".into(),
+    };
+
+    assert_eq!(attachment.device_id, 7);
+    assert_eq!(attachment.vendor_id, 0x10c4);
+    assert_eq!(attachment.product_id, 0xea60);
+    assert_eq!(attachment.device_name, "/dev/bus/usb/001/007");
 }
 
 #[test]
@@ -134,4 +150,18 @@ fn newer_snapshot_changes_generation_without_merging_partial_state() {
     assert_eq!(state.replace_snapshot(replacement.clone()), PlatformApplyResult::Applied);
     assert_eq!(state.snapshot(), &replacement);
     assert_eq!(state.replace_snapshot(snapshot(1, 100)), PlatformApplyResult::IgnoredStale);
+}
+
+#[test]
+fn authoritative_resync_accepts_native_changes_at_equal_web_sequence() {
+    let mut state = PlatformState::new(snapshot(4, 9));
+    let mut native_update = snapshot(4, 9);
+    native_update.accessibility.text_scale = TextScale::Percent(135);
+
+    assert_eq!(
+        state.replace_resynced_snapshot(native_update.clone()),
+        PlatformApplyResult::Applied
+    );
+    assert_eq!(state.snapshot(), &native_update);
+    assert_eq!(state.replace_resynced_snapshot(snapshot(4, 8)), PlatformApplyResult::IgnoredStale);
 }
