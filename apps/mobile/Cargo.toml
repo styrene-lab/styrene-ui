@@ -9,8 +9,10 @@ publish = false
 
 [dependencies]
 dioxus.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 styrene-ui-app = { path = "../../crates/styrene-ui-app" }
+styrene-ui-platform.workspace = true
 styrene-ui-state.workspace = true
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]

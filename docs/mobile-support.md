@@ -18,3 +18,21 @@ The Android validation lanes are API 28, API 35, and a physical commodity
 device. The iOS lanes are the current simulator and a physical iPhone. Release
 evidence records the host package version, shared UI revision, backend revision,
 artifact hash, device OS, and WebView version.
+
+## WebView Platform Facts
+
+The shared host exposes platform facts through a bounded typed subscription.
+Coalesced callbacks require an authoritative snapshot. A new subscription uses
+a new generation, and stale callbacks cannot replace the current generation.
+
+| Fact | Current source | Current limit |
+|---|---|---|
+| Window class and dimensions | Layout viewport | CSS pixel values only |
+| Appearance | `prefers-color-scheme` | Limited to values exposed by the WebView |
+| Increased contrast | `prefers-contrast` | Android System WebView does not expose this setting reliably |
+| Reduced motion | `prefers-reduced-motion` | Limited to values exposed by the WebView |
+| Text scale | Typed unavailable state | Native system-scale adapters are not implemented |
+| Lifecycle | Document visibility | The WebView reports active or background, not native inactive state |
+| Keyboard | Focus plus visual viewport occlusion | The WebView manages layout resizing |
+| Insets | CSS environment variables | Native inset values are not duplicated |
+| Permissions and notifications | Typed unavailable state | Native request adapters are not implemented |

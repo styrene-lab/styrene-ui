@@ -3,6 +3,10 @@
 use std::collections::HashMap;
 
 use dioxus::prelude::*;
+use styrene_ui_platform::{
+    Appearance, ApplicationLifecycle, Contrast, KeyboardGeometry, MotionPreference, PlatformInsets,
+    PlatformSnapshot, TextScale, WindowClass,
+};
 use styrene_ui_state::{
     Conversation, DeliveryEvidence, DeliveryMethod, LocalAnnounceOutcome, Message, MobileAction,
     MobileActionKind, MobileFixture, MobileStore, Peer, PropagationEvidence, PropagationUpdate,
@@ -106,6 +110,7 @@ pub fn MobileShell(
     #[props(default)] back_navigation: BackNavigation,
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
     #[props(default)] propagation: Option<PropagationUpdate>,
+    #[props(default)] platform_snapshot: Option<PlatformSnapshot>,
 ) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let messaging_available = MobileStore::new(fixture.clone()).messaging_available();
@@ -146,6 +151,50 @@ pub fn MobileShell(
     let compact_thread_is_open = *compact_thread_open.read();
     let conversation_count = fixture.conversations.len().to_string();
     let peer_count = fixture.peers.len().to_string();
+    let window_class = platform_snapshot.as_ref().map(|snapshot| match snapshot.window.class {
+        WindowClass::Compact => "compact",
+        WindowClass::Wide => "wide",
+    });
+    let appearance =
+        platform_snapshot.as_ref().map(|snapshot| match snapshot.accessibility.appearance {
+            Appearance::Light => "light",
+            Appearance::Dark => "dark",
+        });
+    let contrast =
+        platform_snapshot.as_ref().map(|snapshot| match snapshot.accessibility.contrast {
+            Contrast::Standard => "standard",
+            Contrast::Increased => "increased",
+        });
+    let motion = platform_snapshot.as_ref().map(|snapshot| match snapshot.accessibility.motion {
+        MotionPreference::Full => "full",
+        MotionPreference::Reduced => "reduced",
+    });
+    let text_scale =
+        platform_snapshot.as_ref().map(|snapshot| match snapshot.accessibility.text_scale {
+            TextScale::Percent(_) => "percent",
+            TextScale::Unavailable => "unavailable",
+        });
+    let text_scale_percent =
+        platform_snapshot.as_ref().and_then(|snapshot| match snapshot.accessibility.text_scale {
+            TextScale::Percent(percent) => Some(percent.to_string()),
+            TextScale::Unavailable => None,
+        });
+    let lifecycle = platform_snapshot.as_ref().map(|snapshot| match snapshot.lifecycle {
+        ApplicationLifecycle::Active => "active",
+        ApplicationLifecycle::Inactive => "inactive",
+        ApplicationLifecycle::Background => "background",
+    });
+    let keyboard_visible =
+        platform_snapshot.as_ref().map(|snapshot| match snapshot.geometry.keyboard {
+            KeyboardGeometry::WebViewManaged { visible } => visible.to_string(),
+            KeyboardGeometry::NativeBridge { occluded_height_css_px } => {
+                (occluded_height_css_px > 0).to_string()
+            }
+        });
+    let insets = platform_snapshot.as_ref().map(|snapshot| match snapshot.geometry.insets {
+        PlatformInsets::CssEnvironment => "css-environment",
+        PlatformInsets::NativeBridge(_) => "native-bridge",
+    });
 
     rsx! {
         document::Title { "Styrene Messages" }
@@ -157,6 +206,15 @@ pub fn MobileShell(
             "data-fixture-id": fixture.id.clone(),
             "data-generation": fixture.generation.to_string(),
             "data-live-network-enabled": boundary.live_network_allowed().to_string(),
+            "data-window-class": window_class,
+            "data-appearance": appearance,
+            "data-contrast": contrast,
+            "data-motion": motion,
+            "data-text-scale": text_scale,
+            "data-text-scale-percent": text_scale_percent,
+            "data-lifecycle": lifecycle,
+            "data-keyboard-visible": keyboard_visible,
+            "data-insets": insets,
             if back_navigation.web_history {
                 button {
                     id: "mobile.platform-back",

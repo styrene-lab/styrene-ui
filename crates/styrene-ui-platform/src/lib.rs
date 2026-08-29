@@ -37,8 +37,14 @@ pub enum MotionPreference {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextScale {
+    Percent(u16),
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AccessibilityPreferences {
-    pub text_scale_percent: u16,
+    pub text_scale: TextScale,
     pub appearance: Appearance,
     pub contrast: Contrast,
     pub motion: MotionPreference,
