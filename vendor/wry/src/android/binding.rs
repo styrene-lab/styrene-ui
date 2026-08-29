@@ -36,6 +36,14 @@ macro_rules! android_binding {
     use $wry::{android_setup as _, prelude::*};
 
     android_fn!($domain, $package, Rust, wryCreate, []);
+    android_fn!($domain, $package, Rust, onConfigurationChanged, []);
+    android_fn!(
+      $domain,
+      $package,
+      Rust,
+      onUsbPermissionResult,
+      [JString, jboolean]
+    );
     android_fn!(
       $domain,
       $package,
@@ -269,6 +277,24 @@ pub unsafe fn wryCreate(env: JNIEnv, _: JClass) {
       }
     })
     .unwrap();
+}
+
+#[allow(non_snake_case)]
+pub unsafe fn onConfigurationChanged(_: JNIEnv, _: JClass) {
+  super::configuration_changed();
+}
+
+#[allow(non_snake_case)]
+pub unsafe fn onUsbPermissionResult(
+  mut env: JNIEnv,
+  _: JClass,
+  device_name: JString,
+  granted: jboolean,
+) {
+  let Ok(device_name) = env.get_string(&device_name) else {
+    return;
+  };
+  super::usb_permission_result(device_name.to_string_lossy().into_owned(), granted != 0);
 }
 
 #[allow(non_snake_case)]

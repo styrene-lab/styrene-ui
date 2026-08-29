@@ -35,6 +35,11 @@ use main_pipe::{
 use crate::util::Counter;
 
 static COUNTER: Counter = Counter::new();
+static CONFIGURATION_CHANGED_HANDLER: Lazy<Mutex<Option<Box<dyn Fn() + Send + 'static>>>> =
+  Lazy::new(|| Mutex::new(None));
+static USB_PERMISSION_RESULT_HANDLER: Lazy<
+  Mutex<Option<Box<dyn Fn(String, bool) + Send + 'static>>>,
+> = Lazy::new(|| Mutex::new(None));
 const MAIN_PIPE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Context<'a, 'b> {
@@ -544,4 +549,37 @@ where
 {
   let activity_id = single_activity_id().ok_or(crate::Error::ActivityUnavailable)?;
   MainPipe::try_send(activity_id, WebViewMessage::Jni(Box::new(func)))
+}
+
+pub(crate) fn configuration_changed() {
+  if let Some(handler) = CONFIGURATION_CHANGED_HANDLER.lock().unwrap().as_ref() {
+    handler();
+  }
+}
+
+/// Sets the callback invoked after Android reports a configuration change.
+pub fn set_configuration_changed_handler<F>(handler: F)
+where
+  F: Fn() + Send + 'static,
+{
+  *CONFIGURATION_CHANGED_HANDLER.lock().unwrap() = Some(Box::new(handler));
+}
+
+pub(crate) fn usb_permission_result(device_name: String, granted: bool) {
+  if let Some(handler) = USB_PERMISSION_RESULT_HANDLER.lock().unwrap().take() {
+    handler(device_name, granted);
+  }
+}
+
+/// Sets the one-shot callback for an Android USB permission result.
+pub fn set_usb_permission_result_handler<F>(handler: F)
+where
+  F: Fn(String, bool) + Send + 'static,
+{
+  *USB_PERMISSION_RESULT_HANDLER.lock().unwrap() = Some(Box::new(handler));
+}
+
+/// Clears the pending Android USB permission callback.
+pub fn clear_usb_permission_result_handler() {
+  *USB_PERMISSION_RESULT_HANDLER.lock().unwrap() = None;
 }

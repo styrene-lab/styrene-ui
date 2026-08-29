@@ -1,11 +1,11 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
 use styrene_ui_platform::{
-    AccessibilityPreferences, Appearance, ApplicationLifecycle, AuthorizationState, Contrast,
-    KeyboardGeometry, MotionPreference, PermissionKind, PermissionStatus, PlatformApplyResult,
-    PlatformChange, PlatformEvent, PlatformEventStream, PlatformFailure, PlatformFuture,
-    PlatformGeometry, PlatformInsets, PlatformService, PlatformSnapshot, PlatformState, TextScale,
-    WindowClass, WindowMetrics,
+    AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
+    AuthorizationState, Contrast, KeyboardGeometry, MotionPreference, PermissionKind,
+    PermissionStatus, PlatformApplyResult, PlatformChange, PlatformEvent, PlatformEventStream,
+    PlatformFailure, PlatformFuture, PlatformGeometry, PlatformInsets, PlatformService,
+    PlatformSnapshot, PlatformState, TextScale, WindowClass, WindowMetrics,
 };
 
 #[cfg(any(test, target_os = "android"))]
@@ -92,15 +92,19 @@ mod native_platform {
     use async_channel::Sender;
     use jni::{
         JNIEnv,
-        objects::{JObject, JValue},
+        objects::{JObject, JString, JValue},
     };
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    };
     use styrene_ui_platform::{
-        AuthorizationState, PermissionKind, PermissionStatus, PlatformFailure, PlatformSnapshot,
-        TextScale,
+        AndroidUsbAttachment, AuthorizationState, PermissionKind, PermissionStatus,
+        PlatformFailure, PlatformSnapshot, TextScale,
     };
 
     static PERMISSION_REQUEST_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static USB_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 
     struct PermissionRequestGuard;
 
@@ -119,11 +123,54 @@ mod native_platform {
         }
     }
 
+    struct UsbPermissionCleanup {
+        cancelled: Arc<AtomicBool>,
+        armed: bool,
+    }
+
+    impl UsbPermissionCleanup {
+        fn complete(&mut self) {
+            wry::clear_usb_permission_result_handler();
+            self.armed = false;
+        }
+
+        fn cancel(&mut self) {
+            if !self.armed {
+                return;
+            }
+            self.cancelled.store(true, Ordering::Release);
+            wry::clear_usb_permission_result_handler();
+            let _ = wry::try_dispatch(|env, activity, _| {
+                let _ = cancel_usb_permission_request(env, activity);
+                if env.exception_check().unwrap_or(false) {
+                    let _ = env.exception_clear();
+                }
+            });
+            self.armed = false;
+        }
+    }
+
+    impl Drop for UsbPermissionCleanup {
+        fn drop(&mut self) {
+            self.cancel();
+        }
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    pub fn prepare_subscription() -> Option<async_channel::Receiver<()>> {
+        let (sender, receiver) = async_channel::bounded(1);
+        wry::set_configuration_changed_handler(move || {
+            let _ = sender.try_send(());
+        });
+        Some(receiver)
+    }
+
     #[derive(Clone, Debug)]
     struct NativeFacts {
         font_scale: Option<u16>,
         camera: AuthorizationState,
         bluetooth: AuthorizationState,
+        usb: AuthorizationState,
         notifications: AuthorizationState,
     }
 
@@ -141,7 +188,7 @@ mod native_platform {
         snapshot.permissions = vec![
             PermissionStatus { kind: PermissionKind::Bluetooth, state: facts.bluetooth },
             PermissionStatus { kind: PermissionKind::Camera, state: facts.camera },
-            PermissionStatus { kind: PermissionKind::Usb, state: AuthorizationState::Unavailable },
+            PermissionStatus { kind: PermissionKind::Usb, state: facts.usb },
         ];
         snapshot.notification_authorization = facts.notifications;
     }
@@ -256,6 +303,7 @@ mod native_platform {
                 activity,
                 permission_names(PermissionKind::Bluetooth, sdk),
             )?,
+            usb: AuthorizationState::Unavailable,
             notifications: notifications_state(env, activity, sdk)?,
         })
     }
@@ -393,13 +441,249 @@ mod native_platform {
         .v()
     }
 
+    enum UsbRequestStart {
+        Resolved(AuthorizationState),
+        Requested(String),
+    }
+
+    pub async fn android_usb_attachments() -> Result<Vec<AndroidUsbAttachment>, PlatformFailure> {
+        dispatch_query(enumerate_usb_attachments).await
+    }
+
+    pub async fn request_android_usb_authorization(
+        attachment: AndroidUsbAttachment,
+    ) -> Result<AuthorizationState, PlatformFailure> {
+        let _request_guard = PermissionRequestGuard::acquire()?;
+        let (sender, receiver) = async_channel::bounded(1);
+        wry::set_usb_permission_result_handler(move |device_name, granted| {
+            let _ = sender.try_send((device_name, granted));
+        });
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let mut cleanup = UsbPermissionCleanup { cancelled: cancelled.clone(), armed: true };
+
+        let requested_attachment = attachment.clone();
+        let request_cancelled = cancelled;
+        let start = dispatch_query(move |env, activity| {
+            if request_cancelled.load(Ordering::Acquire) {
+                return Err(jni::errors::Error::JniCall(jni::errors::JniError::InvalidArguments));
+            }
+            start_usb_permission_request(env, activity, &requested_attachment)
+        })
+        .await;
+        let expected_name = match start {
+            Ok(Some(UsbRequestStart::Resolved(state))) => {
+                cleanup.complete();
+                return Ok(state);
+            }
+            Ok(Some(UsbRequestStart::Requested(name))) => name,
+            Ok(None) => {
+                cleanup.cancel();
+                return Err(failure("android_usb_attachment_stale", true));
+            }
+            Err(error) => {
+                cleanup.cancel();
+                return Err(error);
+            }
+        };
+
+        let callback =
+            tokio::time::timeout(std::time::Duration::from_mins(2), receiver.recv()).await;
+        if callback.is_err() {
+            cleanup.cancel();
+        } else {
+            cleanup.complete();
+        }
+        let (device_name, _granted) = callback
+            .map_err(|_| failure("android_usb_permission_callback_timeout", true))?
+            .map_err(|_| failure("android_usb_permission_callback_closed", true))?;
+        if device_name != expected_name {
+            return Err(failure("android_usb_permission_device_mismatch", false));
+        }
+        let state = dispatch_query(move |env, activity| {
+            usb_state_for_attachment(env, activity, &attachment)
+        })
+        .await?;
+        state.ok_or_else(|| failure("android_usb_attachment_stale", true))
+    }
+
+    fn start_usb_permission_request(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        attachment: &AndroidUsbAttachment,
+    ) -> jni::errors::Result<Option<UsbRequestStart>> {
+        let Some(device) = find_usb_device(env, activity, attachment)? else {
+            return Ok(None);
+        };
+        if usb_has_permission(env, activity, &device)? {
+            return Ok(Some(UsbRequestStart::Resolved(AuthorizationState::Granted)));
+        }
+        mark_usb_requested(env, activity, attachment)?;
+        let action = env.new_string(format!(
+            "io.styrene.mesh.USB_PERMISSION.{}.{}",
+            attachment.device_id,
+            USB_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ))?;
+        let started = env
+            .call_method(
+                activity,
+                "requestUsbPermission",
+                "(Landroid/hardware/usb/UsbDevice;Ljava/lang/String;)Z",
+                &[JValue::Object(&device), JValue::Object(&action)],
+            )?
+            .z()?;
+        if !started {
+            return Err(invalid_arguments());
+        }
+        Ok(Some(UsbRequestStart::Requested(attachment.device_name.clone())))
+    }
+
+    fn cancel_usb_permission_request(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+    ) -> jni::errors::Result<()> {
+        env.call_method(activity, "cancelUsbPermissionRequest", "()V", &[])?.v()
+    }
+
+    fn usb_state_for_attachment(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        attachment: &AndroidUsbAttachment,
+    ) -> jni::errors::Result<Option<AuthorizationState>> {
+        let Some(device) = find_usb_device(env, activity, attachment)? else {
+            return Ok(None);
+        };
+        if usb_has_permission(env, activity, &device)? {
+            return Ok(Some(AuthorizationState::Granted));
+        }
+        Ok(Some(if usb_was_requested(env, activity, attachment)? {
+            AuthorizationState::Denied
+        } else {
+            AuthorizationState::NotDetermined
+        }))
+    }
+
+    fn enumerate_usb_attachments(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+    ) -> jni::errors::Result<Vec<AndroidUsbAttachment>> {
+        let iterator = usb_device_iterator(env, activity)?;
+        let mut attachments = Vec::new();
+        while env.call_method(&iterator, "hasNext", "()Z", &[])?.z()? {
+            let device = env.call_method(&iterator, "next", "()Ljava/lang/Object;", &[])?.l()?;
+            attachments.push(usb_attachment(env, &device)?);
+        }
+        attachments.sort_by(|left, right| left.device_name.cmp(&right.device_name));
+        Ok(attachments)
+    }
+
+    fn find_usb_device<'local>(
+        env: &mut JNIEnv<'local>,
+        activity: &JObject<'_>,
+        expected: &AndroidUsbAttachment,
+    ) -> jni::errors::Result<Option<JObject<'local>>> {
+        let iterator = usb_device_iterator(env, activity)?;
+        while env.call_method(&iterator, "hasNext", "()Z", &[])?.z()? {
+            let device = env.call_method(&iterator, "next", "()Ljava/lang/Object;", &[])?.l()?;
+            if usb_attachment(env, &device)? == *expected {
+                return Ok(Some(device));
+            }
+        }
+        Ok(None)
+    }
+
+    fn usb_device_iterator<'local>(
+        env: &mut JNIEnv<'local>,
+        activity: &JObject<'_>,
+    ) -> jni::errors::Result<JObject<'local>> {
+        let service = env.new_string("usb")?;
+        let manager = env
+            .call_method(
+                activity,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&service)],
+            )?
+            .l()?;
+        let devices =
+            env.call_method(&manager, "getDeviceList", "()Ljava/util/HashMap;", &[])?.l()?;
+        let values = env.call_method(&devices, "values", "()Ljava/util/Collection;", &[])?.l()?;
+        env.call_method(&values, "iterator", "()Ljava/util/Iterator;", &[])?.l()
+    }
+
+    fn usb_attachment(
+        env: &mut JNIEnv<'_>,
+        device: &JObject<'_>,
+    ) -> jni::errors::Result<AndroidUsbAttachment> {
+        let name = env.call_method(device, "getDeviceName", "()Ljava/lang/String;", &[])?.l()?;
+        let name = env.get_string(&JString::from(name))?.to_string_lossy().into_owned();
+        Ok(AndroidUsbAttachment {
+            device_id: env.call_method(device, "getDeviceId", "()I", &[])?.i()?,
+            vendor_id: env.call_method(device, "getVendorId", "()I", &[])?.i()?,
+            product_id: env.call_method(device, "getProductId", "()I", &[])?.i()?,
+            device_name: name,
+        })
+    }
+
+    fn usb_has_permission(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        device: &JObject<'_>,
+    ) -> jni::errors::Result<bool> {
+        let service = env.new_string("usb")?;
+        let manager = env
+            .call_method(
+                activity,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&service)],
+            )?
+            .l()?;
+        env.call_method(
+            &manager,
+            "hasPermission",
+            "(Landroid/hardware/usb/UsbDevice;)Z",
+            &[JValue::Object(device)],
+        )?
+        .z()
+    }
+
+    fn usb_was_requested(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        attachment: &AndroidUsbAttachment,
+    ) -> jni::errors::Result<bool> {
+        permission_was_requested(env, activity, &usb_marker(attachment))
+    }
+
+    fn mark_usb_requested(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        attachment: &AndroidUsbAttachment,
+    ) -> jni::errors::Result<()> {
+        let marker = usb_marker(attachment);
+        mark_permissions_requested(env, activity, &[&marker])
+    }
+
+    fn usb_marker(attachment: &AndroidUsbAttachment) -> String {
+        format!(
+            "usb:{}:{}:{}:{}",
+            attachment.device_id,
+            attachment.vendor_id,
+            attachment.product_id,
+            attachment.device_name
+        )
+    }
+
     fn has_window_focus(env: &mut JNIEnv<'_>, activity: &JObject<'_>) -> jni::errors::Result<bool> {
         env.call_method(activity, "hasWindowFocus", "()Z", &[])?.z()
     }
 
     fn jni_int(value: usize) -> jni::errors::Result<i32> {
-        i32::try_from(value)
-            .map_err(|_| jni::errors::Error::JniCall(jni::errors::JniError::InvalidArguments))
+        i32::try_from(value).map_err(|_| invalid_arguments())
+    }
+
+    fn invalid_arguments() -> jni::errors::Error {
+        jni::errors::Error::JniCall(jni::errors::JniError::InvalidArguments)
     }
 
     fn failure(code: &str, retryable: bool) -> PlatformFailure {
@@ -409,36 +693,69 @@ mod native_platform {
 
 #[cfg(target_os = "ios")]
 mod native_platform {
+    use std::sync::Mutex;
+
     use block2::RcBlock;
     use objc2::{MainThreadMarker, runtime::Bool};
     use objc2_foundation::NSError;
     use objc2_ui_kit::UIApplication;
     use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
+    use styrene_ui_apple_bridge::NativeAuthorization;
     use styrene_ui_platform::{
-        AuthorizationState, PermissionKind, PermissionStatus, PlatformFailure, PlatformSnapshot,
+        AndroidUsbAttachment, AuthorizationState, PermissionKind, PermissionStatus,
+        PlatformFailure, PlatformSnapshot,
     };
 
-    pub fn enrich_snapshot(snapshot: &mut PlatformSnapshot) -> std::future::Ready<()> {
-        snapshot.permissions =
-            [PermissionKind::Bluetooth, PermissionKind::Camera, PermissionKind::Usb]
-                .into_iter()
-                .map(|kind| PermissionStatus { kind, state: AuthorizationState::Unavailable })
-                .collect();
-        snapshot.notification_authorization = AuthorizationState::Unavailable;
+    static CONFIGURATION_SENDER: Mutex<Option<async_channel::Sender<()>>> = Mutex::new(None);
+
+    #[allow(clippy::unnecessary_wraps)]
+    pub fn prepare_subscription() -> Option<async_channel::Receiver<()>> {
+        let (sender, receiver) = async_channel::bounded(1);
+        if let Ok(mut current) = CONFIGURATION_SENDER.lock() {
+            *current = Some(sender);
+        }
+        styrene_ui_apple_bridge::install_content_size_observer(|| {
+            if let Ok(current) = CONFIGURATION_SENDER.lock()
+                && let Some(sender) = current.as_ref()
+            {
+                let _ = sender.try_send(());
+            }
+        });
+        Some(receiver)
+    }
+
+    pub async fn enrich_snapshot(snapshot: &mut PlatformSnapshot) {
+        snapshot.permissions = vec![
+            PermissionStatus {
+                kind: PermissionKind::Bluetooth,
+                state: authorization(styrene_ui_apple_bridge::bluetooth_authorization()),
+            },
+            PermissionStatus {
+                kind: PermissionKind::Camera,
+                state: authorization(styrene_ui_apple_bridge::camera_authorization()),
+            },
+            PermissionStatus { kind: PermissionKind::Usb, state: AuthorizationState::Unavailable },
+        ];
+        snapshot.notification_authorization =
+            query_notification_authorization().await.unwrap_or(AuthorizationState::Unavailable);
         let Some(marker) = MainThreadMarker::new() else {
             snapshot.accessibility.text_scale = styrene_ui_platform::TextScale::Unavailable;
-            return std::future::ready(());
+            return;
         };
         let application = UIApplication::sharedApplication(marker);
         let category = application.preferredContentSizeCategory().to_string();
         snapshot.accessibility.text_scale = super::ios_text_scale_category(&category);
-        std::future::ready(())
     }
 
-    pub fn request_permission(
+    pub async fn request_permission(
         kind: PermissionKind,
-    ) -> std::future::Ready<Result<PermissionStatus, PlatformFailure>> {
-        std::future::ready(Ok(PermissionStatus { kind, state: AuthorizationState::Unavailable }))
+    ) -> Result<PermissionStatus, PlatformFailure> {
+        let state = match kind {
+            PermissionKind::Camera => request_camera().await?,
+            PermissionKind::Bluetooth => request_bluetooth().await?,
+            PermissionKind::Usb => AuthorizationState::Unavailable,
+        };
+        Ok(PermissionStatus { kind, state })
     }
 
     pub async fn request_notifications() -> Result<AuthorizationState, PlatformFailure> {
@@ -465,7 +782,74 @@ mod native_platform {
         tokio::time::timeout(std::time::Duration::from_mins(2), receiver.recv())
             .await
             .map_err(|_| failure("ios_notification_callback_timeout", true))?
-            .map_err(|_| failure("ios_notification_callback_closed", true))?
+            .map_err(|_| failure("ios_notification_callback_closed", true))??;
+        query_notification_authorization().await
+    }
+
+    pub fn android_usb_attachments()
+    -> std::future::Ready<Result<Vec<AndroidUsbAttachment>, PlatformFailure>> {
+        std::future::ready(Ok(Vec::new()))
+    }
+
+    pub fn request_android_usb_authorization(
+        _: AndroidUsbAttachment,
+    ) -> std::future::Ready<Result<AuthorizationState, PlatformFailure>> {
+        std::future::ready(Ok(AuthorizationState::Unavailable))
+    }
+
+    async fn request_camera() -> Result<AuthorizationState, PlatformFailure> {
+        let current = authorization(styrene_ui_apple_bridge::camera_authorization());
+        if current != AuthorizationState::NotDetermined {
+            return Ok(current);
+        }
+        let (sender, receiver) = async_channel::bounded(1);
+        styrene_ui_apple_bridge::request_camera(move |state| {
+            let _ = sender.try_send(authorization(state));
+        })
+        .map_err(|_| failure("ios_camera_request_unavailable", false))?;
+        tokio::time::timeout(std::time::Duration::from_mins(2), receiver.recv())
+            .await
+            .map_err(|_| failure("ios_camera_callback_timeout", true))?
+            .map_err(|_| failure("ios_camera_callback_closed", true))
+    }
+
+    async fn request_bluetooth() -> Result<AuthorizationState, PlatformFailure> {
+        let current = authorization(styrene_ui_apple_bridge::bluetooth_authorization());
+        if current != AuthorizationState::NotDetermined {
+            return Ok(current);
+        }
+        let (sender, receiver) = async_channel::bounded(1);
+        let request = styrene_ui_apple_bridge::request_bluetooth(move |state| {
+            let _ = sender.try_send(authorization(state));
+        })
+        .map_err(|_| failure("ios_bluetooth_request_unavailable", false))?;
+        let result = tokio::time::timeout(std::time::Duration::from_mins(2), receiver.recv())
+            .await
+            .map_err(|_| failure("ios_bluetooth_callback_timeout", true))?
+            .map_err(|_| failure("ios_bluetooth_callback_closed", true));
+        drop(request);
+        result
+    }
+
+    async fn query_notification_authorization() -> Result<AuthorizationState, PlatformFailure> {
+        let (sender, receiver) = async_channel::bounded(1);
+        styrene_ui_apple_bridge::query_notification_authorization(move |state| {
+            let _ = sender.try_send(authorization(state));
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(10), receiver.recv())
+            .await
+            .map_err(|_| failure("ios_notification_snapshot_timeout", true))?
+            .map_err(|_| failure("ios_notification_snapshot_closed", true))
+    }
+
+    const fn authorization(state: NativeAuthorization) -> AuthorizationState {
+        match state {
+            NativeAuthorization::NotDetermined => AuthorizationState::NotDetermined,
+            NativeAuthorization::Granted => AuthorizationState::Granted,
+            NativeAuthorization::Denied => AuthorizationState::Denied,
+            NativeAuthorization::Restricted => AuthorizationState::Restricted,
+            NativeAuthorization::Unavailable => AuthorizationState::Unavailable,
+        }
     }
 
     fn require_send_sync<T: Send + Sync>(_: &T) {}
@@ -478,8 +862,13 @@ mod native_platform {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod native_platform {
     use styrene_ui_platform::{
-        AuthorizationState, PermissionKind, PermissionStatus, PlatformFailure, PlatformSnapshot,
+        AndroidUsbAttachment, AuthorizationState, PermissionKind, PermissionStatus,
+        PlatformFailure, PlatformSnapshot,
     };
+
+    pub fn prepare_subscription() -> Option<async_channel::Receiver<()>> {
+        None
+    }
 
     pub fn enrich_snapshot(_: &mut PlatformSnapshot) -> std::future::Ready<()> {
         std::future::ready(())
@@ -493,6 +882,17 @@ mod native_platform {
 
     pub fn request_notifications() -> std::future::Ready<Result<AuthorizationState, PlatformFailure>>
     {
+        std::future::ready(Ok(AuthorizationState::Unavailable))
+    }
+
+    pub fn android_usb_attachments()
+    -> std::future::Ready<Result<Vec<AndroidUsbAttachment>, PlatformFailure>> {
+        std::future::ready(Ok(Vec::new()))
+    }
+
+    pub fn request_android_usb_authorization(
+        _: AndroidUsbAttachment,
+    ) -> std::future::Ready<Result<AuthorizationState, PlatformFailure>> {
         std::future::ready(Ok(AuthorizationState::Unavailable))
     }
 }
@@ -702,6 +1102,8 @@ struct WebViewPlatformService;
 
 struct WebViewPlatformEventStream {
     eval: document::Eval,
+    native: Option<async_channel::Receiver<()>>,
+    generation: Option<u64>,
 }
 
 impl WebPlatformSnapshot {
@@ -798,11 +1200,63 @@ impl WebPlatformMessage {
 impl PlatformEventStream for WebViewPlatformEventStream {
     fn next(&mut self) -> PlatformFuture<'_, Option<PlatformEvent>> {
         Box::pin(async move {
-            let message = self.eval.recv::<WebPlatformMessage>().await;
-            let _ = self.eval.send(());
-            message.ok().and_then(WebPlatformMessage::platform_event)
+            enum Source<T> {
+                Web(T),
+                Native,
+                NativeClosed,
+            }
+
+            loop {
+                let message = if let Some(native) = self.native.clone() {
+                    let source = {
+                        let web = self.eval.recv::<WebPlatformMessage>();
+                        let native = native.recv();
+                        let mut web = std::pin::pin!(web);
+                        let mut native = std::pin::pin!(native);
+                        std::future::poll_fn(|context| {
+                            use std::future::Future;
+                            use std::task::Poll;
+
+                            if let Poll::Ready(message) = web.as_mut().poll(context) {
+                                return Poll::Ready(Source::Web(message));
+                            }
+                            match native.as_mut().poll(context) {
+                                Poll::Ready(Ok(())) => Poll::Ready(Source::Native),
+                                Poll::Ready(Err(_)) => Poll::Ready(Source::NativeClosed),
+                                Poll::Pending => Poll::Pending,
+                            }
+                        })
+                        .await
+                    };
+                    match source {
+                        Source::Web(message) => message,
+                        Source::Native => {
+                            if let Some(event) = native_resync(self.generation) {
+                                return Some(event);
+                            }
+                            continue;
+                        }
+                        Source::NativeClosed => {
+                            self.native = None;
+                            continue;
+                        }
+                    }
+                } else {
+                    self.eval.recv::<WebPlatformMessage>().await
+                };
+                let _ = self.eval.send(());
+                let message = message.ok()?;
+                self.generation = Some(message.snapshot.generation);
+                if let Some(event) = message.platform_event() {
+                    return Some(event);
+                }
+            }
         })
     }
+}
+
+fn native_resync(generation: Option<u64>) -> Option<PlatformEvent> {
+    generation.map(|generation| PlatformEvent::ResyncRequired { generation, dropped_events: 0 })
 }
 
 impl PlatformService for WebViewPlatformService {
@@ -819,7 +1273,11 @@ impl PlatformService for WebViewPlatformService {
     }
 
     fn subscribe(&self) -> Result<Box<dyn PlatformEventStream>, PlatformFailure> {
-        Ok(Box::new(WebViewPlatformEventStream { eval: document::eval(PLATFORM_SUBSCRIPTION) }))
+        Ok(Box::new(WebViewPlatformEventStream {
+            eval: document::eval(PLATFORM_SUBSCRIPTION),
+            native: native_platform::prepare_subscription(),
+            generation: None,
+        }))
     }
 
     fn request_permission(
@@ -833,6 +1291,21 @@ impl PlatformService for WebViewPlatformService {
         &self,
     ) -> PlatformFuture<'_, Result<AuthorizationState, PlatformFailure>> {
         Box::pin(async move { native_platform::request_notifications().await })
+    }
+
+    fn android_usb_attachments(
+        &self,
+    ) -> PlatformFuture<'_, Result<Vec<AndroidUsbAttachment>, PlatformFailure>> {
+        Box::pin(async move { native_platform::android_usb_attachments().await })
+    }
+
+    fn request_android_usb_authorization(
+        &self,
+        attachment: AndroidUsbAttachment,
+    ) -> PlatformFuture<'_, Result<AuthorizationState, PlatformFailure>> {
+        Box::pin(
+            async move { native_platform::request_android_usb_authorization(attachment).await },
+        )
     }
 }
 
@@ -872,6 +1345,22 @@ pub fn use_platform_snapshot() -> Signal<Option<PlatformSnapshot>> {
     snapshot
 }
 
+pub async fn android_usb_attachments() -> Result<Vec<AndroidUsbAttachment>, PlatformFailure> {
+    WebViewPlatformService.android_usb_attachments().await
+}
+
+#[cfg(target_os = "android")]
+pub async fn native_android_usb_attachments() -> Result<Vec<AndroidUsbAttachment>, PlatformFailure>
+{
+    native_platform::android_usb_attachments().await
+}
+
+pub async fn request_android_usb_authorization(
+    attachment: AndroidUsbAttachment,
+) -> Result<AuthorizationState, PlatformFailure> {
+    WebViewPlatformService.request_android_usb_authorization(attachment).await
+}
+
 async fn run_platform_subscription(snapshot: &mut Signal<Option<PlatformSnapshot>>) {
     let service = WebViewPlatformService;
     let Ok(mut events) = service.subscribe() else {
@@ -887,7 +1376,7 @@ async fn run_platform_subscription(snapshot: &mut Signal<Option<PlatformSnapshot
                 continue;
             };
             if let Some(state) = state.as_mut() {
-                if state.replace_snapshot(current) == PlatformApplyResult::IgnoredStale {
+                if state.replace_resynced_snapshot(current) == PlatformApplyResult::IgnoredStale {
                     continue;
                 }
             } else {
@@ -1030,6 +1519,15 @@ mod tests {
         .expect("geometry event");
 
         assert_eq!(event, PlatformEvent::ResyncRequired { generation: 8, dropped_events: 3 });
+    }
+
+    #[test]
+    fn native_callbacks_wait_for_an_authoritative_generation() {
+        assert_eq!(native_resync(None), None);
+        assert_eq!(
+            native_resync(Some(12)),
+            Some(PlatformEvent::ResyncRequired { generation: 12, dropped_events: 0 })
+        );
     }
 
     #[test]

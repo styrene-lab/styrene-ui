@@ -36,5 +36,8 @@ mod tests {
         assert!(
             ANDROID_MANIFEST.contains("android.hardware.bluetooth_le\" android:required=\"false\"")
         );
+        assert!(
+            ANDROID_MANIFEST.contains("android.hardware.usb.host\" android:required=\"false\"")
+        );
     }
 }

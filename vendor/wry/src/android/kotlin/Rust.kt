@@ -20,6 +20,8 @@ object Rust {
     @JvmStatic external fun onActivityDestroy(activity: WryActivity)
     @JvmStatic external fun onActivitySaveInstanceState()
     @JvmStatic external fun onActivityLowMemory()
+    @JvmStatic external fun onConfigurationChanged()
+    @JvmStatic external fun onUsbPermissionResult(deviceName: String, granted: Boolean)
     @JvmStatic external fun onWindowFocusChanged(activity: WryActivity, focus: Boolean)
     @JvmStatic external fun onNewIntent(intent: Intent)
 

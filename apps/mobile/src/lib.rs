@@ -1,9 +1,12 @@
 use dioxus::prelude::*;
 use styrene_ui_app::{BackNavigation, MobileShell};
+use styrene_ui_platform::{AndroidUsbAttachment, AuthorizationState};
 use styrene_ui_state::TargetClass;
 #[cfg(any(test, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))]
 use styrene_ui_state::{MobileFixture, MobileMinimumCorpus};
 
+#[cfg(target_os = "android")]
+mod android_usb;
 mod platform;
 #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
 mod session;
@@ -43,6 +46,20 @@ fn bootstrap_fixture() -> MobileFixture {
 pub fn App() -> Element {
     platform::use_back_navigation();
     let platform_snapshot = platform::use_platform_snapshot();
+    let mut usb_attachments = use_signal(Vec::<AndroidUsbAttachment>::new);
+    let mut usb_authorization = use_signal(|| None::<AuthorizationState>);
+    let mut usb_failure = use_signal(|| None::<String>);
+    let mut usb_busy = use_signal(|| false);
+
+    #[cfg(target_os = "android")]
+    use_effect(move || {
+        spawn(async move {
+            match platform::android_usb_attachments().await {
+                Ok(attachments) => usb_attachments.set(attachments),
+                Err(error) => usb_failure.set(Some(error.code)),
+            }
+        });
+    });
 
     #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
     {
@@ -67,6 +84,64 @@ pub fn App() -> Element {
                 platform_snapshot: platform_snapshot.read().clone(),
                 back_navigation: BackNavigation::web_history(),
                 action_sink: move |action| session.read().dispatch(action),
+                android_usb_attachments: usb_attachments.read().clone(),
+                android_usb_authorization: *usb_authorization.read(),
+                android_usb_failure: usb_failure.read().clone(),
+                android_usb_busy: *usb_busy.read(),
+                android_usb_refresh: move |()| {
+                    if *usb_busy.read() {
+                        return;
+                    }
+                    usb_busy.set(true);
+                    spawn(async move {
+                        usb_failure.set(None);
+                        match platform::android_usb_attachments().await {
+                            Ok(attachments) => usb_attachments.set(attachments),
+                            Err(error) => usb_failure.set(Some(error.code)),
+                        }
+                        usb_busy.set(false);
+                    });
+                },
+                android_usb_select: move |attachment: AndroidUsbAttachment| {
+                    if *usb_busy.read() {
+                        return;
+                    }
+                    usb_busy.set(true);
+                    let session = session.read().clone();
+                    spawn(async move {
+                        usb_failure.set(None);
+                        usb_authorization.set(Some(AuthorizationState::NotDetermined));
+                        if let Err(error) = session.request_android_usb_fallback().await {
+                            usb_failure.set(Some(error));
+                            usb_authorization.set(None);
+                            usb_busy.set(false);
+                            return;
+                        }
+                        match platform::request_android_usb_authorization(attachment.clone()).await {
+                            Ok(authorization) => {
+                                usb_authorization.set(Some(authorization));
+                                if authorization == AuthorizationState::Granted
+                                    && let Err(error) = session.connect_android_usb(attachment).await
+                                {
+                                    usb_failure.set(Some(error));
+                                } else if authorization == AuthorizationState::Denied
+                                    && let Err(error) =
+                                        session.report_android_usb_permission_denied().await
+                                {
+                                    usb_failure.set(Some(error));
+                                }
+                            }
+                            Err(error) => {
+                                usb_failure.set(Some(error.code));
+                                usb_authorization.set(None);
+                            }
+                        }
+                        if let Ok(attachments) = platform::android_usb_attachments().await {
+                            usb_attachments.set(attachments);
+                        }
+                        usb_busy.set(false);
+                    });
+                },
             }
         };
     }
@@ -88,7 +163,7 @@ mod tests {
 
     use super::*;
 
-    const BACKEND_REVISION: &str = "2b9e1aeeff71733a8fc11d8a541cc417fb9450f0";
+    const BACKEND_REVISION: &str = "aed17271f6a4d00b0263e09104d8c5ec4463bb10";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
     const FIXTURE_PROVENANCE: &str =
