@@ -2,22 +2,29 @@
   color-scheme: light dark;
   font-family: ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif;
   font-synthesis: none;
-  --canvas: #f1eee5;
-  --surface: #fffdf7;
+  --canvas: #f3f0e7;
+  --surface: #fbfaf5;
   --surface-raised: #ffffff;
-  --ink: #18201e;
-  --ink-muted: #4b5753;
-  --line: #b8c0ba;
-  --accent: #9e3f23;
+  --ink: #12201c;
+  --ink-muted: #56625d;
+  --line: #c8cec9;
+  --line-strong: #89968f;
+  --accent: #c4512d;
   --accent-ink: #ffffff;
-  --signal: #17644d;
-  --signal-soft: #d7eee3;
+  --signal: #14634b;
+  --signal-soft: #d8eee5;
+  --warning: #7a4b0a;
+  --warning-soft: #fff0cb;
   --focus: #006fa8;
-  --shadow: 0 0.75rem 2.5rem rgb(35 45 40 / 10%);
+  --shadow: 0 1rem 3rem rgb(35 45 40 / 10%);
 }
 
 * {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 html {
@@ -34,7 +41,7 @@ body {
   font: -apple-system-body;
   font-family: ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif;
   background:
-    radial-gradient(circle at 100% 0%, rgb(23 100 77 / 12%), transparent 24rem),
+    linear-gradient(90deg, rgb(20 99 75 / 4%) 1px, transparent 1px) 0 0 / 1.5rem 1.5rem,
     var(--canvas);
   color: var(--ink);
   line-height: 1.5;
@@ -45,8 +52,8 @@ input,
 select,
 textarea {
   max-inline-size: 100%;
-  border: 0.0625rem solid var(--line);
-  border-radius: 0.8rem;
+  border: 0.0625rem solid var(--line-strong);
+  border-radius: 0.7rem;
   background: var(--surface-raised);
   color: var(--ink);
   font: inherit;
@@ -58,8 +65,8 @@ select {
 }
 
 button {
-  padding: 0.65rem 1rem;
-  font-weight: 700;
+  padding: 0.65rem 0.9rem;
+  font-weight: 750;
   cursor: pointer;
 }
 
@@ -69,7 +76,7 @@ button:not(:disabled):active {
 
 button:disabled {
   cursor: not-allowed;
-  opacity: 0.58;
+  opacity: 0.55;
 }
 
 input,
@@ -80,7 +87,7 @@ textarea {
 }
 
 textarea {
-  min-block-size: 5.75rem;
+  min-block-size: 4.5rem;
   resize: vertical;
 }
 
@@ -99,7 +106,7 @@ output {
 }
 
 h1 {
-  margin-block-end: 0.15rem;
+  margin-block-end: 0;
   font-size: clamp(2rem, 8vw, 3.6rem);
   font: -apple-system-title1;
   letter-spacing: -0.045em;
@@ -107,12 +114,14 @@ h1 {
 }
 
 h2 {
+  margin-block-end: 0;
   font-size: clamp(1.35rem, 5vw, 2rem);
   font: -apple-system-title2;
   letter-spacing: -0.025em;
 }
 
 h3 {
+  margin-block-end: 0.3rem;
   font-size: 1rem;
   font: -apple-system-headline;
 }
@@ -123,10 +132,6 @@ label {
   font-weight: 750;
 }
 
-output {
-  display: block;
-}
-
 .mobile-shell {
   inline-size: min(100%, 82rem);
   min-block-size: 100vh;
@@ -134,27 +139,29 @@ output {
   margin-inline: auto;
   padding-block:
     max(1rem, env(safe-area-inset-top))
-    max(5rem, env(safe-area-inset-bottom));
+    max(6.5rem, env(safe-area-inset-bottom));
   padding-inline:
     max(1rem, env(safe-area-inset-left))
     max(1rem, env(safe-area-inset-right));
 }
 
 .app-header {
-  padding: clamp(1rem, 5vw, 2.5rem);
-  border-radius: 1.4rem;
-  background: var(--ink);
-  color: var(--surface);
-  box-shadow: var(--shadow);
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.4rem 0.15rem 0.85rem;
+  border-block-end: 0.125rem solid var(--ink);
 }
 
-.app-kicker {
-  margin-block-end: 0.7rem;
-  color: #b9e2d2;
+.app-kicker,
+.section-kicker {
+  margin-block-end: 0.3rem;
+  color: var(--signal);
   font-size: 0.78rem;
   font: -apple-system-caption1;
-  font-weight: 800;
-  letter-spacing: 0.12em;
+  font-weight: 850;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
 }
 
@@ -166,66 +173,170 @@ output {
   font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", monospace;
 }
 
-.fixture-banner,
-.session-status {
-  margin-block-start: 0.75rem;
-  padding: 0.7rem 0.9rem;
-  border-radius: 0.8rem;
+.session-status,
+.state-chip,
+.count-badge,
+.unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 1.75rem;
+  padding-inline: 0.65rem;
+  border-radius: 99rem;
+  background: var(--signal-soft);
+  color: var(--signal);
+  font-size: 0.78rem;
+  font: -apple-system-caption1;
+  font-weight: 800;
+  text-transform: capitalize;
 }
 
 .fixture-banner {
-  border: 0.0625rem solid #9d5f14;
-  background: #fff0cf;
-  color: #5b3300;
-  font-weight: 700;
+  margin-block-start: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  border: 0.0625rem solid #b98536;
+  border-radius: 0.55rem;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: 0.8rem;
+  font-weight: 750;
 }
 
-.session-status {
-  background: var(--signal-soft);
-  color: #0b4936;
-}
-
-.product-section {
+.app-surface {
   min-inline-size: 0;
   margin-block-start: 1rem;
-  padding: clamp(1rem, 4vw, 1.5rem);
-  border: 0.0625rem solid var(--line);
-  border-radius: 1.2rem;
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
-  box-shadow: var(--shadow);
+}
+
+.section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-block-end: 1rem;
 }
 
 .message-workspace {
-  display: grid;
-  gap: 1rem;
+  min-block-size: 32rem;
+  overflow: hidden;
+  border: 0.0625rem solid var(--line);
+  border-radius: 1rem;
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }
 
+.conversation-pane,
 .thread-pane {
   min-inline-size: 0;
 }
 
-.conversation-list {
-  display: grid;
-  align-content: start;
-  gap: 0.55rem;
+.thread-pane {
+  display: none;
 }
 
-.conversation-row {
+.message-workspace[data-compact-pane="thread"] .conversation-pane {
+  display: none;
+}
+
+.message-workspace[data-compact-pane="thread"] .thread-pane {
+  display: flex;
+  min-block-size: 32rem;
+  flex-direction: column;
+}
+
+.conversation-pane > .section-heading {
+  margin: 0;
+  padding: 1rem;
+  border-block-end: 0.0625rem solid var(--line);
+}
+
+.conversation-list {
+  display: grid;
+}
+
+.conversation-row,
+.peer-card {
   display: grid;
   inline-size: 100%;
   min-inline-size: 0;
-  gap: 0.25rem;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.85rem 1rem;
+  border: 0;
+  border-block-end: 0.0625rem solid var(--line);
+  border-radius: 0;
+  background: transparent;
   text-align: start;
 }
 
-.conversation-row output {
-  color: var(--signal);
-  font-size: 0.82rem;
-  font: -apple-system-caption1;
+.conversation-row.is-selected {
+  background: var(--signal-soft);
+}
+
+.hash-glyph {
+  display: inline-grid;
+  inline-size: 2.75rem;
+  block-size: 2.75rem;
+  place-items: center;
+  border: 0.0625rem solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--surface);
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-size: 0.78rem;
+  font-weight: 850;
+  letter-spacing: 0.05em;
+}
+
+.conversation-copy,
+.directory-copy {
+  display: grid;
+  min-inline-size: 0;
+}
+
+.conversation-copy strong,
+.directory-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unread-badge {
+  min-inline-size: 1.75rem;
+  padding-inline: 0.45rem;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.thread-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.8rem;
+  border-block-end: 0.0625rem solid var(--line);
+}
+
+.thread-header h2 {
+  font: -apple-system-headline;
+}
+
+.thread-header p {
+  margin-block-end: 0;
+  color: var(--ink-muted);
+}
+
+.thread-back {
+  background: transparent;
 }
 
 .message-history {
-  min-block-size: 8rem;
+  min-block-size: 15rem;
+  flex: 1;
+  padding: 1rem;
+  background:
+    linear-gradient(0deg, rgb(20 99 75 / 3%), rgb(20 99 75 / 3%)),
+    var(--surface);
 }
 
 .message-list {
@@ -236,27 +347,26 @@ output {
   list-style: none;
 }
 
-.message-card,
-.peer-card,
-.bearer-card {
+.message-card {
   min-inline-size: 0;
-  padding: 0.9rem;
+  padding: 0.9rem 1rem;
   border-inline-start: 0.25rem solid var(--signal);
-  border-radius: 0.2rem 0.9rem 0.9rem 0.2rem;
   background: var(--surface-raised);
+  box-shadow: 0 0.25rem 1rem rgb(35 45 40 / 7%);
 }
 
-.message-card p:last-of-type,
-.peer-card p:last-of-type,
-.bearer-card p:last-of-type {
-  margin-block-end: 0;
+.message-card > p {
+  margin-block-end: 0.5rem;
 }
 
 .delivery-detail {
-  margin-block-start: 0.65rem;
   color: var(--ink-muted);
   font-size: 0.85rem;
   font: -apple-system-footnote;
+}
+
+.delivery-detail p {
+  margin-block-end: 0;
 }
 
 .delivery-detail button {
@@ -267,19 +377,96 @@ output {
   position: sticky;
   inset-block-end: 0;
   z-index: 1;
-  margin-block-start: 1rem;
-  padding-block: 0.8rem;
+  padding: 0.75rem;
   border-block-start: 0.0625rem solid var(--line);
-  background: var(--surface);
-  scroll-margin-block-end: 8rem;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(1rem);
+}
+
+.composer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.6rem;
+}
+
+.composer textarea {
+  min-block-size: 3.25rem;
+  max-block-size: 8rem;
 }
 
 .composer button,
 #mobile\.tcp-endpoint-apply,
 #mobile\.propagation-sync {
-  margin-block-start: 0.75rem;
   background: var(--accent);
   color: var(--accent-ink);
+}
+
+.delivery-method-row {
+  display: grid;
+  grid-template-columns: auto minmax(8rem, 12rem);
+  align-items: center;
+  justify-content: end;
+  gap: 0.5rem;
+  margin-block-start: 0.55rem;
+}
+
+.delivery-method-row label {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+}
+
+.delivery-method-row select {
+  min-block-size: 2.5rem;
+  padding-block: 0.4rem;
+}
+
+.directory-surface,
+.network-surface,
+.more-surface {
+  inline-size: min(100%, 48rem);
+  margin-inline: auto;
+}
+
+.peer-card {
+  margin-block-end: 0.65rem;
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.85rem;
+  background: var(--surface);
+}
+
+.row-action {
+  color: var(--signal);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.settings-card,
+.bearer-card,
+.product-section {
+  min-inline-size: 0;
+  margin-block-end: 0.75rem;
+  padding: 1rem;
+  border: 0.0625rem solid var(--line);
+  border-radius: 0.85rem;
+  background: var(--surface);
+}
+
+.bearer-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.bearer-card p,
+.settings-card p {
+  margin-block-end: 0;
+}
+
+.group-heading {
+  margin-block: 1.5rem 0.75rem;
 }
 
 .field-hint {
@@ -287,6 +474,65 @@ output {
   color: var(--ink-muted);
   font-size: 0.85rem;
   font: -apple-system-footnote;
+}
+
+.empty-state {
+  display: grid;
+  min-block-size: 15rem;
+  place-content: center;
+  padding: 2rem;
+  color: var(--ink-muted);
+  text-align: center;
+}
+
+.empty-state p {
+  max-inline-size: 24rem;
+  margin-block-end: 0;
+}
+
+.identity-card .identity {
+  margin-block-end: 0;
+}
+
+.destination-bar {
+  position: fixed;
+  inset-inline-start: 50%;
+  inset-block-end: max(0.65rem, env(safe-area-inset-bottom));
+  z-index: 10;
+  display: grid;
+  inline-size: min(calc(100% - 1.25rem), 40rem);
+  grid-template-columns: repeat(4, 1fr);
+  padding: 0.35rem;
+  border: 0.0625rem solid rgb(255 255 255 / 12%);
+  border-radius: 1rem;
+  background: var(--ink);
+  box-shadow: 0 1rem 3rem rgb(0 0 0 / 28%);
+  translate: -50% 0;
+}
+
+.destination-item {
+  display: grid;
+  min-inline-size: 0;
+  min-block-size: 3.25rem;
+  place-items: center;
+  gap: 0.05rem;
+  padding: 0.25rem;
+  border: 0;
+  border-radius: 0.7rem;
+  background: transparent;
+  color: #b8c6c0;
+  font-size: 0.72rem;
+}
+
+.destination-item.is-active {
+  background: #2b443b;
+  color: #ffffff;
+}
+
+.destination-mark {
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-size: 0.82rem;
+  font-weight: 900;
 }
 
 .visually-hidden {
@@ -308,7 +554,26 @@ output {
 
 @media (min-width: 52rem) {
   .message-workspace {
-    grid-template-columns: minmax(14rem, 19rem) minmax(0, 1fr);
+    display: grid;
+    grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
+    min-block-size: 38rem;
+  }
+
+  .message-workspace .conversation-pane,
+  .message-workspace[data-compact-pane="thread"] .conversation-pane {
+    display: block;
+    border-inline-end: 0.0625rem solid var(--line);
+  }
+
+  .message-workspace .thread-pane,
+  .message-workspace[data-compact-pane="thread"] .thread-pane {
+    display: flex;
+    min-block-size: 38rem;
+    flex-direction: column;
+  }
+
+  .thread-back {
+    display: none;
   }
 
   .composer {
@@ -318,32 +583,32 @@ output {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --canvas: #0d1513;
-    --surface: #151f1c;
-    --surface-raised: #1d2925;
-    --ink: #f3f0e7;
-    --ink-muted: #bdc9c4;
-    --line: #52615b;
-    --accent: #ff8a5d;
-    --accent-ink: #21110b;
+    --canvas: #09120f;
+    --surface: #111c18;
+    --surface-raised: #182520;
+    --ink: #eef3ef;
+    --ink-muted: #aebdb6;
+    --line: #35463f;
+    --line-strong: #60736a;
+    --accent: #ff8b61;
+    --accent-ink: #261008;
     --signal: #78d6b2;
-    --signal-soft: #17382e;
+    --signal-soft: #173b30;
+    --warning: #ffe0a6;
+    --warning-soft: #3a290d;
     --focus: #68c7ff;
-    --shadow: 0 0.75rem 2.5rem rgb(0 0 0 / 24%);
+    --shadow: 0 1rem 3rem rgb(0 0 0 / 24%);
   }
 
-  .app-header {
-    background: #050a09;
+  body {
+    background:
+      linear-gradient(90deg, rgb(120 214 178 / 4%) 1px, transparent 1px) 0 0 / 1.5rem 1.5rem,
+      var(--canvas);
   }
 
-  .fixture-banner {
-    border-color: #d99942;
-    background: #39280d;
-    color: #ffe0a6;
-  }
-
-  .session-status {
-    color: #b9efd9;
+  .hash-glyph,
+  .destination-bar {
+    background: #030706;
   }
 }
 
@@ -357,7 +622,11 @@ output {
   input,
   select,
   textarea,
-  .product-section {
+  .product-section,
+  .message-workspace,
+  .settings-card,
+  .peer-card,
+  .bearer-card {
     border-width: 0.125rem;
   }
 }

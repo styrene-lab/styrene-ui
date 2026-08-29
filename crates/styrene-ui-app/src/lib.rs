@@ -3,15 +3,89 @@
 use dioxus::prelude::*;
 use styrene_ui_state::{
     Conversation, DeliveryEvidence, LocalAnnounceOutcome, Message, MobileFixture, MobileStore,
-    PropagationEvidence, PropagationUpdate, RuntimeBoundary, SyncState, TargetClass,
+    Peer, PropagationEvidence, PropagationUpdate, RuntimeBoundary, SyncState, TargetClass,
     TransportEvidence,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MobileDestination {
+    Messages,
+    People,
+    Network,
+    More,
+}
+
+impl MobileDestination {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Messages => "Messages",
+            Self::People => "People",
+            Self::Network => "Network",
+            Self::More => "More",
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Messages => "messages",
+            Self::People => "people",
+            Self::Network => "network",
+            Self::More => "more",
+        }
+    }
+
+    fn mark(self) -> &'static str {
+        match self {
+            Self::Messages => "M",
+            Self::People => "P",
+            Self::Network => "N",
+            Self::More => "+",
+        }
+    }
+}
+
+fn short_hash(hash: &str) -> String {
+    hash.chars().take(8).collect()
+}
+
+fn peer_name(hash: &str, peers: &[Peer]) -> String {
+    peers
+        .iter()
+        .find(|peer| peer.destination_hash == hash)
+        .and_then(|peer| peer.display_name.clone())
+        .unwrap_or_else(|| format!("Peer {}", short_hash(hash)))
+}
 
 #[component]
 pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let messaging_available = MobileStore::new(fixture.clone()).messaging_available();
     let live_actions_enabled = boundary.live_network_allowed();
+    let initial_peer =
+        fixture.conversations.first().map(|conversation| conversation.peer_hash.clone());
+    let mut destination = use_signal(|| MobileDestination::Messages);
+    let mut selected_peer = use_signal(|| initial_peer);
+    let mut compact_thread_open = use_signal(|| false);
+
+    let active_destination = *destination.read();
+    let selected_hash = selected_peer.read().clone();
+    let selected_conversation = selected_hash.as_ref().and_then(|peer_hash| {
+        fixture
+            .conversations
+            .iter()
+            .find(|conversation| &conversation.peer_hash == peer_hash)
+            .cloned()
+    });
+    let selected_messages = selected_hash.as_ref().map_or_else(Vec::new, |peer_hash| {
+        fixture.messages.iter().filter(|message| &message.peer_hash == peer_hash).cloned().collect()
+    });
+    let selected_name = selected_hash
+        .as_deref()
+        .map_or_else(|| "Conversation".into(), |hash| peer_name(hash, &fixture.peers));
+    let selected_short_hash = selected_hash.as_deref().map(short_hash).unwrap_or_default();
+    let compact_pane = if *compact_thread_open.read() { "thread" } else { "list" };
+    let conversation_count = fixture.conversations.len().to_string();
+    let peer_count = fixture.peers.len().to_string();
 
     rsx! {
         document::Title { "Styrene Messages" }
@@ -25,13 +99,18 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
             "data-live-network-enabled": boundary.live_network_allowed().to_string(),
             header {
                 class: "app-header",
-                p { class: "app-kicker", "Styrene mesh communicator" }
-                h1 { id: "mobile.app-title", "Messages" }
-                p {
-                    id: "mobile.identity",
-                    class: "identity",
-                    "aria-label": format!("Local identity {}", fixture.session.identity_hash),
-                    {fixture.session.identity_hash.clone()}
+                div {
+                    p { class: "app-kicker", "Styrene" }
+                    h1 { id: "mobile.app-title", {active_destination.label()} }
+                }
+                div {
+                    id: "mobile.session-state",
+                    class: "session-status",
+                    role: "status",
+                    "aria-live": "polite",
+                    "aria-atomic": "true",
+                    "data-phase": fixture.session.phase.as_str(),
+                    {fixture.session.phase.as_str()}
                 }
             }
             if boundary.fixture_marker_visible() {
@@ -42,95 +121,219 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
                     "Fixture data. Network actions are disabled."
                 }
             }
-            div {
-                id: "mobile.session-state",
-                class: "session-status",
-                role: "status",
-                "aria-live": "polite",
-                "aria-atomic": "true",
-                "data-phase": fixture.session.phase.as_str(),
-                "Session {fixture.session.phase.as_str()}"
-            }
             section {
                 id: "mobile.messages",
-                class: "product-section messages-section",
+                class: "app-surface messages-section",
                 "aria-labelledby": "mobile.messages-heading",
-                h2 { id: "mobile.messages-heading", "Messages" }
+                hidden: active_destination != MobileDestination::Messages,
                 div {
                     class: "message-workspace",
-                    ConversationList { conversations: fixture.conversations.clone() }
+                    "data-compact-pane": compact_pane,
+                    div {
+                        class: "conversation-pane",
+                        div {
+                            class: "section-heading",
+                            div {
+                                p { class: "section-kicker", "Inbox" }
+                                h2 { id: "mobile.messages-heading", "Conversations" }
+                            }
+                            span {
+                                class: "count-badge",
+                                {conversation_count.clone()}
+                            }
+                        }
+                        ConversationList {
+                            conversations: fixture.conversations.clone(),
+                            peers: fixture.peers.clone(),
+                            selected_peer: selected_hash.clone(),
+                            on_select: move |peer_hash| {
+                                selected_peer.set(Some(peer_hash));
+                                compact_thread_open.set(true);
+                            },
+                        }
+                    }
                     div {
                         class: "thread-pane",
+                        header {
+                            class: "thread-header",
+                            button {
+                                class: "thread-back",
+                                r#type: "button",
+                                "aria-label": "Back to conversations",
+                                onclick: move |_| compact_thread_open.set(false),
+                                "Back"
+                            }
+                            div {
+                                h2 { {selected_name.clone()} }
+                                if !selected_short_hash.is_empty() {
+                                    p { class: "technical-value", {selected_short_hash.clone()} }
+                                }
+                            }
+                        }
                         MessageHistory {
-                            messages: fixture.messages.clone(),
+                            messages: selected_messages,
+                            has_selection: selected_hash.is_some(),
                             actions_enabled: live_actions_enabled,
                         }
                         Composer {
-                            conversations: fixture.conversations.clone(),
-                            enabled: messaging_available && live_actions_enabled,
+                            conversation: selected_conversation,
+                            enabled: selected_hash.is_some()
+                                && messaging_available
+                                && live_actions_enabled,
                         }
                     }
                 }
             }
             section {
                 id: "mobile.people",
-                class: "product-section",
+                class: "app-surface directory-surface",
                 "aria-labelledby": "mobile.people-heading",
-                h2 { id: "mobile.people-heading", "People" }
+                hidden: active_destination != MobileDestination::People,
+                div {
+                    class: "section-heading",
+                    div {
+                        p { class: "section-kicker", "Directory" }
+                        h2 { id: "mobile.people-heading", "People" }
+                    }
+                    span { class: "count-badge", {peer_count.clone()} }
+                }
+                if fixture.peers.is_empty() {
+                    div {
+                        class: "empty-state",
+                        h3 { "No peers discovered" }
+                        p { "Announced peers will appear here." }
+                    }
+                }
                 for peer in &fixture.peers {
-                    article {
+                    button {
                         id: format!("mobile.peer.{}", peer.destination_hash),
                         class: "peer-card",
+                        r#type: "button",
                         "data-aspect": peer.aspect.clone(),
                         "data-source": "canonical_announce",
-                        h3 {
-                            {peer.display_name.clone().unwrap_or_else(|| peer.destination_hash.clone())}
+                        onclick: {
+                            let peer_hash = peer.destination_hash.clone();
+                            move |_| {
+                                selected_peer.set(Some(peer_hash.clone()));
+                                compact_thread_open.set(true);
+                                destination.set(MobileDestination::Messages);
+                            }
+                        },
+                        span { class: "hash-glyph", {short_hash(&peer.destination_hash)[..2].to_uppercase()} }
+                        span {
+                            class: "directory-copy",
+                            strong {
+                                {peer.display_name.clone().unwrap_or_else(|| format!("Peer {}", short_hash(&peer.destination_hash)))}
+                            }
+                            span { class: "technical-value", {short_hash(&peer.destination_hash)} }
                         }
-                        p { class: "technical-value", {peer.destination_hash.clone()} }
+                        span { class: "row-action", "Open" }
                     }
                 }
             }
             section {
                 id: "mobile.network",
-                class: "product-section",
+                class: "app-surface network-surface",
                 "aria-labelledby": "mobile.network-heading",
-                h2 { id: "mobile.network-heading", "Network" }
-                label { r#for: "mobile.tcp-endpoint", "TCP endpoint" }
-                input {
-                    id: "mobile.tcp-endpoint",
-                    name: "tcp-endpoint",
-                    r#type: "text",
-                    inputmode: "url",
-                    "aria-describedby": "mobile.tcp-endpoint-hint",
-                    value: fixture.session.endpoint.clone().unwrap_or_default(),
+                hidden: active_destination != MobileDestination::Network,
+                div {
+                    class: "section-heading",
+                    div {
+                        p { class: "section-kicker", "Connectivity" }
+                        h2 { id: "mobile.network-heading", "Network" }
+                    }
                 }
-                p {
-                    id: "mobile.tcp-endpoint-hint",
-                    class: "field-hint",
-                    "Use a host and port, for example rns.styrene.io:4242."
+                div {
+                    class: "settings-card",
+                    label { r#for: "mobile.tcp-endpoint", "TCP endpoint" }
+                    input {
+                        id: "mobile.tcp-endpoint",
+                        name: "tcp-endpoint",
+                        r#type: "text",
+                        inputmode: "url",
+                        "aria-describedby": "mobile.tcp-endpoint-hint",
+                        value: fixture.session.endpoint.clone().unwrap_or_default(),
+                    }
+                    p {
+                        id: "mobile.tcp-endpoint-hint",
+                        class: "field-hint",
+                        "Host and port, for example rns.styrene.io:4242."
+                    }
+                    button {
+                        id: "mobile.tcp-endpoint-apply",
+                        disabled: !live_actions_enabled,
+                        "Apply endpoint"
+                    }
                 }
-                button {
-                    id: "mobile.tcp-endpoint-apply",
-                    disabled: !live_actions_enabled,
-                    "Apply endpoint"
-                }
+                h3 { class: "group-heading", "Bearers" }
                 for bearer in &fixture.bearers {
                     article {
                         id: format!("mobile.bearer.{}", bearer.kind.as_str()),
                         class: "bearer-card",
                         "data-state": bearer.state.to_string(),
                         "data-reason": bearer.reason.clone().unwrap_or_default(),
-                        h3 { {bearer.kind.as_str()} }
-                        p { "State: {bearer.state}" }
-                        if let Some(reason) = &bearer.reason {
-                            p { {reason.clone()} }
+                        div {
+                            h3 { {bearer.kind.as_str()} }
+                            if let Some(reason) = &bearer.reason {
+                                p { class: "field-hint", {reason.clone()} }
+                            }
                         }
+                        span { class: "state-chip", {bearer.state.to_string()} }
                     }
                 }
+                PropagationPanel {
+                    propagation: PropagationUpdate::from_fixture(&fixture),
+                    actions_enabled: live_actions_enabled,
+                }
             }
-            PropagationPanel {
-                propagation: PropagationUpdate::from_fixture(&fixture),
-                actions_enabled: live_actions_enabled,
+            section {
+                id: "mobile.more",
+                class: "app-surface more-surface",
+                "aria-labelledby": "mobile.more-heading",
+                hidden: active_destination != MobileDestination::More,
+                div {
+                    class: "section-heading",
+                    div {
+                        p { class: "section-kicker", "This device" }
+                        h2 { id: "mobile.more-heading", "More" }
+                    }
+                }
+                article {
+                    class: "settings-card identity-card",
+                    h3 { "Node identity" }
+                    p {
+                        id: "mobile.identity",
+                        class: "identity",
+                        "aria-label": format!("Local identity {}", fixture.session.identity_hash),
+                        {fixture.session.identity_hash.clone()}
+                    }
+                }
+                article {
+                    class: "settings-card",
+                    h3 { "About this build" }
+                    p { "Rust-owned Dioxus mobile shell" }
+                    p { class: "technical-value", "Generation {fixture.generation}" }
+                }
+            }
+            nav {
+                class: "destination-bar",
+                "aria-label": "Primary",
+                for item in [
+                    MobileDestination::Messages,
+                    MobileDestination::People,
+                    MobileDestination::Network,
+                    MobileDestination::More,
+                ] {
+                    button {
+                        id: format!("mobile.destination.{}", item.id()),
+                        class: if active_destination == item { "destination-item is-active" } else { "destination-item" },
+                        r#type: "button",
+                        "aria-current": if active_destination == item { "page" } else { "false" },
+                        onclick: move |_| destination.set(item),
+                        span { class: "destination-mark", "aria-hidden": "true", {item.mark()} }
+                        span { {item.label()} }
+                    }
+                }
             }
         }
     }
@@ -231,23 +434,55 @@ pub fn PropagationPanel(propagation: PropagationUpdate, actions_enabled: bool) -
 }
 
 #[component]
-pub fn ConversationList(conversations: Vec<Conversation>) -> Element {
+pub fn ConversationList(
+    conversations: Vec<Conversation>,
+    peers: Vec<Peer>,
+    selected_peer: Option<String>,
+    on_select: EventHandler<String>,
+) -> Element {
     rsx! {
         nav {
             id: "mobile.conversations",
             class: "conversation-list",
             "aria-label": "Conversations",
+            if conversations.is_empty() {
+                div {
+                    id: "mobile.messages-empty",
+                    class: "empty-state",
+                    h3 { "No conversations yet" }
+                    p { "Discover a peer to begin a private conversation." }
+                }
+            }
             for conversation in conversations {
+                {
+                    let is_selected = selected_peer.as_deref() == Some(conversation.peer_hash.as_str());
+                    let name = peer_name(&conversation.peer_hash, &peers);
+                    let peer_short_hash = short_hash(&conversation.peer_hash);
+                    let hash_glyph = peer_short_hash[..2].to_uppercase();
+                    let selected_hash = conversation.peer_hash.clone();
+                    rsx! {
                 button {
                     id: format!("mobile.conversation.{}", conversation.peer_hash),
-                    class: "conversation-row",
+                    class: if is_selected { "conversation-row is-selected" } else { "conversation-row" },
                     r#type: "button",
                     "data-peer": conversation.peer_hash.clone(),
-                    span { class: "technical-value", {conversation.peer_hash.clone()} }
+                    "aria-current": if is_selected { "true" } else { "false" },
+                    onclick: move |_| on_select.call(selected_hash.clone()),
+                    span { class: "hash-glyph", {hash_glyph} }
                     span {
-                        id: format!("mobile.conversation-unread.{}", conversation.peer_hash),
-                        "aria-label": format!("{} unread messages", conversation.unread_count),
-                        "{conversation.unread_count} unread"
+                        class: "conversation-copy",
+                        strong { {name} }
+                        span { class: "technical-value", {peer_short_hash} }
+                    }
+                    if conversation.unread_count > 0 {
+                        span {
+                            id: format!("mobile.conversation-unread.{}", conversation.peer_hash),
+                            class: "unread-badge",
+                            "aria-label": format!("{} unread messages", conversation.unread_count),
+                            "{conversation.unread_count}"
+                        }
+                    }
+                }
                     }
                 }
             }
@@ -256,7 +491,11 @@ pub fn ConversationList(conversations: Vec<Conversation>) -> Element {
 }
 
 #[component]
-pub fn MessageHistory(messages: Vec<Message>, actions_enabled: bool) -> Element {
+pub fn MessageHistory(
+    messages: Vec<Message>,
+    has_selection: bool,
+    actions_enabled: bool,
+) -> Element {
     rsx! {
         section {
             id: "mobile.message-history",
@@ -267,8 +506,18 @@ pub fn MessageHistory(messages: Vec<Message>, actions_enabled: bool) -> Element 
                 class: "visually-hidden",
                 "Message history"
             }
-            if messages.is_empty() {
-                p { id: "mobile.messages-empty", "No conversations yet" }
+            if !has_selection {
+                div {
+                    class: "empty-state thread-empty",
+                    h3 { "Choose a conversation" }
+                    p { "Messages and delivery evidence will appear here." }
+                }
+            } else if messages.is_empty() {
+                div {
+                    class: "empty-state thread-empty",
+                    h3 { "No messages with this peer" }
+                    p { "Write a message below to start the conversation." }
+                }
             }
             ol {
                 class: "message-list",
@@ -322,9 +571,8 @@ pub fn DeliveryDetail(message: Message, actions_enabled: bool) -> Element {
 }
 
 #[component]
-pub fn Composer(conversations: Vec<Conversation>, enabled: bool) -> Element {
-    let draft = conversations.first();
-    let draft_id = draft.map_or_else(
+pub fn Composer(conversation: Option<Conversation>, enabled: bool) -> Element {
+    let draft_id = conversation.as_ref().map_or_else(
         || "mobile.draft".to_string(),
         |conversation| format!("mobile.draft.{}", conversation.peer_hash),
     );
@@ -332,27 +580,34 @@ pub fn Composer(conversations: Vec<Conversation>, enabled: bool) -> Element {
         form {
             id: "mobile.composer",
             class: "composer",
-            label { r#for: draft_id.clone(), "Message" }
-            textarea {
-                id: draft_id,
-                name: "message",
-                rows: "3",
-                "data-revision": draft.map_or(0, |conversation| conversation.draft_revision),
-                value: draft.map_or("", |conversation| conversation.draft.as_str()),
+            div {
+                class: "composer-row",
+                label { class: "visually-hidden", r#for: draft_id.clone(), "Message" }
+                textarea {
+                    id: draft_id,
+                    name: "message",
+                    rows: "2",
+                    placeholder: "Message",
+                    "data-revision": conversation.as_ref().map_or(0, |conversation| conversation.draft_revision),
+                    value: conversation.as_ref().map_or("", |conversation| conversation.draft.as_str()),
+                }
+                button {
+                    id: "mobile.send",
+                    r#type: "button",
+                    "data-enabled": enabled.to_string(),
+                    disabled: !enabled,
+                    "Send"
+                }
             }
-            label { r#for: "mobile.delivery-method", "Delivery method" }
-            select {
-                id: "mobile.delivery-method",
-                name: "delivery-method",
-                option { value: "direct", "Direct" }
-                option { value: "propagated", "Propagated" }
-            }
-            button {
-                id: "mobile.send",
-                r#type: "button",
-                "data-enabled": enabled.to_string(),
-                disabled: !enabled,
-                "Send"
+            div {
+                class: "delivery-method-row",
+                label { r#for: "mobile.delivery-method", "Delivery" }
+                select {
+                    id: "mobile.delivery-method",
+                    name: "delivery-method",
+                    option { value: "direct", "Direct" }
+                    option { value: "propagated", "Propagated" }
+                }
             }
         }
     }
