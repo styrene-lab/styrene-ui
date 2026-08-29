@@ -1,6 +1,7 @@
 [application]
 name = "Styrene"
 default_platform = "mobile"
+android_manifest = "AndroidManifest.xml"
 
 [android]
 identifier = "io.styrene.mesh"
