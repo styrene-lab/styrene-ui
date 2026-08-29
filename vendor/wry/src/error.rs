@@ -58,6 +58,9 @@ pub enum Error {
   #[cfg(target_os = "android")]
   #[error(transparent)]
   CrossBeamRecvError(#[from] crossbeam_channel::RecvError),
+  #[cfg(target_os = "android")]
+  #[error("Android activity is not available")]
+  ActivityUnavailable,
   #[error("not on the main thread")]
   NotMainThread,
   #[error("Custom protocol task is invalid.")]
