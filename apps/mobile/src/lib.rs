@@ -51,6 +51,7 @@ pub fn App() -> Element {
     let mut usb_failure = use_signal(|| None::<String>);
     let mut usb_busy = use_signal(|| false);
     let mut selected_usb = use_signal(|| None::<AndroidUsbAttachment>);
+    let mut usb_probe_status = use_signal(|| None::<String>);
 
     #[cfg(target_os = "android")]
     use_future(move || async move {
@@ -61,6 +62,7 @@ pub fn App() -> Element {
                     if selected.as_ref().is_some_and(|selected| !attachments.contains(selected)) {
                         selected_usb.set(None);
                         usb_authorization.set(None);
+                        usb_probe_status.set(None);
                     }
                     usb_attachments.set(attachments);
                 }
@@ -97,6 +99,7 @@ pub fn App() -> Element {
                 android_usb_authorization: *usb_authorization.read(),
                 android_usb_failure: usb_failure.read().clone(),
                 android_usb_busy: *usb_busy.read(),
+                android_usb_probe_status: usb_probe_status.read().clone(),
                 android_usb_refresh: move |()| {
                     if *usb_busy.read() {
                         return;
@@ -117,6 +120,7 @@ pub fn App() -> Element {
                     }
                     usb_busy.set(true);
                     selected_usb.set(Some(attachment.clone()));
+                    usb_probe_status.set(None);
                     let session = session.read().clone();
                     spawn(async move {
                         usb_failure.set(None);
@@ -149,6 +153,26 @@ pub fn App() -> Element {
                         }
                         if let Ok(attachments) = platform::android_usb_attachments().await {
                             usb_attachments.set(attachments);
+                        }
+                        usb_busy.set(false);
+                    });
+                },
+                android_usb_probe: move |()| {
+                    if *usb_busy.read() {
+                        return;
+                    }
+                    usb_busy.set(true);
+                    let session = session.read().clone();
+                    spawn(async move {
+                        usb_probe_status.set(Some("Dispatching local announce to the USB RNode".into()));
+                        match session.probe_android_usb().await {
+                            Ok(outcome) => usb_probe_status.set(Some(format!(
+                                "USB accepted a {}-byte KISS frame. RF and remote reception unconfirmed.",
+                                outcome.frame_bytes
+                            ))),
+                            Err(error) => usb_probe_status.set(Some(format!(
+                                "USB RNode packet test failed: {error}"
+                            ))),
                         }
                         usb_busy.set(false);
                     });

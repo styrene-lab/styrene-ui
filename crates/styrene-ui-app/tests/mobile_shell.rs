@@ -72,6 +72,36 @@ fn android_usb_fallback_requires_an_explicit_attachment_action() {
     assert!(busy.contains("disabled"));
 }
 
+#[test]
+fn android_usb_probe_status_discloses_host_handoff_without_claiming_remote_reception() {
+    let mut live_fixture = fixture("live-empty-connected");
+    let usb = live_fixture
+        .bearers
+        .iter_mut()
+        .find(|bearer| bearer.kind == styrene_ui_state::BearerKind::AndroidUsb)
+        .expect("fixture must include Android USB bearer");
+    usb.state = styrene_ui_state::BearerState::Connected;
+    usb.reason = None;
+
+    let markup = dioxus_ssr::render_element(rsx! {
+        MobileShell {
+            target: TargetClass::Android,
+            fixture: live_fixture,
+            android_usb_attachments: vec![AndroidUsbAttachment {
+                device_id: 7,
+                vendor_id: 0x10c4,
+                product_id: 0xea60,
+                device_name: "/dev/bus/usb/001/007".into(),
+            }],
+            android_usb_probe_status: "USB accepted a 172-byte KISS frame. RF and remote reception unconfirmed.",
+        }
+    });
+
+    assert!(markup.contains("USB accepted a 172-byte KISS frame"));
+    assert!(markup.contains("RF and remote reception unconfirmed"));
+    assert!(markup.contains("id=\"mobile.android-usb-probe-status\""));
+}
+
 fn opening_tag_with_id<'a>(markup: &'a str, id: &str) -> &'a str {
     let id = format!("id=\"{id}\"");
     let start = markup.find(&id).unwrap_or_else(|| panic!("missing {id}"));
