@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["apps/mobile", "crates/styrene-ui-app", "crates/styrene-ui-state"]
+members = [
+    "apps/mobile",
+    "crates/styrene-ui-app",
+    "crates/styrene-ui-platform",
+    "crates/styrene-ui-state",
+]
 exclude = ["apps/desktop"]
 
 [workspace.package]
