@@ -130,8 +130,10 @@ fn mobile_shell_uses_destination_navigation_and_starts_on_the_conversation_list(
     for destination in ["messages", "people", "network", "more"] {
         assert!(markup.contains(&format!("id=\"mobile.destination.{destination}\"")));
     }
-    assert!(opening_tag_with_id(&markup, "mobile.destination.messages")
-        .contains("aria-current=\"page\""));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.destination.messages")
+            .contains("aria-current=\"page\"")
+    );
     assert!(markup.contains("data-compact-pane=\"list\""));
     assert!(opening_tag_with_id(&markup, "mobile.people").contains("hidden"));
     assert!(opening_tag_with_id(&markup, "mobile.network").contains("hidden"));

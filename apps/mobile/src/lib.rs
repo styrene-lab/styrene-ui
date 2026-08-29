@@ -25,11 +25,7 @@ pub const MOBILE_INDEX: &str = r#"<!DOCTYPE html>
 </html>"#;
 
 fn target_class() -> TargetClass {
-    if cfg!(target_os = "android") {
-        TargetClass::Android
-    } else {
-        TargetClass::Ios
-    }
+    if cfg!(target_os = "android") { TargetClass::Android } else { TargetClass::Ios }
 }
 
 #[cfg(any(test, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))]
@@ -89,6 +85,13 @@ mod tests {
 
     use super::*;
 
+    const BACKEND_REVISION: &str = "0f85140c84267052b28e84895a1af4e6677d6eec";
+    const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
+    const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
+    const FIXTURE_PROVENANCE: &str =
+        include_str!("../../../tests/fixtures/mobile-minimum-v1/README.md");
+    const PARITY_CONTRACT: &str = include_str!("../../../docs/parity-corpus.md");
+
     #[test]
     fn embedded_fixture_corpus_remains_visibly_fixture_only() {
         let fixture = bootstrap_fixture();
@@ -107,5 +110,16 @@ mod tests {
         assert!(MOBILE_INDEX.contains("name=\"color-scheme\" content=\"light dark\""));
         assert!(!MOBILE_INDEX.contains("user-scalable=no"));
         assert!(!MOBILE_INDEX.contains("maximum-scale"));
+    }
+
+    #[test]
+    fn workspace_and_corpora_share_the_backend_contract() {
+        assert!(WORKSPACE_MANIFEST.contains("resolver = \"3\""));
+        assert!(WORKSPACE_MANIFEST.contains("edition = \"2024\""));
+        assert_eq!(MOBILE_MANIFEST.matches(BACKEND_REVISION).count(), 4);
+        assert!(FIXTURE_PROVENANCE.contains(BACKEND_REVISION));
+        assert!(PARITY_CONTRACT.contains(BACKEND_REVISION));
+        assert!(PARITY_CONTRACT.contains("styrene-mobile-integration-v1"));
+        assert!(PARITY_CONTRACT.contains("Not consumed by UI"));
     }
 }
