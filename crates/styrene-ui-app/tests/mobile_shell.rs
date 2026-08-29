@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use styrene_ui_app::{LocalAnnounceStatus, MobileShell, PropagationPanel};
+use styrene_ui_app::{Composer, LocalAnnounceStatus, MobileShell, PropagationPanel};
 use styrene_ui_state::{
     ApplyResult, BearerState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
     MobileStore, PropagationCandidate, PropagationPolicy, PropagationProgress, PropagationUpdate,
@@ -159,6 +159,28 @@ fn initial_thread_selection_filters_messages_without_inventing_ordering() {
     assert!(second.contains("aria-current=\"false\""));
     assert!(markup.contains("Direct message awaiting evidence"));
     assert!(!markup.contains("Message belonging only to the second peer"));
+}
+
+#[test]
+fn composer_requires_a_canonical_conversation_before_enabling_send() {
+    let markup = dioxus_ssr::render_element(rsx! {
+        Composer { conversation: None, enabled: true }
+    });
+
+    let send = opening_tag_with_id(&markup, "mobile.send");
+    assert!(send.contains("data-enabled=\"false\""));
+    assert!(send.contains("disabled"));
+}
+
+#[test]
+fn malformed_short_hashes_do_not_crash_the_directory_or_conversation_list() {
+    let mut state = fixture("direct-message-queued");
+    state.conversations[0].peer_hash = "x".into();
+    state.messages[0].peer_hash = "x".into();
+    let markup = render(state);
+
+    assert!(markup.contains("id=\"mobile.conversation.x\""));
+    assert!(markup.contains("Peer x"));
 }
 
 #[test]
