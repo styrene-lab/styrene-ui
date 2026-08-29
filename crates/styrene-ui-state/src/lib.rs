@@ -184,10 +184,9 @@ impl MobileStore {
                 .peers
                 .iter()
                 .find(|current| current.destination_hash == peer.destination_hash)
+                && current.observed_at > peer.observed_at
             {
-                if current.observed_at > peer.observed_at {
-                    *peer = current.clone();
-                }
+                *peer = current.clone();
             }
         }
         self.snapshot.peers = peers;
@@ -273,19 +272,16 @@ impl MobileStore {
             generation: outcome.generation,
             message: outcome.message,
         });
-        if outcome.draft_clear == DraftClearDisposition::Cleared {
-            if let Some(submitted_revision) = outcome.submitted_draft_revision {
-                if let Some(conversation) = self
-                    .snapshot
-                    .conversations
-                    .iter_mut()
-                    .find(|conversation| conversation.peer_hash == peer_hash)
-                {
-                    if conversation.draft_revision == submitted_revision {
-                        conversation.draft.clear();
-                    }
-                }
-            }
+        if outcome.draft_clear == DraftClearDisposition::Cleared
+            && let Some(submitted_revision) = outcome.submitted_draft_revision
+            && let Some(conversation) = self
+                .snapshot
+                .conversations
+                .iter_mut()
+                .find(|conversation| conversation.peer_hash == peer_hash)
+            && conversation.draft_revision == submitted_revision
+        {
+            conversation.draft.clear();
         }
         ApplyResult::Applied
     }

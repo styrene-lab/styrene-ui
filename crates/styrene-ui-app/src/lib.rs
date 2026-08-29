@@ -495,15 +495,13 @@ fn EndpointEditor(
                 r#type: "button",
                 disabled: !enabled,
                 onclick: move |_| {
-                    if enabled {
-                        if let Some(action_sink) = action_sink {
-                            action_sink.call(MobileAction::new(
-                                generation,
-                                MobileActionKind::ApplyEndpoint {
-                                    endpoint: endpoint_buffer.read().clone(),
-                                },
-                            ));
-                        }
+                    if enabled && let Some(action_sink) = action_sink {
+                        action_sink.call(MobileAction::new(
+                            generation,
+                            MobileActionKind::ApplyEndpoint {
+                                endpoint: endpoint_buffer.read().clone(),
+                            },
+                        ));
                     }
                 },
                 "Apply endpoint"
@@ -540,14 +538,12 @@ pub fn PropagationPanel(
                 id: "mobile.propagation-node",
                 disabled: !actions_enabled,
                 onchange: move |event| {
-                    if actions_enabled {
-                        if let Some(action_sink) = action_sink {
-                            let destination_hash = (!event.value().is_empty()).then(|| event.value());
-                            action_sink.call(MobileAction::new(
-                                propagation.generation,
-                                MobileActionKind::SelectPropagationNode { destination_hash },
-                            ));
-                        }
+                    if actions_enabled && let Some(action_sink) = action_sink {
+                        let destination_hash = (!event.value().is_empty()).then(|| event.value());
+                        action_sink.call(MobileAction::new(
+                            propagation.generation,
+                            MobileActionKind::SelectPropagationNode { destination_hash },
+                        ));
                     }
                 },
                 option { value: "", "No node selected" }
@@ -593,13 +589,12 @@ pub fn PropagationPanel(
                     if actions_enabled
                         && propagation.ready
                         && propagation.sync_state != SyncState::InProgress
+                        && let Some(action_sink) = action_sink
                     {
-                        if let Some(action_sink) = action_sink {
-                            action_sink.call(MobileAction::new(
-                                propagation.generation,
-                                MobileActionKind::SyncPropagation,
-                            ));
-                        }
+                        action_sink.call(MobileAction::new(
+                            propagation.generation,
+                            MobileActionKind::SyncPropagation,
+                        ));
                     }
                 },
                 "Sync now"
@@ -789,15 +784,13 @@ pub fn DeliveryDetail(
                     onclick: {
                         let message_id = message.id.clone();
                         move |_| {
-                            if actions_enabled {
-                                if let Some(action_sink) = action_sink {
-                                    action_sink.call(MobileAction::new(
-                                        generation,
-                                        MobileActionKind::RetryMessage {
-                                            message_id: message_id.clone(),
-                                        },
-                                    ));
-                                }
+                            if actions_enabled && let Some(action_sink) = action_sink {
+                                action_sink.call(MobileAction::new(
+                                    generation,
+                                    MobileActionKind::RetryMessage {
+                                        message_id: message_id.clone(),
+                                    },
+                                ));
                             }
                         }
                     },
@@ -843,18 +836,18 @@ pub fn Composer(
                 let draft = draft.clone();
                 move |event| {
                     event.prevent_default();
-                    if enabled {
-                        if let (Some(action_sink), Some(peer_hash)) = (action_sink, &peer_hash) {
-                            action_sink.call(MobileAction::new(
-                                generation,
-                                MobileActionKind::SendMessage {
-                                    peer_hash: peer_hash.clone(),
-                                    content: draft.clone(),
-                                    requested_method: *delivery_method.read(),
-                                    draft_revision,
-                                },
-                            ));
-                        }
+                    if enabled
+                        && let (Some(action_sink), Some(peer_hash)) = (action_sink, &peer_hash)
+                    {
+                        action_sink.call(MobileAction::new(
+                            generation,
+                            MobileActionKind::SendMessage {
+                                peer_hash: peer_hash.clone(),
+                                content: draft.clone(),
+                                requested_method: *delivery_method.read(),
+                                draft_revision,
+                            },
+                        ));
                     }
                 }
             },

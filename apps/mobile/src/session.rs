@@ -12,10 +12,10 @@ use styrene_ui_state::{
     SessionPhase, SyncState, TransportEvidence, TypedFailure,
 };
 use styrened::mobile::{
-    persist_mobile_tcp_endpoint, IdentityBackend, MobileBearerKind, MobileBearerReason,
-    MobileBearerState, MobileConfig, MobileConnectionPhase, MobileDeliveryMethod,
-    MobileInterfaceConfig, MobileNode, MobilePeerAspect, MobilePropagationSnapshot,
-    MobilePropagationSyncState, MobileSendRequest,
+    IdentityBackend, MobileBearerKind, MobileBearerReason, MobileBearerState, MobileConfig,
+    MobileConnectionPhase, MobileDeliveryMethod, MobileInterfaceConfig, MobileNode,
+    MobilePeerAspect, MobilePropagationSnapshot, MobilePropagationSyncState, MobileSendRequest,
+    persist_mobile_tcp_endpoint,
 };
 
 const DEFAULT_ENDPOINT: &str = "rns.styrene.io:4242";
