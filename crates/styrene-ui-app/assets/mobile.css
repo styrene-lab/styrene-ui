@@ -225,8 +225,34 @@ label {
   border-radius: var(--radius-control);
   background: var(--warning-soft);
   color: var(--warning);
-  font-size: 0.8rem;
+  font: -apple-system-footnote;
+  font-family: var(--font-interface);
   font-weight: 750;
+}
+
+.mobile-shell[data-text-scale-category="accessibility-medium"] .fixture-banner,
+.mobile-shell[data-text-scale-category="accessibility-medium"] .failure-banner {
+  font-size: 1.4375rem;
+}
+
+.mobile-shell[data-text-scale-category="accessibility-large"] .fixture-banner,
+.mobile-shell[data-text-scale-category="accessibility-large"] .failure-banner {
+  font-size: 1.6875rem;
+}
+
+.mobile-shell[data-text-scale-category="accessibility-extra-large"] .fixture-banner,
+.mobile-shell[data-text-scale-category="accessibility-extra-large"] .failure-banner {
+  font-size: 2.0625rem;
+}
+
+.mobile-shell[data-text-scale-category="accessibility-extra-extra-large"] .fixture-banner,
+.mobile-shell[data-text-scale-category="accessibility-extra-extra-large"] .failure-banner {
+  font-size: 2.375rem;
+}
+
+.mobile-shell[data-text-scale-category="accessibility-extra-extra-extra-large"] .fixture-banner,
+.mobile-shell[data-text-scale-category="accessibility-extra-extra-extra-large"] .failure-banner {
+  font-size: 2.75rem;
 }
 
 .app-surface {

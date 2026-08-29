@@ -19,12 +19,17 @@ device. The iOS lanes are the current simulator and a physical iPhone. Release
 evidence records the host package version, shared UI revision, backend revision,
 artifact hash, device OS, and WebView version.
 
-Packaged XCUITest on the iPhone 17 Pro simulator verifies that the fixture-mode
-application launches its `WKWebView`, exposes its fixture-only notice, and
-navigates among Network, More, and Conversations through accessibility elements.
-This is accessibility-tree interaction evidence, not VoiceOver or spoken-output
-evidence. Physical iPhone permission, Dynamic Type, lifecycle, and adaptive-layout
-scenarios remain unverified.
+Packaged XCUITest on the iPhone 17 Pro simulator and a physical iPhone 17 Pro
+verifies that the fixture-mode application launches its `WKWebView`, exposes its
+fixture-only notice, and navigates among Network, More, and Conversations through
+accessibility elements. The physical suite also verifies at least `44x44 pt`
+primary navigation frames, More-screen preservation across background and
+foreground, hittable primary navigation and Network access in landscape, and
+fixture-notice reflow at the accessibility XXXL Dynamic Type category. The final
+physical result contains 5 passing tests and no failures on iOS 26.6.1. This is
+accessibility-tree interaction and frame evidence, not VoiceOver or spoken-output
+evidence. Physical iPhone permission prompts and full-application large-text
+reflow remain unverified.
 
 ## WebView Platform Facts
 

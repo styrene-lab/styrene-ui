@@ -366,6 +366,7 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
         "@media (prefers-color-scheme: dark)",
         "@media (prefers-contrast: more)",
         "@media (prefers-reduced-motion: reduce)",
+        "data-text-scale-category=\"accessibility-extra-extra-extra-large\"",
     ] {
         assert!(MOBILE_CSS.contains(required), "missing mobile style contract: {required}");
     }
