@@ -1,5 +1,7 @@
 //! Shared Dioxus application components.
 
+use std::collections::HashMap;
+
 use dioxus::prelude::*;
 use styrene_ui_state::{
     Conversation, DeliveryEvidence, LocalAnnounceOutcome, Message, MobileFixture, MobileStore,
@@ -48,6 +50,10 @@ fn short_hash(hash: &str) -> String {
     hash.chars().take(8).collect()
 }
 
+fn hash_glyph(hash: &str) -> String {
+    hash.chars().take(2).flat_map(char::to_uppercase).collect()
+}
+
 fn peer_name(hash: &str, peers: &[Peer]) -> String {
     peers
         .iter()
@@ -61,14 +67,21 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let messaging_available = MobileStore::new(fixture.clone()).messaging_available();
     let live_actions_enabled = boundary.live_network_allowed();
-    let initial_peer =
-        fixture.conversations.first().map(|conversation| conversation.peer_hash.clone());
     let mut destination = use_signal(|| MobileDestination::Messages);
-    let mut selected_peer = use_signal(|| initial_peer);
+    let mut selected_peer = use_signal(|| None::<String>);
     let mut compact_thread_open = use_signal(|| false);
 
     let active_destination = *destination.read();
-    let selected_hash = selected_peer.read().clone();
+    let selected_hash = selected_peer
+        .read()
+        .clone()
+        .filter(|peer_hash| {
+            fixture.conversations.iter().any(|conversation| &conversation.peer_hash == peer_hash)
+                || fixture.peers.iter().any(|peer| &peer.destination_hash == peer_hash)
+        })
+        .or_else(|| {
+            fixture.conversations.first().map(|conversation| conversation.peer_hash.clone())
+        });
     let selected_conversation = selected_hash.as_ref().and_then(|peer_hash| {
         fixture
             .conversations
@@ -83,6 +96,8 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
         .as_deref()
         .map_or_else(|| "Conversation".into(), |hash| peer_name(hash, &fixture.peers));
     let selected_short_hash = selected_hash.as_deref().map(short_hash).unwrap_or_default();
+    let composer_enabled =
+        selected_conversation.is_some() && messaging_available && live_actions_enabled;
     let compact_pane = if *compact_thread_open.read() { "thread" } else { "list" };
     let conversation_count = fixture.conversations.len().to_string();
     let peer_count = fixture.peers.len().to_string();
@@ -177,9 +192,7 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
                         }
                         Composer {
                             conversation: selected_conversation,
-                            enabled: selected_hash.is_some()
-                                && messaging_available
-                                && live_actions_enabled,
+                            enabled: composer_enabled,
                         }
                     }
                 }
@@ -219,7 +232,7 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
                                 destination.set(MobileDestination::Messages);
                             }
                         },
-                        span { class: "hash-glyph", {short_hash(&peer.destination_hash)[..2].to_uppercase()} }
+                        span { class: "hash-glyph", {hash_glyph(&peer.destination_hash)} }
                         span {
                             class: "directory-copy",
                             strong {
@@ -458,7 +471,7 @@ pub fn ConversationList(
                     let is_selected = selected_peer.as_deref() == Some(conversation.peer_hash.as_str());
                     let name = peer_name(&conversation.peer_hash, &peers);
                     let peer_short_hash = short_hash(&conversation.peer_hash);
-                    let hash_glyph = peer_short_hash[..2].to_uppercase();
+                    let hash_glyph = hash_glyph(&conversation.peer_hash);
                     let selected_hash = conversation.peer_hash.clone();
                     rsx! {
                 button {
@@ -572,14 +585,28 @@ pub fn DeliveryDetail(message: Message, actions_enabled: bool) -> Element {
 
 #[component]
 pub fn Composer(conversation: Option<Conversation>, enabled: bool) -> Element {
+    let mut draft_buffers = use_signal(HashMap::<String, (u64, String)>::new);
     let draft_id = conversation.as_ref().map_or_else(
         || "mobile.draft".to_string(),
         |conversation| format!("mobile.draft.{}", conversation.peer_hash),
     );
+    let peer_hash = conversation.as_ref().map(|conversation| conversation.peer_hash.clone());
+    let draft_revision =
+        conversation.as_ref().map_or(0, |conversation| conversation.draft_revision);
+    let draft = conversation.as_ref().map_or_else(String::new, |conversation| {
+        draft_buffers
+            .read()
+            .get(&conversation.peer_hash)
+            .filter(|(revision, _)| *revision == conversation.draft_revision)
+            .map_or_else(|| conversation.draft.clone(), |(_, draft)| draft.clone())
+    });
+    let enabled = enabled && conversation.is_some();
     rsx! {
         form {
+            key: "{draft_id}",
             id: "mobile.composer",
             class: "composer",
+            "data-peer": peer_hash.clone(),
             div {
                 class: "composer-row",
                 label { class: "visually-hidden", r#for: draft_id.clone(), "Message" }
@@ -588,8 +615,19 @@ pub fn Composer(conversation: Option<Conversation>, enabled: bool) -> Element {
                     name: "message",
                     rows: "2",
                     placeholder: "Message",
-                    "data-revision": conversation.as_ref().map_or(0, |conversation| conversation.draft_revision),
-                    value: conversation.as_ref().map_or("", |conversation| conversation.draft.as_str()),
+                    "data-revision": draft_revision,
+                    value: draft,
+                    oninput: {
+                        let peer_hash = peer_hash.clone();
+                        move |event| {
+                            if let Some(peer_hash) = &peer_hash {
+                                draft_buffers.write().insert(
+                                    peer_hash.clone(),
+                                    (draft_revision, event.value()),
+                                );
+                            }
+                        }
+                    },
                 }
                 button {
                     id: "mobile.send",
