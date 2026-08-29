@@ -8,6 +8,495 @@ use styrene_ui_platform::{
     WindowClass, WindowMetrics,
 };
 
+#[cfg(any(test, target_os = "android"))]
+mod android_policy {
+    pub const CAMERA: &str = "android.permission.CAMERA";
+    pub const LOCATION: &str = "android.permission.ACCESS_FINE_LOCATION";
+    pub const BLUETOOTH_SCAN: &str = "android.permission.BLUETOOTH_SCAN";
+    pub const BLUETOOTH_CONNECT: &str = "android.permission.BLUETOOTH_CONNECT";
+    pub const POST_NOTIFICATIONS: &str = "android.permission.POST_NOTIFICATIONS";
+
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn font_scale_percent(scale: f32) -> Option<u16> {
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        Some((scale * 100.0).round().clamp(1.0, f32::from(u16::MAX)) as u16)
+    }
+
+    pub fn permission_names(
+        kind: styrene_ui_platform::PermissionKind,
+        sdk: i32,
+    ) -> &'static [&'static str] {
+        use styrene_ui_platform::PermissionKind;
+        match (kind, sdk) {
+            (PermissionKind::Bluetooth, 31..) => &[BLUETOOTH_SCAN, BLUETOOTH_CONNECT],
+            (PermissionKind::Bluetooth, _) => &[LOCATION],
+            (PermissionKind::Camera, _) => &[CAMERA],
+            (PermissionKind::Usb, _) => &[],
+        }
+    }
+
+    pub fn notification_permission_names(sdk: i32) -> &'static [&'static str] {
+        if sdk >= 33 { &[POST_NOTIFICATIONS] } else { &[] }
+    }
+
+    pub const fn merge_authorization(
+        current: styrene_ui_platform::AuthorizationState,
+        next: styrene_ui_platform::AuthorizationState,
+    ) -> styrene_ui_platform::AuthorizationState {
+        use styrene_ui_platform::AuthorizationState::{
+            Denied, Granted, NotDetermined, Restricted, Unavailable,
+        };
+        match (current, next) {
+            (Restricted, _) | (_, Restricted) => Restricted,
+            (Denied, _) | (_, Denied) => Denied,
+            (NotDetermined, _) | (_, NotDetermined) => NotDetermined,
+            (Unavailable, _) | (_, Unavailable) => Unavailable,
+            (Granted, Granted) => Granted,
+        }
+    }
+}
+
+#[cfg(any(test, target_os = "ios"))]
+fn ios_text_scale_category(raw: &str) -> TextScale {
+    use styrene_ui_platform::TextScaleCategory;
+    let category = match raw {
+        "UICTContentSizeCategoryXS" => TextScaleCategory::ExtraSmall,
+        "UICTContentSizeCategoryS" => TextScaleCategory::Small,
+        "UICTContentSizeCategoryM" => TextScaleCategory::Medium,
+        "UICTContentSizeCategoryL" => TextScaleCategory::Large,
+        "UICTContentSizeCategoryXL" => TextScaleCategory::ExtraLarge,
+        "UICTContentSizeCategoryXXL" => TextScaleCategory::ExtraExtraLarge,
+        "UICTContentSizeCategoryXXXL" => TextScaleCategory::ExtraExtraExtraLarge,
+        "UICTContentSizeCategoryAccessibilityM" => TextScaleCategory::AccessibilityMedium,
+        "UICTContentSizeCategoryAccessibilityL" => TextScaleCategory::AccessibilityLarge,
+        "UICTContentSizeCategoryAccessibilityXL" => TextScaleCategory::AccessibilityExtraLarge,
+        "UICTContentSizeCategoryAccessibilityXXL" => {
+            TextScaleCategory::AccessibilityExtraExtraLarge
+        }
+        "UICTContentSizeCategoryAccessibilityXXXL" => {
+            TextScaleCategory::AccessibilityExtraExtraExtraLarge
+        }
+        "UICTContentSizeCategoryUnspecified" | "" => return TextScale::Unavailable,
+        _ => TextScaleCategory::Unknown,
+    };
+    TextScale::Category(category)
+}
+
+#[cfg(target_os = "android")]
+mod native_platform {
+    use super::android_policy::{
+        font_scale_percent, merge_authorization, notification_permission_names, permission_names,
+    };
+    use async_channel::Sender;
+    use jni::{
+        JNIEnv,
+        objects::{JObject, JValue},
+    };
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use styrene_ui_platform::{
+        AuthorizationState, PermissionKind, PermissionStatus, PlatformFailure, PlatformSnapshot,
+        TextScale,
+    };
+
+    static PERMISSION_REQUEST_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+    struct PermissionRequestGuard;
+
+    impl PermissionRequestGuard {
+        fn acquire() -> Result<Self, PlatformFailure> {
+            PERMISSION_REQUEST_ACTIVE
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .map(|_| Self)
+                .map_err(|_| failure("android_permission_request_busy", true))
+        }
+    }
+
+    impl Drop for PermissionRequestGuard {
+        fn drop(&mut self) {
+            PERMISSION_REQUEST_ACTIVE.store(false, Ordering::Release);
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct NativeFacts {
+        font_scale: Option<u16>,
+        camera: AuthorizationState,
+        bluetooth: AuthorizationState,
+        notifications: AuthorizationState,
+    }
+
+    pub async fn enrich_snapshot(snapshot: &mut PlatformSnapshot) {
+        snapshot.permissions =
+            [PermissionKind::Bluetooth, PermissionKind::Camera, PermissionKind::Usb]
+                .into_iter()
+                .map(|kind| PermissionStatus { kind, state: AuthorizationState::Unavailable })
+                .collect();
+        let Ok(facts) = dispatch_query(read_native_facts).await else {
+            return;
+        };
+        snapshot.accessibility.text_scale =
+            facts.font_scale.map_or(TextScale::Unavailable, TextScale::Percent);
+        snapshot.permissions = vec![
+            PermissionStatus { kind: PermissionKind::Bluetooth, state: facts.bluetooth },
+            PermissionStatus { kind: PermissionKind::Camera, state: facts.camera },
+            PermissionStatus { kind: PermissionKind::Usb, state: AuthorizationState::Unavailable },
+        ];
+        snapshot.notification_authorization = facts.notifications;
+    }
+
+    pub async fn request_permission(
+        kind: PermissionKind,
+    ) -> Result<PermissionStatus, PlatformFailure> {
+        if kind == PermissionKind::Usb {
+            return Ok(PermissionStatus { kind, state: AuthorizationState::Unavailable });
+        }
+        let sdk = dispatch_query(read_sdk).await?;
+        let names = permission_names(kind, sdk);
+        request_and_observe(names).await.map(|state| PermissionStatus { kind, state })
+    }
+
+    pub async fn request_notifications() -> Result<AuthorizationState, PlatformFailure> {
+        let sdk = dispatch_query(read_sdk).await?;
+        let names = notification_permission_names(sdk);
+        if names.is_empty() {
+            return dispatch_query(move |env, activity| notifications_state(env, activity, sdk))
+                .await;
+        }
+        request_and_observe(names).await?;
+        dispatch_query(move |env, activity| notifications_state(env, activity, sdk)).await
+    }
+
+    async fn request_and_observe(
+        names: &'static [&'static str],
+    ) -> Result<AuthorizationState, PlatformFailure> {
+        let _request_guard = PermissionRequestGuard::acquire()?;
+        let initially_granted =
+            dispatch_query(move |env, activity| permissions_state(env, activity, names)).await?;
+        if initially_granted == AuthorizationState::Granted {
+            return Ok(initially_granted);
+        }
+
+        dispatch_query(move |env, activity| request_permissions(env, activity, names)).await?;
+        let mut lost_focus = false;
+        for attempt in 0..120 {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            let focused = dispatch_query(has_window_focus).await?;
+            lost_focus |= !focused;
+            if focused && (lost_focus || attempt >= 3) {
+                return dispatch_query(move |env, activity| {
+                    permissions_state(env, activity, names)
+                })
+                .await;
+            }
+        }
+        Err(failure("android_permission_result_timeout", true))
+    }
+
+    async fn dispatch_query<T, F>(query: F) -> Result<T, PlatformFailure>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut JNIEnv<'_>, &JObject<'_>) -> jni::errors::Result<T> + Send + 'static,
+    {
+        let (sender, receiver) = async_channel::bounded(1);
+        wry::try_dispatch(move |env, activity, _| {
+            if activity.is_null() {
+                send_result(&sender, Err(failure("android_activity_unavailable", true)));
+                return;
+            }
+            let result = query(env, activity).map_err(|_| {
+                if env.exception_check().unwrap_or(false) {
+                    let _ = env.exception_clear();
+                }
+                failure("android_native_query_failed", true)
+            });
+            send_result(&sender, result);
+        })
+        .map_err(|_| failure("android_dispatch_unavailable", true))?;
+        tokio::time::timeout(std::time::Duration::from_secs(5), receiver.recv())
+            .await
+            .map_err(|_| failure("android_dispatch_timeout", true))?
+            .map_err(|_| failure("android_dispatch_closed", true))?
+    }
+
+    fn send_result<T>(
+        sender: &Sender<Result<T, PlatformFailure>>,
+        result: Result<T, PlatformFailure>,
+    ) {
+        let _ = sender.try_send(result);
+    }
+
+    fn read_native_facts(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+    ) -> jni::errors::Result<NativeFacts> {
+        let sdk = read_sdk(env, activity)?;
+        let resources = env
+            .call_method(activity, "getResources", "()Landroid/content/res/Resources;", &[])?
+            .l()?;
+        let configuration = env
+            .call_method(
+                &resources,
+                "getConfiguration",
+                "()Landroid/content/res/Configuration;",
+                &[],
+            )?
+            .l()?;
+        let font_scale = font_scale_percent(env.get_field(&configuration, "fontScale", "F")?.f()?);
+        Ok(NativeFacts {
+            font_scale,
+            camera: permissions_state(
+                env,
+                activity,
+                permission_names(PermissionKind::Camera, sdk),
+            )?,
+            bluetooth: permissions_state(
+                env,
+                activity,
+                permission_names(PermissionKind::Bluetooth, sdk),
+            )?,
+            notifications: notifications_state(env, activity, sdk)?,
+        })
+    }
+
+    fn read_sdk(env: &mut JNIEnv<'_>, _: &JObject<'_>) -> jni::errors::Result<i32> {
+        env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?.i()
+    }
+
+    fn permissions_state(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        names: &[&str],
+    ) -> jni::errors::Result<AuthorizationState> {
+        let mut aggregate = AuthorizationState::Granted;
+        for name in names {
+            let requested = permission_was_requested(env, activity, name)?;
+            let name = env.new_string(name)?;
+            let granted = env
+                .call_method(
+                    activity,
+                    "checkSelfPermission",
+                    "(Ljava/lang/String;)I",
+                    &[JValue::Object(&name)],
+                )?
+                .i()?
+                == 0;
+            if !granted {
+                aggregate = merge_authorization(
+                    aggregate,
+                    if requested {
+                        AuthorizationState::Denied
+                    } else {
+                        AuthorizationState::NotDetermined
+                    },
+                );
+            }
+        }
+        Ok(aggregate)
+    }
+
+    fn permission_was_requested(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        permission: &str,
+    ) -> jni::errors::Result<bool> {
+        let preferences = permission_preferences(env, activity)?;
+        let key = env.new_string(format!("permission_requested:{permission}"))?;
+        env.call_method(
+            &preferences,
+            "getBoolean",
+            "(Ljava/lang/String;Z)Z",
+            &[JValue::Object(&key), JValue::Bool(0)],
+        )?
+        .z()
+    }
+
+    fn permission_preferences<'local>(
+        env: &mut JNIEnv<'local>,
+        activity: &JObject<'_>,
+    ) -> jni::errors::Result<JObject<'local>> {
+        let name = env.new_string("styrene.platform")?;
+        env.call_method(
+            activity,
+            "getSharedPreferences",
+            "(Ljava/lang/String;I)Landroid/content/SharedPreferences;",
+            &[JValue::Object(&name), JValue::Int(0)],
+        )?
+        .l()
+    }
+
+    fn mark_permissions_requested(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        names: &[&str],
+    ) -> jni::errors::Result<()> {
+        let preferences = permission_preferences(env, activity)?;
+        let editor = env
+            .call_method(&preferences, "edit", "()Landroid/content/SharedPreferences$Editor;", &[])?
+            .l()?;
+        for name in names {
+            let key = env.new_string(format!("permission_requested:{name}"))?;
+            env.call_method(
+                &editor,
+                "putBoolean",
+                "(Ljava/lang/String;Z)Landroid/content/SharedPreferences$Editor;",
+                &[JValue::Object(&key), JValue::Bool(1)],
+            )?;
+        }
+        env.call_method(&editor, "apply", "()V", &[])?.v()
+    }
+
+    fn notifications_state(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        sdk: i32,
+    ) -> jni::errors::Result<AuthorizationState> {
+        if sdk >= 33 {
+            let runtime = permissions_state(env, activity, notification_permission_names(sdk))?;
+            if runtime != AuthorizationState::Granted {
+                return Ok(runtime);
+            }
+        }
+        let service_name = env.new_string("notification")?;
+        let manager = env
+            .call_method(
+                activity,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&service_name)],
+            )?
+            .l()?;
+        let enabled = env.call_method(&manager, "areNotificationsEnabled", "()Z", &[])?.z()?;
+        Ok(if enabled { AuthorizationState::Granted } else { AuthorizationState::Denied })
+    }
+
+    fn request_permissions(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        names: &[&str],
+    ) -> jni::errors::Result<()> {
+        mark_permissions_requested(env, activity, names)?;
+        let class = env.find_class("java/lang/String")?;
+        let initial = env.new_string("")?;
+        let array = env.new_object_array(jni_int(names.len())?, class, &initial)?;
+        for (index, name) in names.iter().enumerate() {
+            let name = env.new_string(name)?;
+            env.set_object_array_element(&array, jni_int(index)?, &name)?;
+        }
+        env.call_method(
+            activity,
+            "requestPermissions",
+            "([Ljava/lang/String;I)V",
+            &[JValue::Object(&array), JValue::Int(0x5354)],
+        )?
+        .v()
+    }
+
+    fn has_window_focus(env: &mut JNIEnv<'_>, activity: &JObject<'_>) -> jni::errors::Result<bool> {
+        env.call_method(activity, "hasWindowFocus", "()Z", &[])?.z()
+    }
+
+    fn jni_int(value: usize) -> jni::errors::Result<i32> {
+        i32::try_from(value)
+            .map_err(|_| jni::errors::Error::JniCall(jni::errors::JniError::InvalidArguments))
+    }
+
+    fn failure(code: &str, retryable: bool) -> PlatformFailure {
+        PlatformFailure { code: code.into(), retryable }
+    }
+}
+
+#[cfg(target_os = "ios")]
+mod native_platform {
+    use block2::RcBlock;
+    use objc2::{MainThreadMarker, runtime::Bool};
+    use objc2_foundation::NSError;
+    use objc2_ui_kit::UIApplication;
+    use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
+    use styrene_ui_platform::{
+        AuthorizationState, PermissionKind, PermissionStatus, PlatformFailure, PlatformSnapshot,
+    };
+
+    pub fn enrich_snapshot(snapshot: &mut PlatformSnapshot) -> std::future::Ready<()> {
+        snapshot.permissions =
+            [PermissionKind::Bluetooth, PermissionKind::Camera, PermissionKind::Usb]
+                .into_iter()
+                .map(|kind| PermissionStatus { kind, state: AuthorizationState::Unavailable })
+                .collect();
+        snapshot.notification_authorization = AuthorizationState::Unavailable;
+        let Some(marker) = MainThreadMarker::new() else {
+            snapshot.accessibility.text_scale = styrene_ui_platform::TextScale::Unavailable;
+            return std::future::ready(());
+        };
+        let application = UIApplication::sharedApplication(marker);
+        let category = application.preferredContentSizeCategory().to_string();
+        snapshot.accessibility.text_scale = super::ios_text_scale_category(&category);
+        std::future::ready(())
+    }
+
+    pub fn request_permission(
+        kind: PermissionKind,
+    ) -> std::future::Ready<Result<PermissionStatus, PlatformFailure>> {
+        std::future::ready(Ok(PermissionStatus { kind, state: AuthorizationState::Unavailable }))
+    }
+
+    pub async fn request_notifications() -> Result<AuthorizationState, PlatformFailure> {
+        let (sender, receiver) = async_channel::bounded(1);
+        let callback = move |granted: Bool, error: *mut NSError| {
+            let result = if error.is_null() {
+                Ok(if granted.as_bool() {
+                    AuthorizationState::Granted
+                } else {
+                    AuthorizationState::Denied
+                })
+            } else {
+                Err(failure("ios_notification_request_failed", true))
+            };
+            let _ = sender.try_send(result);
+        };
+        require_send_sync(&callback);
+        let completion = RcBlock::new(callback);
+        let options = UNAuthorizationOptions::Alert
+            | UNAuthorizationOptions::Sound
+            | UNAuthorizationOptions::Badge;
+        UNUserNotificationCenter::currentNotificationCenter()
+            .requestAuthorizationWithOptions_completionHandler(options, &completion);
+        tokio::time::timeout(std::time::Duration::from_mins(2), receiver.recv())
+            .await
+            .map_err(|_| failure("ios_notification_callback_timeout", true))?
+            .map_err(|_| failure("ios_notification_callback_closed", true))?
+    }
+
+    fn require_send_sync<T: Send + Sync>(_: &T) {}
+
+    fn failure(code: &str, retryable: bool) -> PlatformFailure {
+        PlatformFailure { code: code.into(), retryable }
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+mod native_platform {
+    use styrene_ui_platform::{
+        AuthorizationState, PermissionKind, PermissionStatus, PlatformFailure, PlatformSnapshot,
+    };
+
+    pub fn enrich_snapshot(_: &mut PlatformSnapshot) -> std::future::Ready<()> {
+        std::future::ready(())
+    }
+
+    pub fn request_permission(
+        kind: PermissionKind,
+    ) -> std::future::Ready<Result<PermissionStatus, PlatformFailure>> {
+        std::future::ready(Ok(PermissionStatus { kind, state: AuthorizationState::Unavailable }))
+    }
+
+    pub fn request_notifications() -> std::future::Ready<Result<AuthorizationState, PlatformFailure>>
+    {
+        std::future::ready(Ok(AuthorizationState::Unavailable))
+    }
+}
+
 const BACK_LISTENER: &str = r#"
 if (!history.state?.styrenePane) {
     history.replaceState({ styrenePane: "root" }, "", location.href);
@@ -282,7 +771,9 @@ impl WebPlatformMessage {
             return None;
         }
         let generation = self.snapshot.generation;
-        if self.dropped_events > 0 || self.kind == WebEventKind::Resync {
+        if self.dropped_events > 0
+            || matches!(self.kind, WebEventKind::Accessibility | WebEventKind::Resync)
+        {
             return Some(PlatformEvent::ResyncRequired {
                 generation,
                 dropped_events: self.dropped_events,
@@ -317,11 +808,13 @@ impl PlatformEventStream for WebViewPlatformEventStream {
 impl PlatformService for WebViewPlatformService {
     fn snapshot(&self) -> PlatformFuture<'_, Result<PlatformSnapshot, PlatformFailure>> {
         Box::pin(async move {
-            document::eval(PLATFORM_SNAPSHOT)
+            let mut snapshot = document::eval(PLATFORM_SNAPSHOT)
                 .join::<WebPlatformSnapshot>()
                 .await
                 .map(WebPlatformSnapshot::platform_snapshot)
-                .map_err(|error| platform_eval_failure(&error))
+                .map_err(|error| platform_eval_failure(&error))?;
+            native_platform::enrich_snapshot(&mut snapshot).await;
+            Ok(snapshot)
         })
     }
 
@@ -333,15 +826,13 @@ impl PlatformService for WebViewPlatformService {
         &self,
         kind: PermissionKind,
     ) -> PlatformFuture<'_, Result<PermissionStatus, PlatformFailure>> {
-        Box::pin(
-            async move { Ok(PermissionStatus { kind, state: AuthorizationState::Unavailable }) },
-        )
+        Box::pin(async move { native_platform::request_permission(kind).await })
     }
 
     fn request_notification_authorization(
         &self,
     ) -> PlatformFuture<'_, Result<AuthorizationState, PlatformFailure>> {
-        Box::pin(async move { Ok(AuthorizationState::Unavailable) })
+        Box::pin(async move { native_platform::request_notifications().await })
     }
 }
 
@@ -440,6 +931,65 @@ mod tests {
         assert!(!BACK_LISTENER.contains("window.ipc"));
     }
 
+    #[test]
+    fn android_policy_preserves_native_scale_and_api_permission_boundaries() {
+        use android_policy::{
+            BLUETOOTH_CONNECT, BLUETOOTH_SCAN, CAMERA, LOCATION, POST_NOTIFICATIONS,
+            font_scale_percent, merge_authorization, notification_permission_names,
+            permission_names,
+        };
+
+        assert_eq!(font_scale_percent(1.0), Some(100));
+        assert_eq!(font_scale_percent(1.3), Some(130));
+        assert_eq!(font_scale_percent(2.0), Some(200));
+        assert_eq!(font_scale_percent(f32::NAN), None);
+        assert_eq!(font_scale_percent(f32::INFINITY), None);
+        assert_eq!(font_scale_percent(0.0), None);
+        assert_eq!(permission_names(PermissionKind::Bluetooth, 30), &[LOCATION]);
+        assert_eq!(
+            permission_names(PermissionKind::Bluetooth, 31),
+            &[BLUETOOTH_SCAN, BLUETOOTH_CONNECT]
+        );
+        assert_eq!(permission_names(PermissionKind::Camera, 35), &[CAMERA]);
+        assert!(permission_names(PermissionKind::Usb, 35).is_empty());
+        assert!(notification_permission_names(32).is_empty());
+        assert_eq!(notification_permission_names(33), &[POST_NOTIFICATIONS]);
+        assert_eq!(
+            merge_authorization(AuthorizationState::Granted, AuthorizationState::NotDetermined),
+            AuthorizationState::NotDetermined
+        );
+        assert_eq!(
+            merge_authorization(AuthorizationState::NotDetermined, AuthorizationState::Denied),
+            AuthorizationState::Denied
+        );
+        assert_eq!(
+            merge_authorization(AuthorizationState::Denied, AuthorizationState::Restricted),
+            AuthorizationState::Restricted
+        );
+    }
+
+    #[test]
+    fn ios_dynamic_type_values_remain_named_categories() {
+        use styrene_ui_platform::TextScaleCategory;
+
+        assert_eq!(
+            ios_text_scale_category("UICTContentSizeCategoryL"),
+            TextScale::Category(TextScaleCategory::Large)
+        );
+        assert_eq!(
+            ios_text_scale_category("UICTContentSizeCategoryAccessibilityXXXL"),
+            TextScale::Category(TextScaleCategory::AccessibilityExtraExtraExtraLarge)
+        );
+        assert_eq!(
+            ios_text_scale_category("UICTContentSizeCategoryFuture"),
+            TextScale::Category(TextScaleCategory::Unknown)
+        );
+        assert_eq!(
+            ios_text_scale_category("UICTContentSizeCategoryUnspecified"),
+            TextScale::Unavailable
+        );
+    }
+
     fn web_snapshot(generation: u64, sequence: u64) -> WebPlatformSnapshot {
         WebPlatformSnapshot {
             generation,
@@ -480,6 +1030,19 @@ mod tests {
         .expect("geometry event");
 
         assert_eq!(event, PlatformEvent::ResyncRequired { generation: 8, dropped_events: 3 });
+    }
+
+    #[test]
+    fn web_accessibility_callbacks_resnapshot_native_text_scale() {
+        let event = WebPlatformMessage {
+            kind: WebEventKind::Accessibility,
+            dropped_events: 0,
+            snapshot: web_snapshot(8, 12),
+        }
+        .platform_event()
+        .expect("accessibility event");
+
+        assert_eq!(event, PlatformEvent::ResyncRequired { generation: 8, dropped_events: 0 });
     }
 
     #[test]

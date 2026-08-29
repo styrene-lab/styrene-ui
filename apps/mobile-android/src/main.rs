@@ -23,5 +23,18 @@ mod tests {
         assert!(ANDROID_MANIFEST.contains("smallestScreenSize"));
         assert!(ANDROID_MANIFEST.contains("android:stateNotNeeded=\"true\""));
         assert!(ANDROID_MANIFEST.contains("android:allowBackup=\"false\""));
+        assert!(ANDROID_MANIFEST.contains("android.permission.CAMERA"));
+        assert!(ANDROID_MANIFEST.contains("android.permission.BLUETOOTH_SCAN"));
+        assert!(ANDROID_MANIFEST.contains("android.permission.BLUETOOTH_CONNECT"));
+        assert!(ANDROID_MANIFEST.contains("android.permission.POST_NOTIFICATIONS"));
+        assert!(ANDROID_MANIFEST.contains("android:usesPermissionFlags=\"neverForLocation\""));
+        assert!(
+            ANDROID_MANIFEST
+                .contains("android.permission.ACCESS_FINE_LOCATION\" android:maxSdkVersion=\"30\"")
+        );
+        assert!(ANDROID_MANIFEST.contains("android.hardware.camera\" android:required=\"false\""));
+        assert!(
+            ANDROID_MANIFEST.contains("android.hardware.bluetooth_le\" android:required=\"false\"")
+        );
     }
 }

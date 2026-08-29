@@ -534,8 +534,14 @@ pub fn dispatch<F>(func: F)
 where
   F: FnOnce(&mut JNIEnv, &JObject, &JObject) + Send + 'static,
 {
-  MainPipe::send(
-    first_activity_id().expect("no available activity"),
-    WebViewMessage::Jni(Box::new(func)),
-  );
+  try_dispatch(func).expect("no available activity");
+}
+
+/// Tries to dispatch a closure to the Android context without waiting for queue capacity.
+pub fn try_dispatch<F>(func: F) -> crate::Result<()>
+where
+  F: FnOnce(&mut JNIEnv, &JObject, &JObject) + Send + 'static,
+{
+  let activity_id = single_activity_id().ok_or(crate::Error::ActivityUnavailable)?;
+  MainPipe::try_send(activity_id, WebViewMessage::Jni(Box::new(func)))
 }

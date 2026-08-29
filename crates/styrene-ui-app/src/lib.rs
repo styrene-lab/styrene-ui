@@ -172,12 +172,18 @@ pub fn MobileShell(
     let text_scale =
         platform_snapshot.as_ref().map(|snapshot| match snapshot.accessibility.text_scale {
             TextScale::Percent(_) => "percent",
+            TextScale::Category(_) => "category",
             TextScale::Unavailable => "unavailable",
         });
     let text_scale_percent =
         platform_snapshot.as_ref().and_then(|snapshot| match snapshot.accessibility.text_scale {
             TextScale::Percent(percent) => Some(percent.to_string()),
-            TextScale::Unavailable => None,
+            TextScale::Category(_) | TextScale::Unavailable => None,
+        });
+    let text_scale_category =
+        platform_snapshot.as_ref().and_then(|snapshot| match snapshot.accessibility.text_scale {
+            TextScale::Category(category) => Some(category.as_str()),
+            TextScale::Percent(_) | TextScale::Unavailable => None,
         });
     let lifecycle = platform_snapshot.as_ref().map(|snapshot| match snapshot.lifecycle {
         ApplicationLifecycle::Active => "active",
@@ -212,6 +218,7 @@ pub fn MobileShell(
             "data-motion": motion,
             "data-text-scale": text_scale,
             "data-text-scale-percent": text_scale_percent,
+            "data-text-scale-category": text_scale_category,
             "data-lifecycle": lifecycle,
             "data-keyboard-visible": keyboard_visible,
             "data-insets": insets,
