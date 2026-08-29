@@ -4,7 +4,10 @@ use styrene_ui_app::{BackNavigation, MobileShell};
     any(target_os = "android", target_os = "ios", target_os = "macos"),
     not(feature = "ui-test")
 ))]
-use styrene_ui_platform::{AndroidUsbAttachment, AuthorizationState};
+use styrene_ui_platform::{
+    AndroidUsbAttachment, AuthorizationState, BleAdapterState, BleControlFailure, BleControlPhase,
+    BleControlState, PermissionKind,
+};
 use styrene_ui_state::TargetClass;
 #[cfg(any(
     test,
@@ -131,13 +134,32 @@ pub fn App() -> Element {
             }
         });
         let current = update.read().clone();
+        let current_platform = platform_snapshot.read().clone();
+        let bluetooth_permission = current_platform
+            .as_ref()
+            .and_then(|snapshot| {
+                snapshot
+                    .permissions
+                    .iter()
+                    .find(|permission| permission.kind == PermissionKind::Bluetooth)
+            })
+            .map_or(AuthorizationState::Unavailable, |permission| permission.state);
+        let ble_controls = BleControlState {
+            permission: bluetooth_permission,
+            adapter: BleAdapterState::Unavailable,
+            phase: BleControlPhase::Idle,
+            candidates: Vec::new(),
+            approved: None,
+            failure: Some(BleControlFailure::PlatformUnavailable),
+        };
 
         return rsx! {
             MobileShell {
                 target: target_class(),
                 fixture: current.fixture,
                 propagation: current.propagation,
-                platform_snapshot: platform_snapshot.read().clone(),
+                platform_snapshot: current_platform,
+                ble_controls,
                 back_navigation: BackNavigation::web_history(),
                 action_sink: move |action| session.read().dispatch(action),
                 android_usb_attachments: usb_attachments.read().clone(),

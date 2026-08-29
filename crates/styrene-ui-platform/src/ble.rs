@@ -261,6 +261,132 @@ pub enum BleNusError {
     NotificationsMissing,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BleControlPhase {
+    #[default]
+    Idle,
+    Scanning,
+    Connecting,
+    Connected,
+    Reconnecting,
+}
+
+impl BleControlPhase {
+    #[must_use]
+    pub const fn is_busy(self) -> bool {
+        matches!(self, Self::Scanning | Self::Connecting | Self::Reconnecting)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BleControlFailure {
+    ScanFailed,
+    ConnectionInterrupted,
+    ConnectionFailed,
+    IncompatiblePeripheral,
+    PlatformUnavailable,
+}
+
+impl BleControlFailure {
+    #[must_use]
+    pub const fn is_retryable(&self) -> bool {
+        matches!(self, Self::ScanFailed | Self::ConnectionInterrupted | Self::ConnectionFailed)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BleControlDisabledReason {
+    PermissionRequired,
+    PermissionDenied,
+    PermissionRestricted,
+    PermissionUnavailable,
+    AdapterUnavailable(BleAdapterState),
+    OperationInProgress,
+    NoApprovedPeripheral,
+    NoRetryableFailure,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BleControlState {
+    pub permission: AuthorizationState,
+    pub adapter: BleAdapterState,
+    pub phase: BleControlPhase,
+    pub candidates: Vec<BleCandidate>,
+    pub approved: Option<BleApprovedPeripheral>,
+    pub failure: Option<BleControlFailure>,
+}
+
+impl Default for BleControlState {
+    fn default() -> Self {
+        Self {
+            permission: AuthorizationState::Unavailable,
+            adapter: BleAdapterState::Unavailable,
+            phase: BleControlPhase::Idle,
+            candidates: Vec::new(),
+            approved: None,
+            failure: None,
+        }
+    }
+}
+
+impl BleControlState {
+    #[must_use]
+    pub fn scan_disabled_reason(&self) -> Option<BleControlDisabledReason> {
+        match self.permission {
+            AuthorizationState::NotDetermined | AuthorizationState::Granted => {}
+            AuthorizationState::Denied => return Some(BleControlDisabledReason::PermissionDenied),
+            AuthorizationState::Restricted => {
+                return Some(BleControlDisabledReason::PermissionRestricted);
+            }
+            AuthorizationState::Unavailable => {
+                return Some(BleControlDisabledReason::PermissionUnavailable);
+            }
+        }
+        if self.adapter != BleAdapterState::Ready {
+            return Some(BleControlDisabledReason::AdapterUnavailable(self.adapter));
+        }
+        if self.phase.is_busy() {
+            return Some(BleControlDisabledReason::OperationInProgress);
+        }
+        None
+    }
+
+    #[must_use]
+    pub fn selection_disabled_reason(&self) -> Option<BleControlDisabledReason> {
+        if self.permission == AuthorizationState::NotDetermined {
+            return Some(BleControlDisabledReason::PermissionRequired);
+        }
+        if self.phase.is_busy() {
+            Some(BleControlDisabledReason::OperationInProgress)
+        } else {
+            self.scan_disabled_reason()
+        }
+    }
+
+    #[must_use]
+    pub fn retry_disabled_reason(&self) -> Option<BleControlDisabledReason> {
+        if self.phase.is_busy() {
+            return Some(BleControlDisabledReason::OperationInProgress);
+        }
+        if self.approved.is_none() {
+            return Some(BleControlDisabledReason::NoApprovedPeripheral);
+        }
+        if !self.failure.as_ref().is_some_and(BleControlFailure::is_retryable) {
+            return Some(BleControlDisabledReason::NoRetryableFailure);
+        }
+        self.scan_disabled_reason()
+    }
+
+    #[must_use]
+    pub fn forget_disabled_reason(&self) -> Option<BleControlDisabledReason> {
+        if self.approved.is_none() {
+            Some(BleControlDisabledReason::NoApprovedPeripheral)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BleWriteLimit(usize);
 
@@ -391,5 +517,38 @@ mod tests {
         assert_eq!(NORDIC_UART_SERVICE_UUID.len(), 36);
         assert_eq!(NORDIC_UART_WRITE_UUID.len(), 36);
         assert_eq!(NORDIC_UART_NOTIFY_UUID.len(), 36);
+    }
+
+    #[test]
+    fn control_disabled_reasons_are_typed_and_forget_remains_reachable() {
+        let mut state = BleControlState::default();
+        assert_eq!(
+            state.scan_disabled_reason(),
+            Some(BleControlDisabledReason::PermissionUnavailable)
+        );
+
+        state.permission = AuthorizationState::NotDetermined;
+        state.adapter = BleAdapterState::Ready;
+        assert_eq!(state.scan_disabled_reason(), None);
+        assert_eq!(
+            state.selection_disabled_reason(),
+            Some(BleControlDisabledReason::PermissionRequired)
+        );
+
+        state.permission = AuthorizationState::Granted;
+        state.failure = Some(BleControlFailure::ConnectionInterrupted);
+        assert_eq!(
+            state.retry_disabled_reason(),
+            Some(BleControlDisabledReason::NoApprovedPeripheral)
+        );
+        state.approved =
+            Some(BleApprovedPeripheral { id: BlePeripheralId::new("approved-rnode").unwrap() });
+        assert_eq!(state.retry_disabled_reason(), None);
+        state.phase = BleControlPhase::Reconnecting;
+        assert_eq!(
+            state.retry_disabled_reason(),
+            Some(BleControlDisabledReason::OperationInProgress)
+        );
+        assert_eq!(state.forget_disabled_reason(), None);
     }
 }

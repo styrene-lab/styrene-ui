@@ -4,8 +4,10 @@ use styrene_ui_app::{
 };
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
-    AuthorizationState, Contrast, KeyboardGeometry, MotionPreference, PlatformGeometry,
-    PlatformInsets, PlatformSnapshot, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
+    AuthorizationState, BleAdapterState, BleApprovedPeripheral, BleCandidate, BleControlFailure,
+    BleControlPhase, BleControlState, BlePeripheralId, Contrast, KeyboardGeometry,
+    MotionPreference, PlatformGeometry, PlatformInsets, PlatformSnapshot, TextScale,
+    TextScaleCategory, WindowClass, WindowMetrics,
 };
 use styrene_ui_state::{
     ApplyResult, BearerState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
@@ -30,6 +32,21 @@ fn render(fixture: MobileFixture) -> String {
     dioxus_ssr::render_element(rsx! {
         MobileShell { target: TargetClass::Ios, fixture }
     })
+}
+
+#[component]
+fn BleShell(target: TargetClass, fixture: MobileFixture, state: BleControlState) -> Element {
+    rsx! {
+        MobileShell {
+            target,
+            fixture,
+            ble_controls: state,
+            ble_scan: move |()| {},
+            ble_select: move |_id: BlePeripheralId| {},
+            ble_retry: move |()| {},
+            ble_forget: move |()| {},
+        }
+    }
 }
 
 #[test]
@@ -100,6 +117,67 @@ fn android_usb_probe_status_discloses_host_handoff_without_claiming_remote_recep
     assert!(markup.contains("USB accepted a 172-byte KISS frame"));
     assert!(markup.contains("RF and remote reception unconfirmed"));
     assert!(markup.contains("id=\"mobile.android-usb-probe-status\""));
+}
+
+#[test]
+fn bluetooth_controls_require_explicit_selection_and_keep_forget_reachable() {
+    let approved_id = BlePeripheralId::new("approved-rnode-id").unwrap();
+    let candidate_id = BlePeripheralId::new("candidate-rnode-id").unwrap();
+    let markup = dioxus_ssr::render_element(rsx! {
+        BleShell {
+            target: TargetClass::Ios,
+            fixture: fixture("live-empty-connected"),
+            state: BleControlState {
+                permission: AuthorizationState::Granted,
+                adapter: BleAdapterState::Ready,
+                phase: BleControlPhase::Reconnecting,
+                candidates: vec![BleCandidate {
+                    id: candidate_id,
+                    display_name: Some("Field RNode".into()),
+                    rssi_dbm: Some(-61),
+                }],
+                approved: Some(BleApprovedPeripheral { id: approved_id }),
+                failure: Some(BleControlFailure::ConnectionInterrupted),
+            },
+        }
+    });
+
+    let card = opening_tag_with_id(&markup, "mobile.bluetooth-rnode");
+    assert!(card.contains("data-phase=\"reconnecting\""));
+    assert!(markup.contains("Field RNode"));
+    assert!(markup.contains("data-peripheral-id=\"candidate-rnode-id\""));
+    assert!(markup.contains("Approve and connect Field RNode"));
+    assert!(markup.contains("approved-rnode-id"));
+    assert!(opening_tag_with_id(&markup, "mobile.bluetooth-scan").contains("disabled"));
+    assert!(opening_tag_with_id(&markup, "mobile.bluetooth-retry").contains("disabled"));
+    assert!(!opening_tag_with_id(&markup, "mobile.bluetooth-forget").contains("disabled"));
+}
+
+#[test]
+fn bluetooth_controls_render_typed_denial_and_nonretryable_failure() {
+    let markup = dioxus_ssr::render_element(rsx! {
+        BleShell {
+            target: TargetClass::Android,
+            fixture: fixture("live-empty-connected"),
+            state: BleControlState {
+                permission: AuthorizationState::Denied,
+                adapter: BleAdapterState::Ready,
+                phase: BleControlPhase::Idle,
+                candidates: Vec::new(),
+                approved: Some(BleApprovedPeripheral {
+                    id: BlePeripheralId::new("incompatible-rnode").unwrap(),
+                }),
+                failure: Some(BleControlFailure::IncompatiblePeripheral),
+            },
+        }
+    });
+
+    assert!(markup.contains("Bluetooth permission is denied"));
+    assert!(markup.contains("required Nordic UART service"));
+    assert!(markup.contains("data-retryable=\"false\""));
+    assert!(opening_tag_with_id(&markup, "mobile.bluetooth-scan").contains("disabled"));
+    assert!(opening_tag_with_id(&markup, "mobile.bluetooth-retry").contains("disabled"));
+    assert!(!opening_tag_with_id(&markup, "mobile.bluetooth-forget").contains("disabled"));
 }
 
 fn opening_tag_with_id<'a>(markup: &'a str, id: &str) -> &'a str {
