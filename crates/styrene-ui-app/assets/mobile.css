@@ -18,6 +18,7 @@
   --warning: #7a4b0a;
   --warning-soft: #fff0cb;
   --warning-line: #b98536;
+  --danger: #8c2f25;
   --focus: #006fa8;
   --navigation: #12201c;
   --navigation-ink: #b8c6c0;
@@ -507,6 +508,7 @@ label {
 
 .bearer-card {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
@@ -515,6 +517,52 @@ label {
 .bearer-card p,
 .settings-card p {
   margin-block-end: 0;
+}
+
+.settings-card-heading,
+.approved-peripheral,
+.peripheral-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.bluetooth-card > button {
+  margin-block-start: 0.85rem;
+}
+
+.approved-peripheral {
+  margin-block-start: 1rem;
+  padding-block-start: 1rem;
+  border-block-start: 0.0625rem solid var(--line);
+}
+
+.peripheral-list {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0;
+  margin-block: 1rem 0;
+  list-style: none;
+}
+
+.peripheral-row {
+  min-inline-size: 0;
+  padding: 0.75rem;
+  border: 0.0625rem solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+.peripheral-row > div,
+.approved-peripheral > div,
+.settings-card-heading > div {
+  min-inline-size: 0;
+}
+
+.danger-action {
+  color: var(--danger);
 }
 
 .group-heading {
@@ -657,6 +705,7 @@ label {
     --warning: #ffe0a6;
     --warning-soft: #3a290d;
     --warning-line: #a57830;
+    --danger: #ffb4a8;
     --focus: #68c7ff;
     --navigation: #030706;
     --navigation-ink: #aebdb6;

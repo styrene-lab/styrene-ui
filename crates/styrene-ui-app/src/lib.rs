@@ -4,8 +4,10 @@ use std::collections::HashMap;
 
 use dioxus::prelude::*;
 use styrene_ui_platform::{
-    AndroidUsbAttachment, Appearance, ApplicationLifecycle, AuthorizationState, Contrast,
-    KeyboardGeometry, MotionPreference, PlatformInsets, PlatformSnapshot, TextScale, WindowClass,
+    AndroidUsbAttachment, Appearance, ApplicationLifecycle, AuthorizationState, BleAdapterState,
+    BleControlDisabledReason, BleControlFailure, BleControlPhase, BleControlState, BlePeripheralId,
+    Contrast, KeyboardGeometry, MotionPreference, PlatformInsets, PlatformSnapshot, TextScale,
+    WindowClass,
 };
 use styrene_ui_state::{
     BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod, LocalAnnounceOutcome,
@@ -113,6 +115,238 @@ const fn authorization_state(state: AuthorizationState) -> &'static str {
     }
 }
 
+const fn ble_adapter_state(state: BleAdapterState) -> &'static str {
+    match state {
+        BleAdapterState::Ready => "ready",
+        BleAdapterState::PoweredOff => "powered off",
+        BleAdapterState::Resetting => "resetting",
+        BleAdapterState::Unsupported => "unsupported",
+        BleAdapterState::Unavailable => "unavailable",
+    }
+}
+
+const fn ble_phase(phase: BleControlPhase) -> &'static str {
+    match phase {
+        BleControlPhase::Idle => "idle",
+        BleControlPhase::Scanning => "scanning",
+        BleControlPhase::Connecting => "connecting",
+        BleControlPhase::Connected => "connected",
+        BleControlPhase::Reconnecting => "reconnecting",
+    }
+}
+
+const fn ble_disabled_reason(reason: BleControlDisabledReason) -> &'static str {
+    match reason {
+        BleControlDisabledReason::PermissionRequired => "Bluetooth permission is required",
+        BleControlDisabledReason::PermissionDenied => "Bluetooth permission is denied",
+        BleControlDisabledReason::PermissionRestricted => "Bluetooth permission is restricted",
+        BleControlDisabledReason::PermissionUnavailable => "Bluetooth permission is unavailable",
+        BleControlDisabledReason::AdapterUnavailable(BleAdapterState::PoweredOff) => {
+            "Bluetooth is powered off"
+        }
+        BleControlDisabledReason::AdapterUnavailable(BleAdapterState::Resetting) => {
+            "Bluetooth is resetting"
+        }
+        BleControlDisabledReason::AdapterUnavailable(BleAdapterState::Unsupported) => {
+            "Bluetooth is unsupported"
+        }
+        BleControlDisabledReason::AdapterUnavailable(_) => "Bluetooth adapter is unavailable",
+        BleControlDisabledReason::OperationInProgress => "Bluetooth operation is in progress",
+        BleControlDisabledReason::NoApprovedPeripheral => "No Bluetooth RNode is approved",
+        BleControlDisabledReason::NoRetryableFailure => "There is no retryable Bluetooth failure",
+    }
+}
+
+const fn ble_failure(failure: &BleControlFailure) -> &'static str {
+    match failure {
+        BleControlFailure::ScanFailed => "Bluetooth scan failed.",
+        BleControlFailure::ConnectionInterrupted => "Bluetooth RNode connection was interrupted.",
+        BleControlFailure::ConnectionFailed => "Bluetooth RNode connection failed.",
+        BleControlFailure::IncompatiblePeripheral => {
+            "The selected device does not provide the required Nordic UART service."
+        }
+        BleControlFailure::PlatformUnavailable => {
+            "Bluetooth RNode integration is unavailable in this build."
+        }
+    }
+}
+
+#[component]
+pub fn BleRNodeControls(
+    state: BleControlState,
+    actions_enabled: bool,
+    #[props(default)] scan: Option<EventHandler<()>>,
+    #[props(default)] select: Option<EventHandler<BlePeripheralId>>,
+    #[props(default)] retry: Option<EventHandler<()>>,
+    #[props(default)] forget: Option<EventHandler<()>>,
+) -> Element {
+    let scan_reason = state.scan_disabled_reason();
+    let selection_reason = state.selection_disabled_reason();
+    let retry_reason = state.retry_disabled_reason();
+    let forget_reason = state.forget_disabled_reason();
+    let scan_disabled = !actions_enabled || scan.is_none() || scan_reason.is_some();
+    let selection_disabled = !actions_enabled || select.is_none() || selection_reason.is_some();
+    let retry_disabled = !actions_enabled || retry.is_none() || retry_reason.is_some();
+    let forget_disabled = !actions_enabled || forget.is_none() || forget_reason.is_some();
+    let scan_label = if state.permission == AuthorizationState::NotDetermined {
+        "Allow Bluetooth and scan"
+    } else if state.phase == BleControlPhase::Scanning {
+        "Scanning for RNodes"
+    } else {
+        "Scan for RNodes"
+    };
+    let status = if !actions_enabled {
+        "Fixture data. Bluetooth actions are disabled."
+    } else if let Some(reason) = scan_reason {
+        ble_disabled_reason(reason)
+    } else if scan.is_none() {
+        "Bluetooth adapter actions are unavailable."
+    } else {
+        "Bluetooth is ready to scan."
+    };
+
+    rsx! {
+        article {
+            id: "mobile.bluetooth-rnode",
+            class: "settings-card bluetooth-card",
+            "aria-labelledby": "mobile.bluetooth-rnode-heading",
+            "data-phase": ble_phase(state.phase),
+            "data-permission": authorization_state(state.permission),
+            "data-adapter": ble_adapter_state(state.adapter),
+            div {
+                class: "settings-card-heading",
+                div {
+                    h3 { id: "mobile.bluetooth-rnode-heading", "Bluetooth RNode" }
+                    p { class: "field-hint", "Scan only when your RNode is in its pairing window. Selection is required before connection." }
+                }
+                span { class: "state-chip", {ble_phase(state.phase)} }
+            }
+            button {
+                id: "mobile.bluetooth-scan",
+                r#type: "button",
+                class: "secondary-action",
+                disabled: scan_disabled,
+                "aria-describedby": "mobile.bluetooth-status",
+                onclick: move |_| {
+                    if let Some(handler) = scan {
+                        handler.call(());
+                    }
+                },
+                {scan_label}
+            }
+            p {
+                id: "mobile.bluetooth-status",
+                class: "field-hint",
+                role: "status",
+                "aria-live": "polite",
+                "aria-atomic": "true",
+                {status}
+            }
+            if let Some(approved) = &state.approved {
+                div {
+                    class: "approved-peripheral",
+                    div {
+                        strong { "Approved RNode" }
+                        p { class: "technical-value", {approved.id.as_str()} }
+                    }
+                    button {
+                        id: "mobile.bluetooth-forget",
+                        r#type: "button",
+                        class: "secondary-action danger-action",
+                        disabled: forget_disabled,
+                        "aria-describedby": "mobile.bluetooth-status",
+                        onclick: move |_| {
+                            if let Some(handler) = forget {
+                                handler.call(());
+                            }
+                        },
+                        "Forget"
+                    }
+                }
+            }
+            if state.candidates.is_empty() {
+                p { class: "field-hint", "No compatible RNodes discovered." }
+            } else {
+                ul { class: "peripheral-list", "aria-label": "Discovered Bluetooth RNodes",
+                    for candidate in state.candidates.clone() {
+                        {
+                            let candidate_id = candidate.id.clone();
+                            let display_name = candidate
+                                .display_name
+                                .clone()
+                                .unwrap_or_else(|| "Unnamed RNode".into());
+                            let action_name = format!("Approve and connect {display_name}");
+                            rsx! {
+                                li {
+                                    class: "peripheral-row",
+                                    "data-peripheral-id": candidate.id.as_str(),
+                                    div {
+                                        strong { {display_name} }
+                                        p { class: "technical-value", {candidate.id.as_str()} }
+                                        if let Some(rssi) = candidate.rssi_dbm {
+                                            p { class: "field-hint", "Signal {rssi} dBm" }
+                                        }
+                                    }
+                                    button {
+                                        r#type: "button",
+                                        class: "secondary-action",
+                                        disabled: selection_disabled,
+                                        "aria-label": action_name,
+                                        "aria-describedby": if selection_reason.is_some() { "mobile.bluetooth-selection-disabled" } else { "mobile.bluetooth-status" },
+                                        onclick: move |_| {
+                                            if let Some(handler) = select {
+                                                handler.call(candidate_id.clone());
+                                            }
+                                        },
+                                        "Use RNode"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(reason) = selection_reason {
+                    p {
+                        id: "mobile.bluetooth-selection-disabled",
+                        class: "field-hint",
+                        {ble_disabled_reason(reason)}
+                    }
+                }
+            }
+            if let Some(failure) = &state.failure {
+                p {
+                    id: "mobile.bluetooth-failure",
+                    class: "field-error",
+                    role: if failure == &BleControlFailure::PlatformUnavailable { "status" } else { "alert" },
+                    "aria-live": if failure == &BleControlFailure::PlatformUnavailable { "polite" } else { "assertive" },
+                    "data-retryable": failure.is_retryable().to_string(),
+                    {ble_failure(failure)}
+                }
+                button {
+                    id: "mobile.bluetooth-retry",
+                    r#type: "button",
+                    class: "secondary-action",
+                    disabled: retry_disabled,
+                    "aria-describedby": if retry_reason.is_some() { "mobile.bluetooth-failure mobile.bluetooth-retry-disabled" } else { "mobile.bluetooth-failure" },
+                    onclick: move |_| {
+                        if let Some(handler) = retry {
+                            handler.call(());
+                        }
+                    },
+                    "Retry Bluetooth connection"
+                }
+                if let Some(reason) = retry_reason {
+                    p {
+                        id: "mobile.bluetooth-retry-disabled",
+                        class: "field-hint",
+                        {ble_disabled_reason(reason)}
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[component]
 pub fn MobileShell(
     target: TargetClass,
@@ -129,6 +363,11 @@ pub fn MobileShell(
     #[props(default)] android_usb_select: Option<EventHandler<AndroidUsbAttachment>>,
     #[props(default)] android_usb_probe: Option<EventHandler<()>>,
     #[props(default)] android_usb_probe_status: Option<String>,
+    #[props(default)] ble_controls: BleControlState,
+    #[props(default)] ble_scan: Option<EventHandler<()>>,
+    #[props(default)] ble_select: Option<EventHandler<BlePeripheralId>>,
+    #[props(default)] ble_retry: Option<EventHandler<()>>,
+    #[props(default)] ble_forget: Option<EventHandler<()>>,
 ) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let messaging_available = MobileStore::new(fixture.clone()).messaging_available();
@@ -459,6 +698,14 @@ pub fn MobileShell(
                     generation: fixture.generation,
                     enabled: live_actions_enabled,
                     action_sink,
+                }
+                BleRNodeControls {
+                    state: ble_controls,
+                    actions_enabled: live_actions_enabled,
+                    scan: ble_scan,
+                    select: ble_select,
+                    retry: ble_retry,
+                    forget: ble_forget,
                 }
                 if target == TargetClass::Android
                     && (android_usb_refresh.is_some() || !android_usb_attachments.is_empty())
