@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[dependencies]
+styrene-ui-platform.workspace = true
+
 [target.'cfg(target_os = "ios")'.dependencies]
 block2 = { version = "=0.6.2", default-features = false, features = ["alloc"] }
 objc2 = { version = "=0.6.4", default-features = false, features = ["std"] }

@@ -4980,6 +4980,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-ui-kit",
  "objc2-user-notifications",
+ "styrene-ui-platform",
 ]
 
 [[package]]
