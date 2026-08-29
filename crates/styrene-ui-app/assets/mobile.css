@@ -197,7 +197,8 @@ label {
   text-transform: capitalize;
 }
 
-.fixture-banner {
+.fixture-banner,
+.failure-banner {
   margin-block-start: 0.75rem;
   padding: 0.55rem 0.75rem;
   border: 0.0625rem solid #b98536;

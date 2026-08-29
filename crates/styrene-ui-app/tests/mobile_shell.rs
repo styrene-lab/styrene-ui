@@ -269,6 +269,16 @@ fn reconnect_component_keeps_content_and_reports_tcp_transition() {
 }
 
 #[test]
+fn session_failure_exposes_a_typed_visible_status() {
+    let markup = render(fixture("recoverable-session-failure"));
+    let failure = opening_tag_with_id(&markup, "mobile.session-failure");
+
+    assert!(failure.contains("role=\"status\""));
+    assert!(failure.contains("data-code=\"invalid_tcp_endpoint\""));
+    assert!(failure.contains("data-retryable=\"true\""));
+}
+
+#[test]
 fn stale_completion_never_appears_in_rendered_state() {
     let mut store = MobileStore::new(fixture("stale-generation-rejected"));
     let mut stale = fixture("recoverable-session-failure");

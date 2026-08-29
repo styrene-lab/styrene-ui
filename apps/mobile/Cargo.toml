@@ -13,5 +13,11 @@ serde_json.workspace = true
 styrene-ui-app = { path = "../../crates/styrene-ui-app" }
 styrene-ui-state.workspace = true
 
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+async-channel.workspace = true
+styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "7449f1729c22485d41c5698e200c09b84fee6163" }
+styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "7449f1729c22485d41c5698e200c09b84fee6163", default-features = false, features = ["bundled-sqlite", "mobile-keychain"] }
+tokio.workspace = true
+
 [lints]
 workspace = true
