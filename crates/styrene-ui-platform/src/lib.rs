@@ -1,5 +1,9 @@
 //! Renderer-independent contracts for mobile operating-system services.
 
+mod ble;
+
+pub use ble::*;
+
 use std::future::Future;
 use std::pin::Pin;
 
