@@ -65,6 +65,9 @@ KISS framing, RNode detection, radio configuration readback, packet admission,
 and bearer truth. Detach closes the attempt and changes the backend USB bearer;
 only exact successful configuration readback changes it to connected. A physical
 Android 15/API 35 E8A tablet and Espressif CDC ACM RNode exercised permission
-grant, denial, detection, configuration readback, detach, and reconnect. Live RNS
-packet transfer, physical CP210x behavior, and additional USB-to-serial chipsets
-remain unverified.
+grant, denial, detection, configuration readback, detach, reconnect, and USB
+changes during application suspension. Live RNS packet probing produced a
+171-byte KISS frame from a local announce, and Android's USB bulk API accepted the
+complete frame. This does not prove RF transmission or remote reception. Inbound
+correlation, retained replay, physical CP210x behavior, and additional
+USB-to-serial chipsets remain unverified.

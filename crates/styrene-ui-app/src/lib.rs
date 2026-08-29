@@ -8,9 +8,9 @@ use styrene_ui_platform::{
     KeyboardGeometry, MotionPreference, PlatformInsets, PlatformSnapshot, TextScale, WindowClass,
 };
 use styrene_ui_state::{
-    Conversation, DeliveryEvidence, DeliveryMethod, LocalAnnounceOutcome, Message, MobileAction,
-    MobileActionKind, MobileFixture, MobileStore, Peer, PropagationEvidence, PropagationUpdate,
-    RuntimeBoundary, SyncState, TargetClass, TransportEvidence,
+    BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod, LocalAnnounceOutcome,
+    Message, MobileAction, MobileActionKind, MobileFixture, MobileStore, Peer, PropagationEvidence,
+    PropagationUpdate, RuntimeBoundary, SyncState, TargetClass, TransportEvidence,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -127,6 +127,8 @@ pub fn MobileShell(
     #[props(default)] android_usb_busy: bool,
     #[props(default)] android_usb_refresh: Option<EventHandler<()>>,
     #[props(default)] android_usb_select: Option<EventHandler<AndroidUsbAttachment>>,
+    #[props(default)] android_usb_probe: Option<EventHandler<()>>,
+    #[props(default)] android_usb_probe_status: Option<String>,
 ) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let messaging_available = MobileStore::new(fixture.clone()).messaging_available();
@@ -163,6 +165,9 @@ pub fn MobileShell(
     let selected_short_hash = selected_hash.as_deref().map(short_hash).unwrap_or_default();
     let composer_enabled =
         selected_conversation.is_some() && messaging_available && live_actions_enabled;
+    let android_usb_connected = fixture.bearers.iter().any(|bearer| {
+        bearer.kind == BearerKind::AndroidUsb && bearer.state == BearerState::Connected
+    });
     let compact_pane = if *compact_thread_open.read() { "thread" } else { "list" };
     let compact_thread_is_open = *compact_thread_open.read();
     let conversation_count = fixture.conversations.len().to_string();
@@ -508,6 +513,30 @@ pub fn MobileShell(
                                 class: "field-hint",
                                 role: "status",
                                 "USB authorization: {authorization_state(authorization)}"
+                            }
+                        }
+                        if android_usb_probe.is_some() {
+                            button {
+                                id: "mobile.android-usb-probe",
+                                r#type: "button",
+                                class: "secondary-action",
+                                disabled: android_usb_busy || !android_usb_connected,
+                                onclick: move |_| {
+                                    if let Some(handler) = android_usb_probe {
+                                        handler.call(());
+                                    }
+                                },
+                                "Test RNode packet"
+                            }
+                        }
+                        if let Some(status) = &android_usb_probe_status {
+                            p {
+                                id: "mobile.android-usb-probe-status",
+                                class: "field-hint",
+                                role: "status",
+                                "aria-live": "polite",
+                                "aria-atomic": "true",
+                                {status.clone()}
                             }
                         }
                         if let Some(failure) = &android_usb_failure {

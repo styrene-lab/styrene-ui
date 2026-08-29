@@ -258,6 +258,17 @@ fn handle_request(
   Ok(*JObject::null())
 }
 
+#[derive(Clone, Copy)]
+enum MainPipeCallbackOutcome {
+  WakeReadFailed,
+  MessageProcessed,
+  MessageFailed,
+}
+
+fn keep_main_pipe_registered(outcome: MainPipeCallbackOutcome) -> bool {
+  !matches!(outcome, MainPipeCallbackOutcome::WakeReadFailed)
+}
+
 #[allow(non_snake_case)]
 pub unsafe fn wryCreate(env: JNIEnv, _: JClass) {
   let mut main_pipe = MainPipe { env };
@@ -269,14 +280,32 @@ pub unsafe fn wryCreate(env: JNIEnv, _: JClass) {
       let size = std::mem::size_of::<bool>();
       let mut wake = false;
       if libc::read(fd.as_raw_fd(), &mut wake as *mut _ as *mut _, size) == size as libc::ssize_t {
-        // unregister itself on errors
-        main_pipe.recv().is_ok()
+        let outcome = if main_pipe.recv().is_ok() {
+          MainPipeCallbackOutcome::MessageProcessed
+        } else {
+          if main_pipe.env.exception_check().unwrap_or(false) {
+            let _ = main_pipe.env.exception_clear();
+          }
+          MainPipeCallbackOutcome::MessageFailed
+        };
+        keep_main_pipe_registered(outcome)
       } else {
-        // unregister itself
-        false
+        keep_main_pipe_registered(MainPipeCallbackOutcome::WakeReadFailed)
       }
     })
     .unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{MainPipeCallbackOutcome, keep_main_pipe_registered};
+
+  #[test]
+  fn main_pipe_callback_survives_message_errors() {
+    assert!(keep_main_pipe_registered(MainPipeCallbackOutcome::MessageProcessed));
+    assert!(keep_main_pipe_registered(MainPipeCallbackOutcome::MessageFailed));
+    assert!(!keep_main_pipe_registered(MainPipeCallbackOutcome::WakeReadFailed));
+  }
 }
 
 #[allow(non_snake_case)]
