@@ -205,6 +205,12 @@ fn malformed_short_hashes_do_not_crash_the_directory_or_conversation_list() {
 #[test]
 fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
     for required in [
+        "--font-interface:",
+        "--font-technical:",
+        "--radius-control:",
+        "--radius-panel:",
+        "--radius-status:",
+        "--navigation-active:",
         "min-inline-size: 20rem",
         "font: -apple-system-body",
         "font: -apple-system-title1",
