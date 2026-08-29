@@ -17,6 +17,10 @@ uses_cleartext_traffic = false
 [android.permissions]
 "android.permission.INTERNET" = { description = "Connect to configured Reticulum TCP interfaces." }
 "android.permission.ACCESS_NETWORK_STATE" = { description = "Report network availability without inferring Reticulum connectivity." }
+"android.permission.CAMERA" = { description = "Scan peer identity and configuration codes when requested." }
+"android.permission.BLUETOOTH_SCAN" = { description = "Discover nearby RNode interfaces when requested." }
+"android.permission.BLUETOOTH_CONNECT" = { description = "Connect to a selected nearby RNode interface." }
+"android.permission.POST_NOTIFICATIONS" = { description = "Notify about message activity when authorized." }
 
 [bundle]
 identifier = "io.styrene.mesh"

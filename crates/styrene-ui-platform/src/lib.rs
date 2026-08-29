@@ -39,7 +39,46 @@ pub enum MotionPreference {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TextScale {
     Percent(u16),
+    Category(TextScaleCategory),
     Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TextScaleCategory {
+    ExtraSmall,
+    Small,
+    Medium,
+    Large,
+    ExtraLarge,
+    ExtraExtraLarge,
+    ExtraExtraExtraLarge,
+    AccessibilityMedium,
+    AccessibilityLarge,
+    AccessibilityExtraLarge,
+    AccessibilityExtraExtraLarge,
+    AccessibilityExtraExtraExtraLarge,
+    Unknown,
+}
+
+impl TextScaleCategory {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ExtraSmall => "extra-small",
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+            Self::ExtraLarge => "extra-large",
+            Self::ExtraExtraLarge => "extra-extra-large",
+            Self::ExtraExtraExtraLarge => "extra-extra-extra-large",
+            Self::AccessibilityMedium => "accessibility-medium",
+            Self::AccessibilityLarge => "accessibility-large",
+            Self::AccessibilityExtraLarge => "accessibility-extra-large",
+            Self::AccessibilityExtraExtraLarge => "accessibility-extra-extra-large",
+            Self::AccessibilityExtraExtraExtraLarge => "accessibility-extra-extra-extra-large",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -138,6 +138,26 @@ pub struct MainPipe<'a> {
 }
 
 impl<'a> MainPipe<'a> {
+  pub(crate) fn try_send(activity_id: ActivityId, message: WebViewMessage) -> crate::Result<()> {
+    let size = std::mem::size_of::<bool>();
+    CHANNEL
+      .0
+      .try_send((activity_id, message))
+      .map_err(|_| Error::MessageSender)?;
+    let written = unsafe {
+      libc::write(
+        MAIN_PIPE[1].as_raw_fd(),
+        &true as *const _ as *const _,
+        size,
+      )
+    };
+    if written == size as isize {
+      Ok(())
+    } else {
+      Err(Error::MessageSender)
+    }
+  }
+
   pub(crate) fn send(activity_id: ActivityId, message: WebViewMessage) {
     let size = std::mem::size_of::<bool>();
     if CHANNEL.0.send((activity_id, message)).is_ok() {

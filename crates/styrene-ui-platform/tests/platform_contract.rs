@@ -2,7 +2,7 @@ use styrene_ui_platform::{
     AccessibilityPreferences, Appearance, ApplicationLifecycle, AuthorizationState, Contrast,
     EdgeInsets, KeyboardGeometry, MotionPreference, PermissionKind, PermissionStatus,
     PlatformApplyResult, PlatformChange, PlatformEvent, PlatformGeometry, PlatformInsets,
-    PlatformSnapshot, PlatformState, TextScale, WindowClass, WindowMetrics,
+    PlatformSnapshot, PlatformState, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
 };
 
 fn snapshot(generation: u64, sequence: u64) -> PlatformSnapshot {
@@ -28,6 +28,16 @@ fn snapshot(generation: u64, sequence: u64) -> PlatformSnapshot {
         permissions: Vec::new(),
         notification_authorization: AuthorizationState::NotDetermined,
     }
+}
+
+#[test]
+fn text_scale_categories_have_stable_platform_attributes() {
+    assert_eq!(TextScaleCategory::Large.as_str(), "large");
+    assert_eq!(
+        TextScaleCategory::AccessibilityExtraExtraExtraLarge.as_str(),
+        "accessibility-extra-extra-extra-large"
+    );
+    assert_eq!(TextScaleCategory::Unknown.as_str(), "unknown");
 }
 
 #[test]

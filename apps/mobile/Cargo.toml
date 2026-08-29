@@ -23,10 +23,19 @@ tokio.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 async-channel.workspace = true
+jni = "=0.21.1"
 manganis = { version = "=0.8.0-alpha.1" }
 styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "2b9e1aeeff71733a8fc11d8a541cc417fb9450f0" }
 styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "2b9e1aeeff71733a8fc11d8a541cc417fb9450f0", default-features = false, features = ["bundled-sqlite", "mobile-android-keystore"] }
 tokio.workspace = true
+wry = { version = "=0.55.1", default-features = false }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+block2 = { version = "=0.6.2", default-features = false, features = ["alloc"] }
+objc2 = { version = "=0.6.4", default-features = false, features = ["std"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["NSError", "NSString"] }
+objc2-ui-kit = { version = "=0.3.2", default-features = false, features = ["UIApplication", "UIResponder", "UIContentSizeCategory"] }
+objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["block2", "UNNotificationSettings", "UNUserNotificationCenter"] }
 
 [lints]
 workspace = true

@@ -5,7 +5,7 @@ use styrene_ui_app::{
 use styrene_ui_platform::{
     AccessibilityPreferences, Appearance, ApplicationLifecycle, AuthorizationState, Contrast,
     KeyboardGeometry, MotionPreference, PlatformGeometry, PlatformInsets, PlatformSnapshot,
-    TextScale, WindowClass, WindowMetrics,
+    TextScale, TextScaleCategory, WindowClass, WindowMetrics,
 };
 use styrene_ui_state::{
     ApplyResult, BearerState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
@@ -152,6 +152,7 @@ fn shared_shell_exposes_typed_platform_facts_without_inventing_text_scale() {
         permissions: Vec::new(),
         notification_authorization: AuthorizationState::Unavailable,
     };
+    let mut category_snapshot = platform_snapshot.clone();
     let markup = dioxus_ssr::render_element(rsx! {
         MobileShell {
             target: TargetClass::Android,
@@ -173,6 +174,22 @@ fn shared_shell_exposes_typed_platform_facts_without_inventing_text_scale() {
         assert!(markup.contains(fact), "missing platform fact: {fact}");
     }
     assert!(!markup.contains("data-text-scale-percent"));
+
+    category_snapshot.accessibility.text_scale =
+        TextScale::Category(TextScaleCategory::AccessibilityExtraExtraExtraLarge);
+    let category_markup = dioxus_ssr::render_element(rsx! {
+        MobileShell {
+            target: TargetClass::Ios,
+            fixture: fixture("direct-message-queued"),
+            platform_snapshot: category_snapshot,
+        }
+    });
+    assert!(category_markup.contains("data-text-scale=\"category\""));
+    assert!(
+        category_markup
+            .contains("data-text-scale-category=\"accessibility-extra-extra-extra-large\"")
+    );
+    assert!(!category_markup.contains("data-text-scale-percent"));
 }
 
 #[test]

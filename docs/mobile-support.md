@@ -31,8 +31,23 @@ a new generation, and stale callbacks cannot replace the current generation.
 | Appearance | `prefers-color-scheme` | Limited to values exposed by the WebView |
 | Increased contrast | `prefers-contrast` | Android System WebView does not expose this setting reliably |
 | Reduced motion | `prefers-reduced-motion` | Limited to values exposed by the WebView |
-| Text scale | Typed unavailable state | Native system-scale adapters are not implemented |
+| Text scale | Android `Configuration.fontScale` and iOS Dynamic Type category | Android reports a percentage. iOS reports a named category without inventing a percentage |
 | Lifecycle | Document visibility | The WebView reports active or background, not native inactive state |
 | Keyboard | Focus plus visual viewport occlusion | The WebView manages layout resizing |
 | Insets | CSS environment variables | Native inset values are not duplicated |
-| Permissions and notifications | Typed unavailable state | Native request adapters are not implemented |
+| Android permissions | Runtime permission APIs | Bluetooth scan/connect, camera, and notification gates are queried and requested. USB remains unavailable until the explicit device flow exists |
+| iOS permissions | Typed unavailable state | Bluetooth and camera request adapters are not implemented |
+| iOS notifications | `UNUserNotificationCenter` request callback | Request results are granted or denied. Snapshot status remains unavailable because the pinned safe binding cannot read notification settings under the workspace unsafe-code prohibition |
+
+Native Android calls use Wry's bounded main-thread pipe and a one-slot result
+channel. Dispatch fails closed when no activity or queue capacity is available.
+Permission completion is observed after the system dialog returns focus. A
+bounded timeout is reported rather than fabricating a decision. Native facts are
+re-read for authoritative resnapshots, so stale WebView generations cannot
+replace the current platform state.
+
+Android stores a request marker before it opens a permission prompt. This marker
+distinguishes an unrequested permission from a denied or revoked permission
+after restart. Native scale changes are re-read when the app returns from system
+settings. A scale change that does not cause a WebView event while the app stays
+active can remain stale until the next authoritative resnapshot.
