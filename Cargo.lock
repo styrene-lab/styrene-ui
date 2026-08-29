@@ -74,6 +74,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "android-keyring"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b051e1fab4f4c15e384424252c57321173b8fb274d50f30bd46145c35cd0a6a2"
+dependencies = [
+ "base64",
+ "jni 0.21.1",
+ "keyring",
+ "ndk-context",
+ "thiserror 2.0.20",
+ "tracing",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2744,6 +2758,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyring"
+version = "3.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
+dependencies = [
+ "log",
+ "zeroize",
+]
+
+[[package]]
 name = "konst"
 version = "0.2.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4710,7 +4734,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 [[package]]
 name = "styrene-a2a"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 dependencies = [
  "a2a-lf",
  "chrono",
@@ -4725,7 +4749,7 @@ dependencies = [
 [[package]]
 name = "styrene-content"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 dependencies = [
  "blake3",
  "ciborium",
@@ -4737,8 +4761,9 @@ dependencies = [
 [[package]]
 name = "styrene-identity"
 version = "0.3.2"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 dependencies = [
+ "android-keyring",
  "argon2",
  "async-trait",
  "base64",
@@ -4746,6 +4771,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "hkdf",
+ "keyring",
  "minicbor",
  "rand_core 0.6.4",
  "security-framework",
@@ -4759,7 +4785,7 @@ dependencies = [
 [[package]]
 name = "styrene-ipc"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 dependencies = [
  "async-trait",
  "serde",
@@ -4771,7 +4797,7 @@ dependencies = [
 [[package]]
 name = "styrene-lxmf"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -4791,7 +4817,7 @@ dependencies = [
 [[package]]
 name = "styrene-mesh"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 dependencies = [
  "ciborium",
  "hex",
@@ -4807,7 +4833,7 @@ dependencies = [
 [[package]]
 name = "styrene-micron"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 
 [[package]]
 name = "styrene-mobile"
@@ -4815,6 +4841,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "dioxus",
+ "manganis",
  "serde_json",
  "styrene-ipc",
  "styrene-ui-app",
@@ -4826,7 +4853,7 @@ dependencies = [
 [[package]]
 name = "styrene-rbac"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -4838,7 +4865,7 @@ dependencies = [
 [[package]]
 name = "styrene-rns"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 dependencies = [
  "aes",
  "bzip2",
@@ -4867,7 +4894,7 @@ dependencies = [
 [[package]]
 name = "styrene-services"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -4904,7 +4931,7 @@ dependencies = [
 [[package]]
 name = "styrened"
 version = "0.3.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=7449f1729c22485d41c5698e200c09b84fee6163#7449f1729c22485d41c5698e200c09b84fee6163"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
 dependencies = [
  "anyhow",
  "async-trait",

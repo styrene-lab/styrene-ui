@@ -8,10 +8,10 @@ with renderer-neutral presentation state. Extracted desktop source is retained
 under `apps/desktop` while its dependencies are converted to standalone,
 immutable `styrene-rs` references.
 
-`apps/mobile` is the Rust-only Dioxus launcher for iOS and Android. Apple builds
+`apps/mobile` is the Rust-only Dioxus launcher for iOS and Android. Mobile builds
 pin `styrened` and `styrene-ipc` to an immutable `styrene-rs` revision and own
-one embedded session on a bounded worker. Android remains visibly fixture-only
-until its secure identity service can replace development-only file storage.
+one embedded session on a bounded worker. Apple devices use Keychain-backed
+identity storage, and Android uses an Android Keystore-wrapped root secret.
 
 ## Validation
 
