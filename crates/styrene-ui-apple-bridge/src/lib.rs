@@ -2,6 +2,10 @@
 //!
 //! No Objective-C object or pointer crosses this crate's safe public API.
 
+mod ble;
+
+pub use ble::*;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeAuthorization {
     NotDetermined,
