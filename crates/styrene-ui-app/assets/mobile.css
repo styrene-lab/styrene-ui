@@ -623,6 +623,10 @@ label {
   .destination-bar {
     background: #030706;
   }
+
+  .hash-glyph {
+    color: var(--ink);
+  }
 }
 
 @media (prefers-contrast: more) {
