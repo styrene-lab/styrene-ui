@@ -18,13 +18,9 @@ uses_cleartext_traffic = false
 "android.permission.INTERNET" = { description = "Connect to configured Reticulum TCP interfaces." }
 "android.permission.ACCESS_NETWORK_STATE" = { description = "Report network availability without inferring Reticulum connectivity." }
 
-[application.ios]
-bundle_identifier = "io.styrene.mesh"
-deployment_target = "17.0"
-
 [bundle]
 identifier = "io.styrene.mesh"
 publisher = "Styrene Labs"
 category = "public.app-category.social-networking"
-short_description = "Reticulum and LXMF mesh communicator"
-long_description = "Styrene is a Rust-owned Reticulum and LXMF mesh communicator."
+short_description = "Styrene mesh communicator for Android"
+long_description = "Styrene is a Rust-owned Reticulum and LXMF mesh communicator for Android."

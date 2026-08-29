@@ -8,7 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-dioxus = { workspace = true, features = ["launch", "mobile"] }
+dioxus.workspace = true
 serde_json.workspace = true
 styrene-ui-app = { path = "../../crates/styrene-ui-app" }
 styrene-ui-state.workspace = true

@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "apps/mobile",
+    "apps/mobile-android",
+    "apps/mobile-ios",
     "crates/styrene-ui-app",
     "crates/styrene-ui-platform",
     "crates/styrene-ui-state",
@@ -31,3 +33,6 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+[patch.crates-io]
+wry = { path = "vendor/wry" }
