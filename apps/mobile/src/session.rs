@@ -447,11 +447,10 @@ fn project_propagation(generation: u64, snapshot: &MobilePropagationSnapshot) ->
 }
 
 fn mobile_config(endpoint: &str) -> Result<MobileConfig, String> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| "HOME is unavailable in the application container".to_string())?;
-    let root = home.join("Library").join("Application Support").join("Styrene").join("Mobile");
-    let identity_backend = if cfg!(target_abi = "sim") {
+    let root = mobile_data_root()?;
+    let identity_backend = if cfg!(target_os = "android") {
+        IdentityBackend::AndroidKeystore
+    } else if cfg!(target_abi = "sim") {
         IdentityBackend::PlaintextFile
     } else {
         IdentityBackend::Keychain
@@ -466,6 +465,31 @@ fn mobile_config(endpoint: &str) -> Result<MobileConfig, String> {
         interfaces: vec![MobileInterfaceConfig::TcpClient { remote_address: endpoint.into() }],
         enable_rnode_channel: false,
     })
+}
+
+#[cfg(target_os = "android")]
+fn mobile_data_root() -> Result<PathBuf, String> {
+    manganis::android::with_activity(|env, activity| {
+        let files =
+            env.call_method(activity, "getFilesDir", "()Ljava/io/File;", &[]).ok()?.l().ok()?;
+        let path = env
+            .call_method(&files, "getAbsolutePath", "()Ljava/lang/String;", &[])
+            .ok()?
+            .l()
+            .ok()?;
+        let path = manganis::jni::objects::JString::from(path);
+        let path = env.get_string(&path).ok()?;
+        Some(PathBuf::from(path.to_string_lossy().into_owned()).join("Styrene").join("Mobile"))
+    })
+    .ok_or_else(|| "Android application files directory is unavailable".into())
+}
+
+#[cfg(not(target_os = "android"))]
+fn mobile_data_root() -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| "HOME is unavailable in the application container".to_string())?;
+    Ok(home.join("Library").join("Application Support").join("Styrene").join("Mobile"))
 }
 
 fn failed_update(generation: u64, code: &str, _message: String) -> SessionUpdate {

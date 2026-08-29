@@ -1,16 +1,16 @@
 use dioxus::prelude::*;
 use styrene_ui_app::{BackNavigation, MobileShell};
 use styrene_ui_state::TargetClass;
-#[cfg(any(test, not(any(target_os = "ios", target_os = "macos"))))]
+#[cfg(any(test, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))]
 use styrene_ui_state::{MobileFixture, MobileMinimumCorpus};
 
 mod platform;
-#[cfg(any(target_os = "ios", target_os = "macos"))]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
 mod session;
 
-#[cfg(any(test, not(any(target_os = "ios", target_os = "macos"))))]
+#[cfg(any(test, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))]
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
-#[cfg(any(test, not(any(target_os = "ios", target_os = "macos"))))]
+#[cfg(any(test, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))]
 const BOOTSTRAP_FIXTURE: &str = "propagation-sync-complete";
 pub const MOBILE_INDEX: &str = r#"<!DOCTYPE html>
 <html lang="en">
@@ -32,7 +32,7 @@ fn target_class() -> TargetClass {
     }
 }
 
-#[cfg(any(test, not(any(target_os = "ios", target_os = "macos"))))]
+#[cfg(any(test, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))]
 fn bootstrap_fixture() -> MobileFixture {
     let corpus: MobileMinimumCorpus =
         serde_json::from_str(FIXTURES).expect("embedded mobile fixture corpus must deserialize");
@@ -47,7 +47,7 @@ fn bootstrap_fixture() -> MobileFixture {
 pub fn App() -> Element {
     platform::use_back_navigation();
 
-    #[cfg(any(target_os = "ios", target_os = "macos"))]
+    #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
     {
         let session = use_signal(session::MobileSession::start);
         let mut update = use_signal(session::MobileSession::starting_update);
@@ -73,7 +73,7 @@ pub fn App() -> Element {
         };
     }
 
-    #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "macos")))]
     rsx! {
         MobileShell {
             target: target_class(),
@@ -92,7 +92,7 @@ mod tests {
     const ANDROID_MANIFEST: &str = include_str!("../AndroidManifest.xml");
 
     #[test]
-    fn non_apple_bootstrap_is_visibly_fixture_only() {
+    fn embedded_fixture_corpus_remains_visibly_fixture_only() {
         let fixture = bootstrap_fixture();
 
         assert_eq!(fixture.id, BOOTSTRAP_FIXTURE);
@@ -119,5 +119,6 @@ mod tests {
         assert!(ANDROID_MANIFEST.contains("density"));
         assert!(ANDROID_MANIFEST.contains("smallestScreenSize"));
         assert!(ANDROID_MANIFEST.contains("android:stateNotNeeded=\"true\""));
+        assert!(ANDROID_MANIFEST.contains("android:allowBackup=\"false\""));
     }
 }
