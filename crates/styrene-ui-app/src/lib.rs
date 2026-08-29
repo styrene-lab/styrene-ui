@@ -105,6 +105,7 @@ pub fn MobileShell(
     fixture: MobileFixture,
     #[props(default)] back_navigation: BackNavigation,
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
+    #[props(default)] propagation: Option<PropagationUpdate>,
 ) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let messaging_available = MobileStore::new(fixture.clone()).messaging_available();
@@ -188,6 +189,17 @@ pub fn MobileShell(
                     "aria-atomic": "true",
                     "data-phase": fixture.session.phase.as_str(),
                     {fixture.session.phase.as_str()}
+                }
+            }
+            if let Some(failure) = &fixture.session.failure {
+                div {
+                    id: "mobile.session-failure",
+                    class: "failure-banner",
+                    role: "status",
+                    "aria-live": "polite",
+                    "data-code": failure.code.clone(),
+                    "data-retryable": failure.retryable.to_string(),
+                    "Session unavailable ({failure.code})"
                 }
             }
             if boundary.fixture_marker_visible() {
@@ -379,7 +391,8 @@ pub fn MobileShell(
                     }
                 }
                 PropagationPanel {
-                    propagation: PropagationUpdate::from_fixture(&fixture),
+                    propagation: propagation
+                        .unwrap_or_else(|| PropagationUpdate::from_fixture(&fixture)),
                     actions_enabled: live_actions_enabled,
                     action_sink,
                 }
@@ -742,6 +755,18 @@ pub fn DeliveryDetail(
 ) -> Element {
     let state = if message.delivery == DeliveryEvidence::Delivered {
         "Delivered"
+    } else if let Some(lifecycle) = message.lifecycle {
+        match lifecycle {
+            styrene_ui_state::MessageLifecycle::Queued => "Queued",
+            styrene_ui_state::MessageLifecycle::Sending => "Sending",
+            styrene_ui_state::MessageLifecycle::Sent => "Sent; recipient delivery pending",
+            styrene_ui_state::MessageLifecycle::Delivered => "Delivered",
+            styrene_ui_state::MessageLifecycle::Failed => "Failed",
+            styrene_ui_state::MessageLifecycle::Cancelled => "Cancelled",
+            styrene_ui_state::MessageLifecycle::Expired => "Expired",
+            styrene_ui_state::MessageLifecycle::Rejected => "Rejected",
+            styrene_ui_state::MessageLifecycle::Unknown => "Delivery state unavailable",
+        }
     } else if message.propagation == PropagationEvidence::Uploaded {
         "Uploaded to propagation node; recipient delivery pending"
     } else if message.transport == TransportEvidence::Accepted {
@@ -882,7 +907,9 @@ pub fn Composer(
                     name: "delivery-method",
                     value: match *delivery_method.read() {
                         DeliveryMethod::Direct => "direct",
+                        DeliveryMethod::Opportunistic => "opportunistic",
                         DeliveryMethod::Propagated => "propagated",
+                        DeliveryMethod::Unknown => "unknown",
                     },
                     onchange: move |event| {
                         delivery_method.set(if event.value() == "propagated" {

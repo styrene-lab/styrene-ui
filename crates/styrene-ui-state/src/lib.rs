@@ -467,6 +467,22 @@ pub struct Message {
     pub delivery: DeliveryEvidence,
     pub correlation_id: String,
     pub failure: Option<TypedFailure>,
+    #[serde(default)]
+    pub lifecycle: Option<MessageLifecycle>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageLifecycle {
+    Queued,
+    Sending,
+    Sent,
+    Delivered,
+    Failed,
+    Cancelled,
+    Expired,
+    Rejected,
+    Unknown,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -618,6 +634,7 @@ impl RuntimeBoundary {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionPhase {
+    Starting,
     Connected,
     Reconnecting,
     Failed,
@@ -627,6 +644,7 @@ impl SessionPhase {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Starting => "starting",
             Self::Connected => "connected",
             Self::Reconnecting => "reconnecting",
             Self::Failed => "failed",
@@ -679,7 +697,9 @@ impl std::fmt::Display for BearerState {
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryMethod {
     Direct,
+    Opportunistic,
     Propagated,
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
