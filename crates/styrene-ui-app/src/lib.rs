@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use dioxus::prelude::*;
 use styrene_ui_state::{
-    Conversation, DeliveryEvidence, LocalAnnounceOutcome, Message, MobileFixture, MobileStore,
-    Peer, PropagationEvidence, PropagationUpdate, RuntimeBoundary, SyncState, TargetClass,
-    TransportEvidence,
+    Conversation, DeliveryEvidence, DeliveryMethod, LocalAnnounceOutcome, Message, MobileAction,
+    MobileActionKind, MobileFixture, MobileStore, Peer, PropagationEvidence, PropagationUpdate,
+    RuntimeBoundary, SyncState, TargetClass, TransportEvidence,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -104,10 +104,12 @@ pub fn MobileShell(
     target: TargetClass,
     fixture: MobileFixture,
     #[props(default)] back_navigation: BackNavigation,
+    #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let messaging_available = MobileStore::new(fixture.clone()).messaging_available();
     let live_actions_enabled = boundary.live_network_allowed();
+    let action_sink = live_actions_enabled.then_some(action_sink).flatten();
     let mut destination = use_signal(|| MobileDestination::Messages);
     let mut selected_peer = use_signal(|| None::<String>);
     let mut compact_thread_open = use_signal(|| false);
@@ -160,7 +162,15 @@ pub fn MobileShell(
                     hidden: true,
                     r#type: "button",
                     tabindex: "-1",
-                    onclick: move |_| compact_thread_open.set(false),
+                    onclick: move |_| {
+                        compact_thread_open.set(false);
+                        if let Some(action_sink) = action_sink {
+                            action_sink.call(MobileAction::new(
+                                fixture.generation,
+                                MobileActionKind::SetActiveConversation { peer_hash: None },
+                            ));
+                        }
+                    },
                     "Platform Back"
                 }
             }
@@ -213,8 +223,16 @@ pub fn MobileShell(
                             conversations: fixture.conversations.clone(),
                             peers: fixture.peers.clone(),
                             selected_peer: selected_hash.clone(),
-                            on_select: move |peer_hash| {
-                                selected_peer.set(Some(peer_hash));
+                            on_select: move |peer_hash: String| {
+                                selected_peer.set(Some(peer_hash.clone()));
+                                if let Some(action_sink) = action_sink {
+                                    action_sink.call(MobileAction::new(
+                                        fixture.generation,
+                                        MobileActionKind::SetActiveConversation {
+                                            peer_hash: Some(peer_hash),
+                                        },
+                                    ));
+                                }
                                 if !compact_thread_is_open {
                                     back_navigation.open_thread();
                                 }
@@ -233,6 +251,14 @@ pub fn MobileShell(
                                 onclick: move |_| {
                                     compact_thread_open.set(false);
                                     back_navigation.close_thread();
+                                    if let Some(action_sink) = action_sink {
+                                        action_sink.call(MobileAction::new(
+                                            fixture.generation,
+                                            MobileActionKind::SetActiveConversation {
+                                                peer_hash: None,
+                                            },
+                                        ));
+                                    }
                                 },
                                 "Back"
                             }
@@ -247,10 +273,14 @@ pub fn MobileShell(
                             messages: selected_messages,
                             has_selection: selected_hash.is_some(),
                             actions_enabled: live_actions_enabled,
+                            generation: fixture.generation,
+                            action_sink,
                         }
                         Composer {
                             conversation: selected_conversation,
                             enabled: composer_enabled,
+                            generation: fixture.generation,
+                            action_sink,
                         }
                     }
                 }
@@ -286,6 +316,14 @@ pub fn MobileShell(
                             let peer_hash = peer.destination_hash.clone();
                             move |_| {
                                 selected_peer.set(Some(peer_hash.clone()));
+                                if let Some(action_sink) = action_sink {
+                                    action_sink.call(MobileAction::new(
+                                        fixture.generation,
+                                        MobileActionKind::SetActiveConversation {
+                                            peer_hash: Some(peer_hash.clone()),
+                                        },
+                                    ));
+                                }
                                 if !compact_thread_is_open {
                                     back_navigation.open_thread();
                                 }
@@ -317,27 +355,12 @@ pub fn MobileShell(
                         h2 { id: "mobile.network-heading", "Network" }
                     }
                 }
-                div {
-                    class: "settings-card",
-                    label { r#for: "mobile.tcp-endpoint", "TCP endpoint" }
-                    input {
-                        id: "mobile.tcp-endpoint",
-                        name: "tcp-endpoint",
-                        r#type: "text",
-                        inputmode: "url",
-                        "aria-describedby": "mobile.tcp-endpoint-hint",
-                        value: fixture.session.endpoint.clone().unwrap_or_default(),
-                    }
-                    p {
-                        id: "mobile.tcp-endpoint-hint",
-                        class: "field-hint",
-                        "Host and port, for example rns.styrene.io:4242."
-                    }
-                    button {
-                        id: "mobile.tcp-endpoint-apply",
-                        disabled: !live_actions_enabled,
-                        "Apply endpoint"
-                    }
+                EndpointEditor {
+                    key: "{fixture.generation}",
+                    endpoint: fixture.session.endpoint.clone().unwrap_or_default(),
+                    generation: fixture.generation,
+                    enabled: live_actions_enabled,
+                    action_sink,
                 }
                 h3 { class: "group-heading", "Bearers" }
                 for bearer in &fixture.bearers {
@@ -358,6 +381,7 @@ pub fn MobileShell(
                 PropagationPanel {
                     propagation: PropagationUpdate::from_fixture(&fixture),
                     actions_enabled: live_actions_enabled,
+                    action_sink,
                 }
             }
             section {
@@ -407,6 +431,14 @@ pub fn MobileShell(
                             if item != MobileDestination::Messages && compact_thread_is_open {
                                 compact_thread_open.set(false);
                                 back_navigation.close_thread();
+                                if let Some(action_sink) = action_sink {
+                                    action_sink.call(MobileAction::new(
+                                        fixture.generation,
+                                        MobileActionKind::SetActiveConversation {
+                                            peer_hash: None,
+                                        },
+                                    ));
+                                }
                             }
                             destination.set(item);
                         },
@@ -420,7 +452,59 @@ pub fn MobileShell(
 }
 
 #[component]
-pub fn PropagationPanel(propagation: PropagationUpdate, actions_enabled: bool) -> Element {
+fn EndpointEditor(
+    endpoint: String,
+    generation: u64,
+    enabled: bool,
+    action_sink: Option<EventHandler<MobileAction>>,
+) -> Element {
+    let mut endpoint_buffer = use_signal(|| endpoint);
+    rsx! {
+        div {
+            class: "settings-card",
+            label { r#for: "mobile.tcp-endpoint", "TCP endpoint" }
+            input {
+                id: "mobile.tcp-endpoint",
+                name: "tcp-endpoint",
+                r#type: "text",
+                inputmode: "url",
+                "aria-describedby": "mobile.tcp-endpoint-hint",
+                value: endpoint_buffer,
+                oninput: move |event| endpoint_buffer.set(event.value()),
+            }
+            p {
+                id: "mobile.tcp-endpoint-hint",
+                class: "field-hint",
+                "Host and port, for example rns.styrene.io:4242."
+            }
+            button {
+                id: "mobile.tcp-endpoint-apply",
+                r#type: "button",
+                disabled: !enabled,
+                onclick: move |_| {
+                    if enabled {
+                        if let Some(action_sink) = action_sink {
+                            action_sink.call(MobileAction::new(
+                                generation,
+                                MobileActionKind::ApplyEndpoint {
+                                    endpoint: endpoint_buffer.read().clone(),
+                                },
+                            ));
+                        }
+                    }
+                },
+                "Apply endpoint"
+            }
+        }
+    }
+}
+
+#[component]
+pub fn PropagationPanel(
+    propagation: PropagationUpdate,
+    actions_enabled: bool,
+    #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
+) -> Element {
     let selected = propagation.selected_destination.as_deref().unwrap_or("No node selected");
     rsx! {
         section {
@@ -441,6 +525,18 @@ pub fn PropagationPanel(propagation: PropagationUpdate, actions_enabled: bool) -
             }
             select {
                 id: "mobile.propagation-node",
+                disabled: !actions_enabled,
+                onchange: move |event| {
+                    if actions_enabled {
+                        if let Some(action_sink) = action_sink {
+                            let destination_hash = (!event.value().is_empty()).then(|| event.value());
+                            action_sink.call(MobileAction::new(
+                                propagation.generation,
+                                MobileActionKind::SelectPropagationNode { destination_hash },
+                            ));
+                        }
+                    }
+                },
                 option { value: "", "No node selected" }
                 for candidate in &propagation.candidates {
                     option {
@@ -480,6 +576,19 @@ pub fn PropagationPanel(propagation: PropagationUpdate, actions_enabled: bool) -
                 disabled: !actions_enabled
                     || !propagation.ready
                     || propagation.sync_state == SyncState::InProgress,
+                onclick: move |_| {
+                    if actions_enabled
+                        && propagation.ready
+                        && propagation.sync_state != SyncState::InProgress
+                    {
+                        if let Some(action_sink) = action_sink {
+                            action_sink.call(MobileAction::new(
+                                propagation.generation,
+                                MobileActionKind::SyncPropagation,
+                            ));
+                        }
+                    }
+                },
                 "Sync now"
             }
             div {
@@ -575,6 +684,8 @@ pub fn MessageHistory(
     messages: Vec<Message>,
     has_selection: bool,
     actions_enabled: bool,
+    generation: u64,
+    #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
     rsx! {
         section {
@@ -611,6 +722,8 @@ pub fn MessageHistory(
                             DeliveryDetail {
                                 message: message.clone(),
                                 actions_enabled,
+                                generation,
+                                action_sink,
                             }
                         }
                     }
@@ -621,7 +734,12 @@ pub fn MessageHistory(
 }
 
 #[component]
-pub fn DeliveryDetail(message: Message, actions_enabled: bool) -> Element {
+pub fn DeliveryDetail(
+    message: Message,
+    actions_enabled: bool,
+    generation: u64,
+    #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
+) -> Element {
     let state = if message.delivery == DeliveryEvidence::Delivered {
         "Delivered"
     } else if message.propagation == PropagationEvidence::Uploaded {
@@ -643,6 +761,21 @@ pub fn DeliveryDetail(message: Message, actions_enabled: bool) -> Element {
                 button {
                     id: format!("mobile.retry.{}", message.id),
                     disabled: !actions_enabled,
+                    onclick: {
+                        let message_id = message.id.clone();
+                        move |_| {
+                            if actions_enabled {
+                                if let Some(action_sink) = action_sink {
+                                    action_sink.call(MobileAction::new(
+                                        generation,
+                                        MobileActionKind::RetryMessage {
+                                            message_id: message_id.clone(),
+                                        },
+                                    ));
+                                }
+                            }
+                        }
+                    },
                     "Retry"
                 }
             }
@@ -651,8 +784,14 @@ pub fn DeliveryDetail(message: Message, actions_enabled: bool) -> Element {
 }
 
 #[component]
-pub fn Composer(conversation: Option<Conversation>, enabled: bool) -> Element {
+pub fn Composer(
+    conversation: Option<Conversation>,
+    enabled: bool,
+    #[props(default)] generation: u64,
+    #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
+) -> Element {
     let mut draft_buffers = use_signal(HashMap::<String, (u64, String)>::new);
+    let mut delivery_method = use_signal(|| DeliveryMethod::Direct);
     let draft_id = conversation.as_ref().map_or_else(
         || "mobile.draft".to_string(),
         |conversation| format!("mobile.draft.{}", conversation.peer_hash),
@@ -667,13 +806,33 @@ pub fn Composer(conversation: Option<Conversation>, enabled: bool) -> Element {
             .filter(|(revision, _)| *revision == conversation.draft_revision)
             .map_or_else(|| conversation.draft.clone(), |(_, draft)| draft.clone())
     });
-    let enabled = enabled && conversation.is_some();
+    let enabled = enabled && conversation.is_some() && !draft.trim().is_empty();
     rsx! {
         form {
             key: "{draft_id}",
             id: "mobile.composer",
             class: "composer",
             "data-peer": peer_hash.clone(),
+            onsubmit: {
+                let peer_hash = peer_hash.clone();
+                let draft = draft.clone();
+                move |event| {
+                    event.prevent_default();
+                    if enabled {
+                        if let (Some(action_sink), Some(peer_hash)) = (action_sink, &peer_hash) {
+                            action_sink.call(MobileAction::new(
+                                generation,
+                                MobileActionKind::SendMessage {
+                                    peer_hash: peer_hash.clone(),
+                                    content: draft.clone(),
+                                    requested_method: *delivery_method.read(),
+                                    draft_revision,
+                                },
+                            ));
+                        }
+                    }
+                }
+            },
             div {
                 class: "composer-row",
                 label { class: "visually-hidden", r#for: draft_id.clone(), "Message" }
@@ -688,17 +847,28 @@ pub fn Composer(conversation: Option<Conversation>, enabled: bool) -> Element {
                         let peer_hash = peer_hash.clone();
                         move |event| {
                             if let Some(peer_hash) = &peer_hash {
+                                let content = event.value();
                                 draft_buffers.write().insert(
                                     peer_hash.clone(),
-                                    (draft_revision, event.value()),
+                                    (draft_revision, content.clone()),
                                 );
+                                if let Some(action_sink) = action_sink {
+                                    action_sink.call(MobileAction::new(
+                                        generation,
+                                        MobileActionKind::SaveDraft {
+                                            peer_hash: peer_hash.clone(),
+                                            content,
+                                            base_revision: draft_revision,
+                                        },
+                                    ));
+                                }
                             }
                         }
                     },
                 }
                 button {
                     id: "mobile.send",
-                    r#type: "button",
+                    r#type: "submit",
                     "data-enabled": enabled.to_string(),
                     disabled: !enabled,
                     "Send"
@@ -710,6 +880,17 @@ pub fn Composer(conversation: Option<Conversation>, enabled: bool) -> Element {
                 select {
                     id: "mobile.delivery-method",
                     name: "delivery-method",
+                    value: match *delivery_method.read() {
+                        DeliveryMethod::Direct => "direct",
+                        DeliveryMethod::Propagated => "propagated",
+                    },
+                    onchange: move |event| {
+                        delivery_method.set(if event.value() == "propagated" {
+                            DeliveryMethod::Propagated
+                        } else {
+                            DeliveryMethod::Direct
+                        });
+                    },
                     option { value: "direct", "Direct" }
                     option { value: "propagated", "Propagated" }
                 }
