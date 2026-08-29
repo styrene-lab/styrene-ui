@@ -3,7 +3,7 @@ use styrene_ui_app::MobileShell;
 use styrene_ui_state::{MobileFixture, MobileMinimumCorpus, TargetClass};
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
-const BOOTSTRAP_FIXTURE: &str = "tcp-reconnecting-rnode-unavailable";
+const BOOTSTRAP_FIXTURE: &str = "propagation-sync-complete";
 pub const MOBILE_INDEX: &str = r#"<!DOCTYPE html>
 <html lang="en">
     <head>

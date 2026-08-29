@@ -8,7 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-dioxus = { workspace = true, features = ["asset", "document"] }
+dioxus = { workspace = true, features = ["asset", "document", "hooks"] }
 styrene-ui-state.workspace = true
 
 [dev-dependencies]

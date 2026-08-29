@@ -122,6 +122,46 @@ fn shared_shell_exposes_semantic_landmarks_labels_and_statuses() {
 }
 
 #[test]
+fn mobile_shell_uses_destination_navigation_and_starts_on_the_conversation_list() {
+    let markup = render(fixture("direct-message-queued"));
+
+    for destination in ["messages", "people", "network", "more"] {
+        assert!(markup.contains(&format!("id=\"mobile.destination.{destination}\"")));
+    }
+    assert!(opening_tag_with_id(&markup, "mobile.destination.messages")
+        .contains("aria-current=\"page\""));
+    assert!(markup.contains("data-compact-pane=\"list\""));
+    assert!(opening_tag_with_id(&markup, "mobile.people").contains("hidden"));
+    assert!(opening_tag_with_id(&markup, "mobile.network").contains("hidden"));
+    assert!(opening_tag_with_id(&markup, "mobile.more").contains("hidden"));
+}
+
+#[test]
+fn initial_thread_selection_filters_messages_without_inventing_ordering() {
+    let mut state = fixture("direct-message-queued");
+    let mut second_conversation = state.conversations[0].clone();
+    second_conversation.peer_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into();
+    state.conversations.push(second_conversation);
+
+    let mut second_message = state.messages[0].clone();
+    second_message.id = "message-second-peer".into();
+    second_message.peer_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into();
+    second_message.content = "Message belonging only to the second peer".into();
+    state.messages.push(second_message);
+
+    let markup = render(state);
+    let first =
+        opening_tag_with_id(&markup, "mobile.conversation.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    let second =
+        opening_tag_with_id(&markup, "mobile.conversation.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+
+    assert!(first.contains("aria-current=\"true\""));
+    assert!(second.contains("aria-current=\"false\""));
+    assert!(markup.contains("Direct message awaiting evidence"));
+    assert!(!markup.contains("Message belonging only to the second peer"));
+}
+
+#[test]
 fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
     for required in [
         "min-inline-size: 20rem",
