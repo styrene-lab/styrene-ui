@@ -63,5 +63,8 @@ imply an open serial link or a connected RNode. After authorization, a dedicated
 bounded Rust worker opens a CDC ACM or CP210x byte stream, while the backend owns
 KISS framing, RNode detection, radio configuration readback, packet admission,
 and bearer truth. Detach closes the attempt and changes the backend USB bearer;
-only exact successful configuration readback changes it to connected. Physical
-USB behavior and additional USB-to-serial chipsets remain unverified.
+only exact successful configuration readback changes it to connected. A physical
+Android 15/API 35 E8A tablet and Espressif CDC ACM RNode exercised permission
+grant, denial, detection, configuration readback, detach, and reconnect. Live RNS
+packet transfer, physical CP210x behavior, and additional USB-to-serial chipsets
+remain unverified.

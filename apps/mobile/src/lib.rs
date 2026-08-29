@@ -50,15 +50,24 @@ pub fn App() -> Element {
     let mut usb_authorization = use_signal(|| None::<AuthorizationState>);
     let mut usb_failure = use_signal(|| None::<String>);
     let mut usb_busy = use_signal(|| false);
+    let mut selected_usb = use_signal(|| None::<AndroidUsbAttachment>);
 
     #[cfg(target_os = "android")]
-    use_effect(move || {
-        spawn(async move {
+    use_future(move || async move {
+        loop {
             match platform::android_usb_attachments().await {
-                Ok(attachments) => usb_attachments.set(attachments),
+                Ok(attachments) => {
+                    let selected = selected_usb.read().clone();
+                    if selected.as_ref().is_some_and(|selected| !attachments.contains(selected)) {
+                        selected_usb.set(None);
+                        usb_authorization.set(None);
+                    }
+                    usb_attachments.set(attachments);
+                }
                 Err(error) => usb_failure.set(Some(error.code)),
             }
-        });
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
     });
 
     #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
@@ -107,6 +116,7 @@ pub fn App() -> Element {
                         return;
                     }
                     usb_busy.set(true);
+                    selected_usb.set(Some(attachment.clone()));
                     let session = session.read().clone();
                     spawn(async move {
                         usb_failure.set(None);
@@ -114,6 +124,7 @@ pub fn App() -> Element {
                         if let Err(error) = session.request_android_usb_fallback().await {
                             usb_failure.set(Some(error));
                             usb_authorization.set(None);
+                            selected_usb.set(None);
                             usb_busy.set(false);
                             return;
                         }
@@ -163,7 +174,7 @@ mod tests {
 
     use super::*;
 
-    const BACKEND_REVISION: &str = "aed17271f6a4d00b0263e09104d8c5ec4463bb10";
+    const BACKEND_REVISION: &str = "f15ce939887655ecb9ca4a7cdfa9e7378496dea5";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
     const FIXTURE_PROVENANCE: &str =
