@@ -22,7 +22,7 @@ use std::{
   borrow::Cow,
   collections::HashMap,
   sync::{mpsc::channel, Mutex},
-  time::Duration,
+  time::{Duration, Instant},
 };
 
 pub(crate) mod binding;
@@ -186,9 +186,18 @@ impl InnerWebView {
     };
     let window_manager = unsafe { JObject::from_raw(window_manager.as_ptr().cast()) };
     // Some vendor WindowManager proxies do not preserve JNI object identity.
-    let activity_id = activity_id_for_window_manager(window_manager)
-      .or_else(single_activity_id)
-      .expect("no available activity");
+    let deadline = Instant::now() + MAIN_PIPE_TIMEOUT;
+    let activity_id = loop {
+      if let Some(activity_id) =
+        activity_id_for_window_manager(&window_manager).or_else(single_activity_id)
+      {
+        break activity_id;
+      }
+      if Instant::now() >= deadline {
+        return Err(Error::ActivityUnavailable);
+      }
+      std::thread::sleep(Duration::from_millis(10));
+    };
     let WebViewAttributes {
       url,
       html,

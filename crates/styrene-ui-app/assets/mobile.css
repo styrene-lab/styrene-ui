@@ -563,7 +563,7 @@ label {
 
 [data-target="android"] button,
 [data-target="android"] select {
-  min-block-size: 3rem;
+  min-block-size: 3.25rem;
 }
 
 @media (min-width: 52rem) {

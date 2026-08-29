@@ -214,7 +214,7 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
         "env(safe-area-inset-bottom)",
         "min-block-size: 2.75rem",
         "[data-target=\"android\"] button",
-        "min-block-size: 3rem",
+        "min-block-size: 3.25rem",
         "flex-wrap: wrap",
         "overflow-wrap: anywhere",
         "@media (min-width: 52rem)",

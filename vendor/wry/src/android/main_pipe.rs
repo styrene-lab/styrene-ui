@@ -89,7 +89,7 @@ pub fn register_activity_proxy(
   }
 }
 
-pub fn activity_id_for_window_manager(window_manager: JObject) -> Option<ActivityId> {
+pub fn activity_id_for_window_manager(window_manager: &JObject) -> Option<ActivityId> {
   for (activity_id, proxy) in ACTIVITY_PROXY.lock().unwrap().iter() {
     let vm = unsafe { JavaVM::from_raw(proxy.java_vm.cast()) }.unwrap();
     let mut env = vm.attach_current_thread_as_daemon().unwrap();
@@ -98,7 +98,7 @@ pub fn activity_id_for_window_manager(window_manager: JObject) -> Option<Activit
         proxy.window_manager.as_obj(),
         "equals",
         "(Ljava/lang/Object;)Z",
-        &[(&window_manager).into()],
+        &[window_manager.into()],
       )
       .and_then(|v| v.z())
       .unwrap_or_default();
