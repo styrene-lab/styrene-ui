@@ -5,7 +5,7 @@ bytes, and parity claims. This repository owns presentation fixtures and
 packaged-target replay evidence only.
 
 The current integration revision is
-`0d3fc6ead37ab3a6857f825c260fd62f47977f55` from
+`12de63c44a09f2c483334a47afd1fc4bfd5d4cc0` from
 `https://github.com/styrene-lab/styrene-rs.git`.
 
 | Corpus | Backend path | UI status | SHA-256 |
