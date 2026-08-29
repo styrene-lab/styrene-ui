@@ -15,11 +15,13 @@ use styrened::mobile::{
     IdentityBackend, MobileBearerKind, MobileBearerReason, MobileBearerState, MobileConfig,
     MobileConnectionPhase, MobileDeliveryMethod, MobileInterfaceConfig, MobileNode,
     MobilePeerAspect, MobilePropagationSnapshot, MobilePropagationSyncState, MobileSendRequest,
+    MobileStateEvent, MobileStateSubscription, MobileStateSubscriptionError,
     persist_mobile_tcp_endpoint,
 };
 
 const DEFAULT_ENDPOINT: &str = "rns.styrene.io:4242";
 const ACTION_CAPACITY: usize = 64;
+const SUBSCRIPTION_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
 pub struct MobileSession {
@@ -31,6 +33,15 @@ pub struct MobileSession {
 pub struct SessionUpdate {
     pub fixture: MobileFixture,
     pub propagation: PropagationUpdate,
+}
+
+struct SessionOwner {
+    generation: u64,
+    backend_generation: u64,
+    config: MobileConfig,
+    node: MobileNode,
+    state_events: MobileStateSubscription,
+    updates: Sender<SessionUpdate>,
 }
 
 impl MobileSession {
@@ -80,8 +91,8 @@ fn run_owner(actions: Receiver<MobileAction>, updates: Sender<SessionUpdate>) {
 }
 
 async fn owner_loop(actions: Receiver<MobileAction>, updates: Sender<SessionUpdate>) {
-    let mut generation = 1;
-    let mut config = match mobile_config(DEFAULT_ENDPOINT) {
+    let generation = 1;
+    let config = match mobile_config(DEFAULT_ENDPOINT) {
         Ok(config) => config,
         Err(error) => {
             let _ =
@@ -89,7 +100,7 @@ async fn owner_loop(actions: Receiver<MobileAction>, updates: Sender<SessionUpda
             return;
         }
     };
-    let mut node = match MobileNode::boot(config.clone()).await {
+    let node = match MobileNode::boot(config.clone()).await {
         Ok(node) => node,
         Err(error) => {
             let _ = updates.force_send(failed_update(
@@ -100,59 +111,165 @@ async fn owner_loop(actions: Receiver<MobileAction>, updates: Sender<SessionUpda
             return;
         }
     };
-    publish_snapshot(&node, generation, &updates).await;
+    let state_events = node.subscribe_state_events();
+    let backend_generation = node.session_snapshot().await.generation;
+    let mut owner =
+        SessionOwner { generation, backend_generation, config, node, state_events, updates };
+    publish_snapshot(&owner.node, owner.generation, owner.backend_generation, &owner.updates).await;
 
-    let mut refresh = tokio::time::interval(Duration::from_secs(2));
-    refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
-            _ = refresh.tick() => publish_snapshot(&node, generation, &updates).await,
+            event = owner.state_events.recv() => owner.handle_event(event).await,
             action = actions.recv() => {
                 let Ok(action) = action else {
-                    let _ = node.shutdown().await;
+                    let _ = owner.node.shutdown().await;
                     return;
                 };
-                if action.generation != generation {
-                    continue;
+                if !owner.handle_action(action).await {
+                    return;
                 }
-                if let MobileActionKind::ApplyEndpoint { endpoint } = &action.kind {
-                    if let Err(error) = persist_mobile_tcp_endpoint(&config.config_dir, endpoint) {
-                        publish_snapshot_with_failure(
-                            &node,
-                            generation,
-                            &updates,
-                            TypedFailure {
-                                code: format!("{:?}", error.code()).to_ascii_lowercase(),
-                                retryable: error.retryable(),
-                            },
-                        )
-                        .await;
-                        continue;
-                    }
-                    let _ = node.shutdown().await;
-                    generation = generation.saturating_add(1);
-                    config.interfaces = vec![MobileInterfaceConfig::TcpClient {
-                        remote_address: endpoint.clone(),
-                    }];
-                    match MobileNode::boot(config.clone()).await {
-                        Ok(replacement) => node = replacement,
-                        Err(error) => {
-                            let _ = updates.force_send(failed_update(
-                                generation,
-                                "embedded_restart_failed",
-                                error.to_string(),
-                            ));
-                            return;
-                        }
-                    }
-                } else if let Err(failure) = execute_action(&node, action.kind).await {
-                    publish_snapshot_with_failure(&node, generation, &updates, failure).await;
-                    continue;
-                }
-                publish_snapshot(&node, generation, &updates).await;
             }
         }
     }
+}
+
+impl SessionOwner {
+    async fn handle_event(
+        &mut self,
+        event: Result<MobileStateEvent, MobileStateSubscriptionError>,
+    ) {
+        match event {
+            Ok(event) => {
+                if advance_generation_if_changed(
+                    &mut self.backend_generation,
+                    event.generation,
+                    &mut self.generation,
+                ) {
+                    self.state_events = self.node.subscribe_state_events();
+                }
+                publish_snapshot(
+                    &self.node,
+                    self.generation,
+                    self.backend_generation,
+                    &self.updates,
+                )
+                .await;
+            }
+            Err(MobileStateSubscriptionError::Lagged(_)) => {
+                self.synchronize_generation().await;
+                self.state_events = self.node.subscribe_state_events();
+                publish_snapshot(
+                    &self.node,
+                    self.generation,
+                    self.backend_generation,
+                    &self.updates,
+                )
+                .await;
+            }
+            Err(MobileStateSubscriptionError::Closed) => {
+                tokio::time::sleep(SUBSCRIPTION_RETRY_DELAY).await;
+                self.state_events = self.node.subscribe_state_events();
+                self.synchronize_generation().await;
+                publish_snapshot_with_failure(
+                    &self.node,
+                    self.generation,
+                    self.backend_generation,
+                    &self.updates,
+                    messaging_failure("state_subscription_closed", true),
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn handle_action(&mut self, action: MobileAction) -> bool {
+        if action.generation != self.generation {
+            return true;
+        }
+        if self.synchronize_generation().await {
+            self.state_events = self.node.subscribe_state_events();
+            publish_snapshot(&self.node, self.generation, self.backend_generation, &self.updates)
+                .await;
+            return true;
+        }
+        if let MobileActionKind::ApplyEndpoint { endpoint } = &action.kind {
+            if let Err(error) = persist_mobile_tcp_endpoint(&self.config.config_dir, endpoint) {
+                publish_snapshot_with_failure(
+                    &self.node,
+                    self.generation,
+                    self.backend_generation,
+                    &self.updates,
+                    TypedFailure {
+                        code: format!("{:?}", error.code()).to_ascii_lowercase(),
+                        retryable: error.retryable(),
+                    },
+                )
+                .await;
+                return true;
+            }
+            let _ = self.node.shutdown().await;
+            self.generation = self.generation.saturating_add(1);
+            self.config.interfaces =
+                vec![MobileInterfaceConfig::TcpClient { remote_address: endpoint.clone() }];
+            let replacement = match MobileNode::boot(self.config.clone()).await {
+                Ok(replacement) => replacement,
+                Err(error) => {
+                    let _ = self.updates.force_send(failed_update(
+                        self.generation,
+                        "embedded_restart_failed",
+                        error.to_string(),
+                    ));
+                    return false;
+                }
+            };
+            self.node = replacement;
+            self.state_events = self.node.subscribe_state_events();
+            self.backend_generation = self.node.session_snapshot().await.generation;
+        } else if let Err(failure) = execute_action(&self.node, action.kind).await {
+            publish_snapshot_with_failure(
+                &self.node,
+                self.generation,
+                self.backend_generation,
+                &self.updates,
+                failure,
+            )
+            .await;
+            return true;
+        }
+        publish_snapshot(&self.node, self.generation, self.backend_generation, &self.updates).await;
+        true
+    }
+
+    async fn synchronize_generation(&mut self) -> bool {
+        synchronize_backend_generation(
+            &self.node,
+            &mut self.backend_generation,
+            &mut self.generation,
+        )
+        .await
+    }
+}
+
+async fn synchronize_backend_generation(
+    node: &MobileNode,
+    backend_generation: &mut u64,
+    generation: &mut u64,
+) -> bool {
+    let observed = node.session_snapshot().await.generation;
+    advance_generation_if_changed(backend_generation, observed, generation)
+}
+
+fn advance_generation_if_changed(
+    backend_generation: &mut u64,
+    observed: u64,
+    generation: &mut u64,
+) -> bool {
+    if observed <= *backend_generation {
+        return false;
+    }
+    *backend_generation = observed;
+    *generation = generation.saturating_add(1);
+    true
 }
 
 async fn execute_action(node: &MobileNode, action: MobileActionKind) -> Result<(), TypedFailure> {
@@ -215,8 +332,13 @@ fn messaging_failure(code: &str, retryable: bool) -> TypedFailure {
     TypedFailure { code: code.into(), retryable }
 }
 
-async fn publish_snapshot(node: &MobileNode, generation: u64, updates: &Sender<SessionUpdate>) {
-    if let Ok(update) = project(node, generation).await {
+async fn publish_snapshot(
+    node: &MobileNode,
+    generation: u64,
+    backend_generation: u64,
+    updates: &Sender<SessionUpdate>,
+) {
+    if let Ok(update) = project(node, generation, backend_generation).await {
         let _ = updates.force_send(update);
     }
 }
@@ -224,17 +346,25 @@ async fn publish_snapshot(node: &MobileNode, generation: u64, updates: &Sender<S
 async fn publish_snapshot_with_failure(
     node: &MobileNode,
     generation: u64,
+    backend_generation: u64,
     updates: &Sender<SessionUpdate>,
     failure: TypedFailure,
 ) {
-    if let Ok(mut update) = project(node, generation).await {
+    if let Ok(mut update) = project(node, generation, backend_generation).await {
         update.fixture.session.failure = Some(failure);
         let _ = updates.force_send(update);
     }
 }
 
-async fn project(node: &MobileNode, generation: u64) -> Result<SessionUpdate, String> {
+async fn project(
+    node: &MobileNode,
+    generation: u64,
+    backend_generation: u64,
+) -> Result<SessionUpdate, String> {
     let session = node.session_snapshot().await;
+    if session.generation != backend_generation {
+        return Err("backend generation changed before projection".into());
+    }
     let peers = node.peer_snapshot().await.map_err(|error| error.to_string())?;
     let propagation = node.propagation_snapshot().await.map_err(|error| error.to_string())?;
     let summaries = node.list_conversations().await?;
@@ -251,6 +381,9 @@ async fn project(node: &MobileNode, generation: u64) -> Result<SessionUpdate, St
         messages.extend(
             node.get_messages(&summary.peer_hash, 200).await?.into_iter().map(project_message),
         );
+    }
+    if node.session_snapshot().await.generation != backend_generation {
+        return Err("backend generation changed during projection".into());
     }
 
     let propagation_update = project_propagation(generation, &propagation);
@@ -545,5 +678,19 @@ mod tests {
         assert_eq!(project_method(None), DeliveryMethod::Unknown);
         assert_eq!(project_method(Some("future-method")), DeliveryMethod::Unknown);
         assert_eq!(project_method(Some("direct")), DeliveryMethod::Direct);
+    }
+
+    #[test]
+    fn stale_backend_generations_cannot_replace_current_state() {
+        let mut backend_generation = 3;
+        let mut generation = 9;
+
+        assert!(!advance_generation_if_changed(&mut backend_generation, 3, &mut generation));
+        assert!(!advance_generation_if_changed(&mut backend_generation, 2, &mut generation));
+        assert_eq!(backend_generation, 3);
+        assert_eq!(generation, 9);
+        assert!(advance_generation_if_changed(&mut backend_generation, 4, &mut generation));
+        assert_eq!(backend_generation, 4);
+        assert_eq!(generation, 10);
     }
 }

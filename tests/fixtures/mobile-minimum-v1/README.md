@@ -3,7 +3,7 @@
 `states.json` is copied from `styrene-rs` at
 `tests/fixtures/mobile-minimum-v1/states.json`.
 
-Source revision: `0f85140c84267052b28e84895a1af4e6677d6eec`
+Source revision: `2b9e1aeeff71733a8fc11d8a541cc417fb9450f0`
 
 Canonical JSON SHA-256: `64dadb685eddad5dd80d954708eeb894a1784d8dbd5c025122a093ac6110b00c`
 
