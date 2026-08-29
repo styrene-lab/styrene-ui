@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
-use styrene_ui_app::MobileShell;
+use styrene_ui_app::{BackNavigation, MobileShell};
 use styrene_ui_state::{MobileFixture, MobileMinimumCorpus, TargetClass};
+
+mod platform;
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
 const BOOTSTRAP_FIXTURE: &str = "propagation-sync-complete";
@@ -35,10 +37,13 @@ fn bootstrap_fixture() -> MobileFixture {
 
 #[component]
 pub fn App() -> Element {
+    platform::use_back_navigation();
+
     rsx! {
         MobileShell {
             target: target_class(),
             fixture: bootstrap_fixture(),
+            back_navigation: BackNavigation::web_history(),
         }
     }
 }

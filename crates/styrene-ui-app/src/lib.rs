@@ -9,6 +9,43 @@ use styrene_ui_state::{
     TransportEvidence,
 };
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BackNavigation {
+    web_history: bool,
+}
+
+impl BackNavigation {
+    #[must_use]
+    pub const fn web_history() -> Self {
+        Self { web_history: true }
+    }
+
+    fn open_thread(self) {
+        if self.web_history {
+            document::eval(
+                r##"
+                if (matchMedia("(max-width: 51.999rem)").matches
+                    && history.state?.styrenePane !== "thread") {
+                    history.pushState({ styrenePane: "thread" }, "", "#thread");
+                }
+                "##,
+            );
+        }
+    }
+
+    fn close_thread(self) {
+        if self.web_history {
+            document::eval(
+                r#"
+                if (history.state?.styrenePane === "thread") {
+                    history.back();
+                }
+                "#,
+            );
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MobileDestination {
     Messages,
@@ -63,7 +100,11 @@ fn peer_name(hash: &str, peers: &[Peer]) -> String {
 }
 
 #[component]
-pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
+pub fn MobileShell(
+    target: TargetClass,
+    fixture: MobileFixture,
+    #[props(default)] back_navigation: BackNavigation,
+) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let messaging_available = MobileStore::new(fixture.clone()).messaging_available();
     let live_actions_enabled = boundary.live_network_allowed();
@@ -99,6 +140,7 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
     let composer_enabled =
         selected_conversation.is_some() && messaging_available && live_actions_enabled;
     let compact_pane = if *compact_thread_open.read() { "thread" } else { "list" };
+    let compact_thread_is_open = *compact_thread_open.read();
     let conversation_count = fixture.conversations.len().to_string();
     let peer_count = fixture.peers.len().to_string();
 
@@ -112,6 +154,16 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
             "data-fixture-id": fixture.id.clone(),
             "data-generation": fixture.generation.to_string(),
             "data-live-network-enabled": boundary.live_network_allowed().to_string(),
+            if back_navigation.web_history {
+                button {
+                    id: "mobile.platform-back",
+                    hidden: true,
+                    r#type: "button",
+                    tabindex: "-1",
+                    onclick: move |_| compact_thread_open.set(false),
+                    "Platform Back"
+                }
+            }
             header {
                 class: "app-header",
                 div {
@@ -163,6 +215,9 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
                             selected_peer: selected_hash.clone(),
                             on_select: move |peer_hash| {
                                 selected_peer.set(Some(peer_hash));
+                                if !compact_thread_is_open {
+                                    back_navigation.open_thread();
+                                }
                                 compact_thread_open.set(true);
                             },
                         }
@@ -175,7 +230,10 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
                                 class: "thread-back",
                                 r#type: "button",
                                 "aria-label": "Back to conversations",
-                                onclick: move |_| compact_thread_open.set(false),
+                                onclick: move |_| {
+                                    compact_thread_open.set(false);
+                                    back_navigation.close_thread();
+                                },
                                 "Back"
                             }
                             div {
@@ -228,6 +286,9 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
                             let peer_hash = peer.destination_hash.clone();
                             move |_| {
                                 selected_peer.set(Some(peer_hash.clone()));
+                                if !compact_thread_is_open {
+                                    back_navigation.open_thread();
+                                }
                                 compact_thread_open.set(true);
                                 destination.set(MobileDestination::Messages);
                             }
@@ -342,7 +403,13 @@ pub fn MobileShell(target: TargetClass, fixture: MobileFixture) -> Element {
                         class: if active_destination == item { "destination-item is-active" } else { "destination-item" },
                         r#type: "button",
                         "aria-current": if active_destination == item { "page" } else { "false" },
-                        onclick: move |_| destination.set(item),
+                        onclick: move |_| {
+                            if item != MobileDestination::Messages && compact_thread_is_open {
+                                compact_thread_open.set(false);
+                                back_navigation.close_thread();
+                            }
+                            destination.set(item);
+                        },
                         span { class: "destination-mark", "aria-hidden": "true", {item.mark()} }
                         span { {item.label()} }
                     }
