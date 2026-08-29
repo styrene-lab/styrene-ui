@@ -53,6 +53,47 @@ pub struct EndpointUpdate {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MobileAction {
+    pub generation: u64,
+    pub kind: MobileActionKind,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MobileActionKind {
+    ApplyEndpoint {
+        endpoint: String,
+    },
+    SetActiveConversation {
+        peer_hash: Option<String>,
+    },
+    SaveDraft {
+        peer_hash: String,
+        content: String,
+        base_revision: u64,
+    },
+    SendMessage {
+        peer_hash: String,
+        content: String,
+        requested_method: DeliveryMethod,
+        draft_revision: u64,
+    },
+    RetryMessage {
+        message_id: String,
+    },
+    SelectPropagationNode {
+        destination_hash: Option<String>,
+    },
+    SyncPropagation,
+}
+
+impl MobileAction {
+    #[must_use]
+    pub const fn new(generation: u64, kind: MobileActionKind) -> Self {
+        Self { generation, kind }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MobileStore {
     snapshot: MobileFixture,
     local_announce_outcome: Option<LocalAnnounceOutcome>,

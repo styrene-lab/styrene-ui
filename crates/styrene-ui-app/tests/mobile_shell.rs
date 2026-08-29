@@ -497,6 +497,7 @@ fn composer_projects_backend_draft_revision_and_retryability() {
     assert!(markup.contains("data-revision=7"));
     assert!(markup.contains("newer draft"));
     assert!(markup.contains("id=\"mobile.delivery-method\""));
+    assert!(opening_tag_with_id(&markup, "mobile.send").contains("type=\"submit\""));
     assert!(markup.contains("id=\"mobile.retry.message-direct-1\""));
     assert!(opening_tag_with_id(&markup, "mobile.retry.message-direct-1").contains("disabled"));
 }

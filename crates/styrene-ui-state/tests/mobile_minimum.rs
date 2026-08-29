@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use styrene_ui_state::{
     ApplyResult, Bearer, BearerEvent, BearerKind, BearerState, Conversation, DeliveryEvidence,
     DeliveryMethod, DraftClearDisposition, EndpointUpdate, LocalAnnounceOutcome, MessageEvent,
-    MessageSnapshot, MobileFixture, MobileMinimumCorpus, MobileStore, PeerEvent, PeerSnapshot,
-    Profile, PropagationEvidence, PropagationProgress, PropagationUpdate, SendOutcome,
-    SessionPhase, SyncState, TargetClass, TypedFailure,
+    MessageSnapshot, MobileAction, MobileActionKind, MobileFixture, MobileMinimumCorpus,
+    MobileStore, PeerEvent, PeerSnapshot, Profile, PropagationEvidence, PropagationProgress,
+    PropagationUpdate, SendOutcome, SessionPhase, SyncState, TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -32,6 +32,44 @@ fn shared_mobile_minimum_fixture_deserializes_strictly() {
     assert_eq!(
         corpus.fixtures.iter().map(|fixture| fixture.id.as_str()).collect::<HashSet<_>>().len(),
         corpus.fixtures.len()
+    );
+}
+
+#[test]
+fn mobile_actions_preserve_originating_generation_and_command_facts() {
+    let send = MobileAction::new(
+        12,
+        MobileActionKind::SendMessage {
+            peer_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            content: "retained draft".into(),
+            requested_method: DeliveryMethod::Propagated,
+            draft_revision: 7,
+        },
+    );
+
+    assert_eq!(send.generation, 12);
+    assert_eq!(
+        send.kind,
+        MobileActionKind::SendMessage {
+            peer_hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            content: "retained draft".into(),
+            requested_method: DeliveryMethod::Propagated,
+            draft_revision: 7,
+        }
+    );
+}
+
+#[test]
+fn endpoint_action_is_an_intent_not_a_backend_outcome() {
+    let action = MobileAction::new(
+        4,
+        MobileActionKind::ApplyEndpoint { endpoint: "rns.styrene.io:4242".into() },
+    );
+
+    assert_eq!(action.generation, 4);
+    assert_eq!(
+        action.kind,
+        MobileActionKind::ApplyEndpoint { endpoint: "rns.styrene.io:4242".into() }
     );
 }
 
