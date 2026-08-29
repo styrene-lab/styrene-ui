@@ -36,6 +36,8 @@ pub struct MobileSession {
     usb_fallbacks: Sender<UsbFallbackRequest>,
     usb_connections: Sender<UsbConnectionRequest>,
     usb_probes: Sender<UsbProbeRequest>,
+    #[cfg(target_os = "ios")]
+    backend_nodes: Receiver<Arc<MobileNode>>,
 }
 
 #[derive(Clone, Debug)]
@@ -92,6 +94,8 @@ impl MobileSession {
         let (usb_fallbacks, usb_fallback_receiver) = async_channel::bounded(1);
         let (usb_connections, usb_connection_receiver) = async_channel::bounded(1);
         let (usb_probes, usb_probe_receiver) = async_channel::bounded(1);
+        #[cfg(target_os = "ios")]
+        let (backend_node_sender, backend_nodes) = async_channel::bounded(1);
         let startup_failures = update_sender.clone();
         if let Err(error) =
             thread::Builder::new().name("styrene-mobile-session".into()).spawn(move || {
@@ -100,6 +104,8 @@ impl MobileSession {
                     usb_fallback_receiver,
                     usb_connection_receiver,
                     usb_probe_receiver,
+                    #[cfg(target_os = "ios")]
+                    backend_node_sender,
                     update_sender,
                 );
             })
@@ -110,7 +116,15 @@ impl MobileSession {
                 error.to_string(),
             ));
         }
-        Self { actions, updates, usb_fallbacks, usb_connections, usb_probes }
+        Self {
+            actions,
+            updates,
+            usb_fallbacks,
+            usb_connections,
+            usb_probes,
+            #[cfg(target_os = "ios")]
+            backend_nodes,
+        }
     }
 
     pub fn dispatch(&self, action: MobileAction) {
@@ -178,6 +192,14 @@ impl MobileSession {
             .map_err(|_| "mobile session closed the USB probe request".to_string())?
     }
 
+    #[cfg(target_os = "ios")]
+    pub async fn backend_node(&self) -> Result<Arc<MobileNode>, String> {
+        self.backend_nodes
+            .recv()
+            .await
+            .map_err(|_| "mobile session closed before publishing its backend node".into())
+    }
+
     pub fn starting_update() -> SessionUpdate {
         let mut update = failed_update(1, "starting", String::new());
         update.fixture.id = "embedded-live-starting".into();
@@ -192,6 +214,7 @@ fn run_owner(
     usb_fallbacks: Receiver<UsbFallbackRequest>,
     usb_connections: Receiver<UsbConnectionRequest>,
     usb_probes: Receiver<UsbProbeRequest>,
+    #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
     updates: Sender<SessionUpdate>,
 ) {
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
@@ -201,7 +224,15 @@ fn run_owner(
             return;
         }
     };
-    runtime.block_on(owner_loop(actions, usb_fallbacks, usb_connections, usb_probes, updates));
+    runtime.block_on(owner_loop(
+        actions,
+        usb_fallbacks,
+        usb_connections,
+        usb_probes,
+        #[cfg(target_os = "ios")]
+        backend_nodes,
+        updates,
+    ));
 }
 
 async fn owner_loop(
@@ -209,6 +240,7 @@ async fn owner_loop(
     usb_fallbacks: Receiver<UsbFallbackRequest>,
     usb_connections: Receiver<UsbConnectionRequest>,
     usb_probes: Receiver<UsbProbeRequest>,
+    #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
     updates: Sender<SessionUpdate>,
 ) {
     let generation = 1;
@@ -232,6 +264,8 @@ async fn owner_loop(
         }
     };
     let state_events = node.subscribe_state_events();
+    #[cfg(target_os = "ios")]
+    let _ = backend_nodes.try_send(Arc::clone(&node));
     let backend_generation = node.session_snapshot().await.generation;
     let mut owner = SessionOwner {
         generation,

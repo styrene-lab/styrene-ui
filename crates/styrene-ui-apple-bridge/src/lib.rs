@@ -1,10 +1,14 @@
-//! Audited Objective-C boundary for Apple authorization APIs.
+//! Audited Objective-C boundary for Apple platform APIs.
 //!
 //! No Objective-C object or pointer crosses this crate's safe public API.
 
 mod ble;
+#[cfg(target_os = "ios")]
+mod ble_ios;
 
 pub use ble::*;
+#[cfg(target_os = "ios")]
+pub use ble_ios::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeAuthorization {

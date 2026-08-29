@@ -69,6 +69,7 @@ pub enum CoreBluetoothFailure {
     NotifyCharacteristicMissing,
     WriteWithResponseMissing,
     NotificationsUnsupported,
+    ConnectionFailed,
     InvalidWriteLimit,
     InvalidPhase,
     WriteInProgress,

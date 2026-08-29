@@ -5,9 +5,14 @@ use styrene_ui_app::{BackNavigation, MobileShell};
     not(feature = "ui-test")
 ))]
 use styrene_ui_platform::{
-    AndroidUsbAttachment, AuthorizationState, BleAdapterState, BleControlFailure, BleControlPhase,
-    BleControlState, PermissionKind,
+    AndroidUsbAttachment, AuthorizationState, BleControlPhase, BleControlState,
 };
+#[cfg(all(
+    not(target_os = "ios"),
+    any(target_os = "android", target_os = "macos"),
+    not(feature = "ui-test")
+))]
+use styrene_ui_platform::{BleAdapterState, BleControlFailure, PermissionKind};
 use styrene_ui_state::TargetClass;
 #[cfg(any(
     test,
@@ -19,6 +24,8 @@ use styrene_ui_state::{MobileFixture, MobileMinimumCorpus};
 #[cfg(all(target_os = "android", not(feature = "ui-test")))]
 mod android_usb;
 pub mod ble_session;
+#[cfg(all(target_os = "ios", not(feature = "ui-test")))]
+mod ios_ble;
 mod platform;
 #[cfg(all(
     any(target_os = "android", target_os = "ios", target_os = "macos"),
@@ -124,6 +131,10 @@ pub fn App() -> Element {
     {
         let session = use_signal(session::MobileSession::start);
         let mut update = use_signal(session::MobileSession::starting_update);
+        #[cfg(target_os = "ios")]
+        let ble_host = use_signal(ios_ble::IosBleHost::new);
+        #[cfg(target_os = "ios")]
+        let mut native_ble_controls = use_signal(BleControlState::default);
         let update_receiver = session.read().clone();
         use_future(move || {
             let update_receiver = update_receiver.clone();
@@ -133,8 +144,28 @@ pub fn App() -> Element {
                 }
             }
         });
+        #[cfg(target_os = "ios")]
+        {
+            let runner = ble_host.read().clone();
+            let backend = session.read().clone();
+            use_future(move || {
+                let runner = runner.clone();
+                let backend = backend.clone();
+                async move { runner.run(backend).await }
+            });
+            let updates = ble_host.read().clone();
+            use_future(move || {
+                let updates = updates.clone();
+                async move {
+                    while let Some(next) = updates.next_update().await {
+                        native_ble_controls.set(next);
+                    }
+                }
+            });
+        }
         let current = update.read().clone();
         let current_platform = platform_snapshot.read().clone();
+        #[cfg(not(target_os = "ios"))]
         let bluetooth_permission = current_platform
             .as_ref()
             .and_then(|snapshot| {
@@ -144,6 +175,7 @@ pub fn App() -> Element {
                     .find(|permission| permission.kind == PermissionKind::Bluetooth)
             })
             .map_or(AuthorizationState::Unavailable, |permission| permission.state);
+        #[cfg(not(target_os = "ios"))]
         let ble_controls = BleControlState {
             permission: bluetooth_permission,
             adapter: BleAdapterState::Unavailable,
@@ -151,6 +183,23 @@ pub fn App() -> Element {
             candidates: Vec::new(),
             approved: None,
             failure: Some(BleControlFailure::PlatformUnavailable),
+        };
+        #[cfg(target_os = "ios")]
+        let ble_controls = {
+            let mut controls = native_ble_controls.read().clone();
+            if let Some(bearer) = current
+                .fixture
+                .bearers
+                .iter()
+                .find(|bearer| bearer.kind == styrene_ui_state::BearerKind::BluetoothRnode)
+            {
+                controls.phase = match bearer.state {
+                    styrene_ui_state::BearerState::Connected => BleControlPhase::Connected,
+                    styrene_ui_state::BearerState::Reconnecting => BleControlPhase::Reconnecting,
+                    _ => controls.phase,
+                };
+            }
+            controls
         };
 
         return rsx! {
@@ -243,6 +292,24 @@ pub fn App() -> Element {
                         }
                         usb_busy.set(false);
                     });
+                },
+                ble_scan: move |()| {
+                    #[cfg(target_os = "ios")]
+                    ble_host.read().scan();
+                },
+                ble_select: move |id| {
+                    #[cfg(target_os = "ios")]
+                    ble_host.read().select(id);
+                    #[cfg(not(target_os = "ios"))]
+                    let _ = id;
+                },
+                ble_retry: move |()| {
+                    #[cfg(target_os = "ios")]
+                    ble_host.read().retry();
+                },
+                ble_forget: move |()| {
+                    #[cfg(target_os = "ios")]
+                    ble_host.read().forget();
                 },
             }
         };
