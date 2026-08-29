@@ -13,6 +13,8 @@ use styrene_ui_state::{
     PropagationEvidence, PropagationPolicy, PropagationProgress, PropagationUpdate, Session,
     SessionPhase, SyncState, TransportEvidence, TypedFailure,
 };
+#[cfg(target_os = "android")]
+use styrened::mobile::MobileRNodeBearer;
 use styrened::mobile::{
     IdentityBackend, MobileBearerKind, MobileBearerReason, MobileBearerState, MobileConfig,
     MobileConnectionPhase, MobileDeliveryMethod, MobileInterfaceConfig, MobileNode,
@@ -465,7 +467,7 @@ async fn run_android_usb(
         return;
     };
     let result = async {
-        for frame in node.start_rnode_bytes().await? {
+        for frame in node.start_rnode_bytes(MobileRNodeBearer::AndroidUsb).await? {
             link.write(frame).await.map_err(|error| error.code)?;
         }
         let startup_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
