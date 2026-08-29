@@ -13,8 +13,6 @@ use styrene_ui_state::{
     PropagationEvidence, PropagationPolicy, PropagationProgress, PropagationUpdate, Session,
     SessionPhase, SyncState, TransportEvidence, TypedFailure,
 };
-#[cfg(target_os = "android")]
-use styrened::mobile::MobileRNodeBearer;
 use styrened::mobile::{
     IdentityBackend, MobileBearerKind, MobileBearerReason, MobileBearerState, MobileConfig,
     MobileConnectionPhase, MobileDeliveryMethod, MobileInterfaceConfig, MobileNode,
@@ -22,6 +20,8 @@ use styrened::mobile::{
     MobileStateEvent, MobileStateSubscription, MobileStateSubscriptionError,
     MobileUsbFallbackDisposition, persist_mobile_tcp_endpoint,
 };
+#[cfg(target_os = "android")]
+use styrened::mobile::{MobileRNodeAttempt, MobileRNodeBearer};
 
 const DEFAULT_ENDPOINT: &str = "rns.styrene.io:4242";
 const ACTION_CAPACITY: usize = 64;
@@ -79,6 +79,8 @@ struct UsbWorker {
     cancel: Sender<()>,
     probes: Sender<UsbProbeRequest>,
     task: tokio::task::JoinHandle<()>,
+    #[cfg(target_os = "android")]
+    attempt: Arc<tokio::sync::Mutex<Option<MobileRNodeAttempt>>>,
 }
 
 impl MobileSession {
@@ -297,7 +299,15 @@ async fn owner_loop(
 impl SessionOwner {
     async fn report_usb_denied(&mut self) -> Result<(), String> {
         self.stop_usb_worker().await;
-        self.node.stop_rnode_bytes(MobileBearerReason::PermissionDenied).await.map(|_| ())
+        self.node
+            .platform_service()
+            .report(styrened::mobile::MobileBearerObservation {
+                kind: MobileBearerKind::AndroidUsb,
+                state: MobileBearerState::Disconnected,
+                reason: Some(MobileBearerReason::PermissionDenied),
+            })
+            .await
+            .map_err(str::to_owned)
     }
 
     async fn start_usb_worker(&mut self, attachment: AndroidUsbAttachment) -> Result<(), String> {
@@ -307,8 +317,15 @@ impl SessionOwner {
             let (cancel, cancelled) = async_channel::bounded(1);
             let (probes, probe_requests) = async_channel::bounded(1);
             let node = Arc::clone(&self.node);
-            let task = tokio::spawn(run_android_usb(node, attachment, cancelled, probe_requests));
-            self.usb_worker = Some(UsbWorker { cancel, probes, task });
+            let attempt = Arc::new(tokio::sync::Mutex::new(None));
+            let task = tokio::spawn(run_android_usb(
+                node,
+                attachment,
+                cancelled,
+                probe_requests,
+                Arc::clone(&attempt),
+            ));
+            self.usb_worker = Some(UsbWorker { cancel, probes, task, attempt });
             Ok(())
         }
         #[cfg(not(target_os = "android"))]
@@ -325,7 +342,13 @@ impl SessionOwner {
                 worker.task.abort();
                 let _ = worker.task.await;
             }
-            let _ = self.node.stop_rnode_bytes(MobileBearerReason::ConnectionInterrupted).await;
+            #[cfg(target_os = "android")]
+            if let Some(attempt) = worker.attempt.lock().await.take() {
+                let _ = self
+                    .node
+                    .stop_rnode_bytes(attempt, MobileBearerReason::ConnectionInterrupted)
+                    .await;
+            }
         }
     }
 
@@ -452,6 +475,7 @@ async fn run_android_usb(
     attachment: AndroidUsbAttachment,
     cancelled: Receiver<()>,
     probe_requests: Receiver<UsbProbeRequest>,
+    active_attempt: Arc<tokio::sync::Mutex<Option<MobileRNodeAttempt>>>,
 ) {
     use styrened::mobile::{MobileBearerObservation, MobileBearerReason};
 
@@ -466,8 +490,14 @@ async fn run_android_usb(
             .await;
         return;
     };
+    let Ok(start) = node.start_rnode_bytes(MobileRNodeBearer::AndroidUsb).await else {
+        link.close();
+        return;
+    };
+    let attempt = start.attempt;
+    *active_attempt.lock().await = Some(attempt);
     let result = async {
-        for frame in node.start_rnode_bytes(MobileRNodeBearer::AndroidUsb).await? {
+        for frame in start.writes {
             link.write(frame).await.map_err(|error| error.code)?;
         }
         let startup_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
@@ -487,15 +517,15 @@ async fn run_android_usb(
                 attachment_check = tokio::time::Instant::now();
             }
             if let Ok(request) = probe_requests.try_recv() {
-                let result = probe_android_usb(&node, &mut link).await;
+                let result = probe_android_usb(&node, attempt, &mut link).await;
                 let _ = request.response.try_send(result);
             }
             if let Some(bytes) = link.read().await.map_err(|error| error.code)? {
-                for response in node.submit_rnode_bytes(&bytes).await? {
+                for response in node.submit_rnode_bytes(attempt, &bytes).await? {
                     link.write(response).await.map_err(|error| error.code)?;
                 }
             }
-            if let Some(frame) = node.poll_rnode_bytes().await? {
+            if let Some(frame) = node.poll_rnode_bytes(attempt).await? {
                 link.write(frame).await.map_err(|error| error.code)?;
             }
             let connected = node
@@ -509,9 +539,12 @@ async fn run_android_usb(
         }
     }
     .await;
-    if let Ok(shutdown) = node.stop_rnode_bytes(MobileBearerReason::ConnectionInterrupted).await {
+    if let Ok(shutdown) =
+        node.stop_rnode_bytes(attempt, MobileBearerReason::ConnectionInterrupted).await
+    {
         let _ = link.write(shutdown).await;
     }
+    *active_attempt.lock().await = None;
     link.close();
     let _ = result;
 }
@@ -519,6 +552,7 @@ async fn run_android_usb(
 #[cfg(target_os = "android")]
 async fn probe_android_usb(
     node: &MobileNode,
+    attempt: MobileRNodeAttempt,
     link: &mut crate::android_usb::AndroidUsbLink,
 ) -> Result<AndroidUsbProbeOutcome, String> {
     let connected = node
@@ -529,7 +563,7 @@ async fn probe_android_usb(
     if !connected {
         return Err("Android USB RNode is not connected".into());
     }
-    while let Some(frame) = node.poll_rnode_bytes().await? {
+    while let Some(frame) = node.poll_rnode_bytes(attempt).await? {
         link.write(frame).await.map_err(|error| error.code)?;
     }
     let outcome = node.announce_outcome().await.map_err(|error| error.to_string())?;
@@ -539,7 +573,7 @@ async fn probe_android_usb(
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
-        if let Some(frame) = node.poll_rnode_bytes().await? {
+        if let Some(frame) = node.poll_rnode_bytes(attempt).await? {
             let frame_bytes = frame.len();
             link.write(frame).await.map_err(|error| error.code)?;
             return Ok(AndroidUsbProbeOutcome { frame_bytes });
