@@ -51,6 +51,8 @@ pub struct AndroidUsbLink {
 }
 
 impl AndroidUsbLink {
+    pub const MAX_WRITE_SIZE: usize = USB_MAX_WRITE_BYTES;
+
     pub async fn open(attachment: AndroidUsbAttachment) -> Result<Self, PlatformFailure> {
         let native =
             dispatch_query(move |env, activity| open_native(env, activity, &attachment)).await?;

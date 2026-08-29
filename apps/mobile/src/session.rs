@@ -21,7 +21,7 @@ use styrened::mobile::{
     MobileUsbFallbackDisposition, persist_mobile_tcp_endpoint,
 };
 #[cfg(target_os = "android")]
-use styrened::mobile::{MobileRNodeAttempt, MobileRNodeBearer};
+use styrened::mobile::{MobileRNodeAttempt, MobileRNodeBearer, RNodeBearerInfo, RNodeBearerKind};
 
 const DEFAULT_ENDPOINT: &str = "rns.styrene.io:4242";
 const ACTION_CAPACITY: usize = 64;
@@ -490,7 +490,17 @@ async fn run_android_usb(
             .await;
         return;
     };
-    let Ok(start) = node.start_rnode_bytes(MobileRNodeBearer::AndroidUsb).await else {
+    let Ok(start) = node
+        .start_rnode_bytes(
+            MobileRNodeBearer::AndroidUsb,
+            RNodeBearerInfo {
+                kind: RNodeBearerKind::AndroidUsb,
+                negotiated_mtu: None,
+                max_write_size: Some(crate::android_usb::AndroidUsbLink::MAX_WRITE_SIZE),
+            },
+        )
+        .await
+    else {
         link.close();
         return;
     };
@@ -525,8 +535,10 @@ async fn run_android_usb(
                     link.write(response).await.map_err(|error| error.code)?;
                 }
             }
-            if let Some(frame) = node.poll_rnode_bytes(attempt).await? {
-                link.write(frame).await.map_err(|error| error.code)?;
+            if let Some(writes) = node.poll_rnode_bytes(attempt).await? {
+                for write in writes {
+                    link.write(write).await.map_err(|error| error.code)?;
+                }
             }
             let connected = node
                 .session_snapshot()
@@ -542,7 +554,9 @@ async fn run_android_usb(
     if let Ok(shutdown) =
         node.stop_rnode_bytes(attempt, MobileBearerReason::ConnectionInterrupted).await
     {
-        let _ = link.write(shutdown).await;
+        for write in shutdown {
+            let _ = link.write(write).await;
+        }
     }
     *active_attempt.lock().await = None;
     link.close();
@@ -563,8 +577,10 @@ async fn probe_android_usb(
     if !connected {
         return Err("Android USB RNode is not connected".into());
     }
-    while let Some(frame) = node.poll_rnode_bytes(attempt).await? {
-        link.write(frame).await.map_err(|error| error.code)?;
+    while let Some(writes) = node.poll_rnode_bytes(attempt).await? {
+        for write in writes {
+            link.write(write).await.map_err(|error| error.code)?;
+        }
     }
     let outcome = node.announce_outcome().await.map_err(|error| error.to_string())?;
     if !outcome.local_dispatch_accepted {
@@ -573,9 +589,11 @@ async fn probe_android_usb(
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
-        if let Some(frame) = node.poll_rnode_bytes(attempt).await? {
-            let frame_bytes = frame.len();
-            link.write(frame).await.map_err(|error| error.code)?;
+        if let Some(writes) = node.poll_rnode_bytes(attempt).await? {
+            let frame_bytes = writes.iter().map(Vec::len).sum();
+            for write in writes {
+                link.write(write).await.map_err(|error| error.code)?;
+            }
             return Ok(AndroidUsbProbeOutcome { frame_bytes });
         }
         if tokio::time::Instant::now() >= deadline {
