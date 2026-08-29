@@ -1,19 +1,38 @@
 use dioxus::prelude::*;
 use styrene_ui_app::{BackNavigation, MobileShell};
+#[cfg(all(
+    any(target_os = "android", target_os = "ios", target_os = "macos"),
+    not(feature = "ui-test")
+))]
 use styrene_ui_platform::{AndroidUsbAttachment, AuthorizationState};
 use styrene_ui_state::TargetClass;
-#[cfg(any(test, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))]
+#[cfg(any(
+    test,
+    feature = "ui-test",
+    not(any(target_os = "android", target_os = "ios", target_os = "macos"))
+))]
 use styrene_ui_state::{MobileFixture, MobileMinimumCorpus};
 
-#[cfg(target_os = "android")]
+#[cfg(all(target_os = "android", not(feature = "ui-test")))]
 mod android_usb;
 mod platform;
-#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
+#[cfg(all(
+    any(target_os = "android", target_os = "ios", target_os = "macos"),
+    not(feature = "ui-test")
+))]
 mod session;
 
-#[cfg(any(test, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))]
+#[cfg(any(
+    test,
+    feature = "ui-test",
+    not(any(target_os = "android", target_os = "ios", target_os = "macos"))
+))]
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
-#[cfg(any(test, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))]
+#[cfg(any(
+    test,
+    feature = "ui-test",
+    not(any(target_os = "android", target_os = "ios", target_os = "macos"))
+))]
 const BOOTSTRAP_FIXTURE: &str = "propagation-sync-complete";
 pub const MOBILE_INDEX: &str = r#"<!DOCTYPE html>
 <html lang="en">
@@ -31,29 +50,51 @@ fn target_class() -> TargetClass {
     if cfg!(target_os = "android") { TargetClass::Android } else { TargetClass::Ios }
 }
 
-#[cfg(any(test, not(any(target_os = "android", target_os = "ios", target_os = "macos"))))]
+#[cfg(any(
+    test,
+    feature = "ui-test",
+    not(any(target_os = "android", target_os = "ios", target_os = "macos"))
+))]
 fn bootstrap_fixture() -> MobileFixture {
+    #[cfg(feature = "ui-test")]
+    let requested = std::env::var("STYRENE_UI_FIXTURE_ID").ok();
+    #[cfg(not(feature = "ui-test"))]
+    let requested = None::<String>;
+    let fixture_id = requested.as_deref().unwrap_or(BOOTSTRAP_FIXTURE);
     let corpus: MobileMinimumCorpus =
         serde_json::from_str(FIXTURES).expect("embedded mobile fixture corpus must deserialize");
     corpus
         .fixtures
         .into_iter()
-        .find(|fixture| fixture.id == BOOTSTRAP_FIXTURE)
-        .expect("embedded mobile bootstrap fixture must exist")
+        .find(|fixture| fixture.id == fixture_id)
+        .unwrap_or_else(|| panic!("embedded mobile fixture {fixture_id} must exist"))
 }
 
 #[component]
 pub fn App() -> Element {
     platform::use_back_navigation();
     let platform_snapshot = platform::use_platform_snapshot();
-    let mut usb_attachments = use_signal(Vec::<AndroidUsbAttachment>::new);
-    let mut usb_authorization = use_signal(|| None::<AuthorizationState>);
-    let mut usb_failure = use_signal(|| None::<String>);
-    let mut usb_busy = use_signal(|| false);
-    let mut selected_usb = use_signal(|| None::<AndroidUsbAttachment>);
-    let mut usb_probe_status = use_signal(|| None::<String>);
+    #[cfg(all(
+        any(target_os = "android", target_os = "ios", target_os = "macos"),
+        not(feature = "ui-test")
+    ))]
+    let (
+        mut usb_attachments,
+        mut usb_authorization,
+        mut usb_failure,
+        mut usb_busy,
+        mut selected_usb,
+        mut usb_probe_status,
+    ) = (
+        use_signal(Vec::<AndroidUsbAttachment>::new),
+        use_signal(|| None::<AuthorizationState>),
+        use_signal(|| None::<String>),
+        use_signal(|| false),
+        use_signal(|| None::<AndroidUsbAttachment>),
+        use_signal(|| None::<String>),
+    );
 
-    #[cfg(target_os = "android")]
+    #[cfg(all(target_os = "android", not(feature = "ui-test")))]
     use_future(move || async move {
         loop {
             match platform::android_usb_attachments().await {
@@ -72,7 +113,10 @@ pub fn App() -> Element {
         }
     });
 
-    #[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
+    #[cfg(all(
+        any(target_os = "android", target_os = "ios", target_os = "macos"),
+        not(feature = "ui-test")
+    ))]
     {
         let session = use_signal(session::MobileSession::start);
         let mut update = use_signal(session::MobileSession::starting_update);
@@ -181,7 +225,10 @@ pub fn App() -> Element {
         };
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "macos")))]
+    #[cfg(any(
+        feature = "ui-test",
+        not(any(target_os = "android", target_os = "ios", target_os = "macos"))
+    ))]
     rsx! {
         MobileShell {
             target: target_class(),

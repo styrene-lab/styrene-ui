@@ -19,6 +19,13 @@ device. The iOS lanes are the current simulator and a physical iPhone. Release
 evidence records the host package version, shared UI revision, backend revision,
 artifact hash, device OS, and WebView version.
 
+Packaged XCUITest on the iPhone 17 Pro simulator verifies that the fixture-mode
+application launches its `WKWebView`, exposes its fixture-only notice, and
+navigates among Network, More, and Conversations through accessibility elements.
+This is accessibility-tree interaction evidence, not VoiceOver or spoken-output
+evidence. Physical iPhone permission, Dynamic Type, lifecycle, and adaptive-layout
+scenarios remain unverified.
+
 ## WebView Platform Facts
 
 The shared host exposes platform facts through a bounded typed subscription.

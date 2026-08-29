@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+ui-test = ["styrene-mobile/ui-test"]
+
 [dependencies]
 dioxus = { workspace = true, features = ["launch", "mobile"] }
 styrene-mobile = { path = "../mobile" }
