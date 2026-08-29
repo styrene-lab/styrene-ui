@@ -4851,6 +4851,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-mobile-android"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "styrene-mobile",
+]
+
+[[package]]
+name = "styrene-mobile-ios"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "styrene-mobile",
+]
+
+[[package]]
 name = "styrene-rbac"
 version = "0.1.0"
 source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=93ea220df7b5626bc7af60517e9ef437607f3af1#93ea220df7b5626bc7af60517e9ef437607f3af1"
@@ -6141,8 +6157,6 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 [[package]]
 name = "wry"
 version = "0.55.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "186f9871daa55fd9c016578b810d149de58367113db7fb72b462d2323ce19514"
 dependencies = [
  "base64",
  "block2",

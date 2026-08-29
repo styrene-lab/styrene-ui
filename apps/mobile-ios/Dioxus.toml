@@ -1,0 +1,14 @@
+[application]
+name = "Styrene"
+default_platform = "mobile"
+
+[application.ios]
+bundle_identifier = "io.styrene.mesh"
+deployment_target = "17.0"
+
+[bundle]
+identifier = "io.styrene.mesh"
+publisher = "Styrene Labs"
+category = "public.app-category.social-networking"
+short_description = "Styrene mesh communicator for iOS"
+long_description = "Styrene is a Rust-owned Reticulum and LXMF mesh communicator for iOS."

@@ -89,8 +89,6 @@ mod tests {
 
     use super::*;
 
-    const ANDROID_MANIFEST: &str = include_str!("../AndroidManifest.xml");
-
     #[test]
     fn embedded_fixture_corpus_remains_visibly_fixture_only() {
         let fixture = bootstrap_fixture();
@@ -109,16 +107,5 @@ mod tests {
         assert!(MOBILE_INDEX.contains("name=\"color-scheme\" content=\"light dark\""));
         assert!(!MOBILE_INDEX.contains("user-scalable=no"));
         assert!(!MOBILE_INDEX.contains("maximum-scale"));
-    }
-
-    #[test]
-    fn android_manifest_preserves_webview_across_supported_configuration_changes() {
-        assert!(ANDROID_MANIFEST.contains("Theme.AppCompat.DayNight.NoActionBar"));
-        assert!(ANDROID_MANIFEST.contains("fontScale"));
-        assert!(ANDROID_MANIFEST.contains("uiMode"));
-        assert!(ANDROID_MANIFEST.contains("density"));
-        assert!(ANDROID_MANIFEST.contains("smallestScreenSize"));
-        assert!(ANDROID_MANIFEST.contains("android:stateNotNeeded=\"true\""));
-        assert!(ANDROID_MANIFEST.contains("android:allowBackup=\"false\""));
     }
 }
