@@ -147,11 +147,17 @@ label {
 
 .app-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: end;
   justify-content: space-between;
   gap: 1rem;
   padding: 0.4rem 0.15rem 0.85rem;
   border-block-end: 0.125rem solid var(--ink);
+}
+
+.app-header > :first-child {
+  flex: 1 1 14rem;
+  min-inline-size: 14rem;
 }
 
 .app-kicker,
@@ -532,6 +538,14 @@ label {
   font-family: ui-monospace, "SFMono-Regular", monospace;
   font-size: 0.82rem;
   font-weight: 900;
+}
+
+.destination-item > span:last-child {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  overflow-wrap: anywhere;
+  line-height: 1.1;
+  text-align: center;
 }
 
 .visually-hidden {

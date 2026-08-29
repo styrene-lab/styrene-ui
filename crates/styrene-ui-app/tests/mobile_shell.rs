@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
-use styrene_ui_app::{Composer, LocalAnnounceStatus, MobileShell, PropagationPanel};
+use styrene_ui_app::{
+    BackNavigation, Composer, LocalAnnounceStatus, MobileShell, PropagationPanel,
+};
 use styrene_ui_state::{
     ApplyResult, BearerState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
     MobileStore, PropagationCandidate, PropagationPolicy, PropagationProgress, PropagationUpdate,
@@ -137,6 +139,21 @@ fn mobile_shell_uses_destination_navigation_and_starts_on_the_conversation_list(
 }
 
 #[test]
+fn web_history_back_capability_exposes_only_a_hidden_rust_action() {
+    let markup = dioxus_ssr::render_element(rsx! {
+        MobileShell {
+            target: TargetClass::Android,
+            fixture: fixture("direct-message-queued"),
+            back_navigation: BackNavigation::web_history(),
+        }
+    });
+
+    let platform_back = opening_tag_with_id(&markup, "mobile.platform-back");
+    assert!(platform_back.contains("hidden"));
+    assert!(platform_back.contains("tabindex=\"-1\""));
+}
+
+#[test]
 fn initial_thread_selection_filters_messages_without_inventing_ordering() {
     let mut state = fixture("direct-message-queued");
     let mut second_conversation = state.conversations[0].clone();
@@ -196,6 +213,8 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
         "min-block-size: 2.75rem",
         "[data-target=\"android\"] button",
         "min-block-size: 3rem",
+        "flex-wrap: wrap",
+        "overflow-wrap: anywhere",
         "@media (min-width: 52rem)",
         "@media (prefers-color-scheme: dark)",
         "@media (prefers-contrast: more)",
