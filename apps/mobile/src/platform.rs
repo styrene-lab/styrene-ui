@@ -1345,16 +1345,18 @@ pub fn use_platform_snapshot() -> Signal<Option<PlatformSnapshot>> {
     snapshot
 }
 
+#[cfg(not(feature = "ui-test"))]
 pub async fn android_usb_attachments() -> Result<Vec<AndroidUsbAttachment>, PlatformFailure> {
     WebViewPlatformService.android_usb_attachments().await
 }
 
-#[cfg(target_os = "android")]
+#[cfg(all(target_os = "android", not(feature = "ui-test")))]
 pub async fn native_android_usb_attachments() -> Result<Vec<AndroidUsbAttachment>, PlatformFailure>
 {
     native_platform::android_usb_attachments().await
 }
 
+#[cfg(not(feature = "ui-test"))]
 pub async fn request_android_usb_authorization(
     attachment: AndroidUsbAttachment,
 ) -> Result<AuthorizationState, PlatformFailure> {
