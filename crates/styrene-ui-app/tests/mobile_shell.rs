@@ -7,6 +7,7 @@ use styrene_ui_state::{
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
+const MOBILE_CSS: &str = include_str!("../assets/mobile.css");
 
 fn fixture(id: &str) -> MobileFixture {
     let corpus: MobileMinimumCorpus =
@@ -22,6 +23,13 @@ fn render(fixture: MobileFixture) -> String {
     dioxus_ssr::render_element(rsx! {
         MobileShell { target: TargetClass::Ios, fixture }
     })
+}
+
+fn opening_tag_with_id<'a>(markup: &'a str, id: &str) -> &'a str {
+    let id = format!("id=\"{id}\"");
+    let start = markup.find(&id).unwrap_or_else(|| panic!("missing {id}"));
+    let end = start + markup[start..].find('>').expect("element opening tag") + 1;
+    &markup[start..end]
 }
 
 #[test]
@@ -81,8 +89,60 @@ fn runtime_profiles_keep_live_and_fixture_data_paths_isolated() {
         if fixture.expected.live_network_enabled {
             assert!(fixture.peers.is_empty(), "Live must not substitute fixture peers");
             assert!(fixture.messages.is_empty(), "Live must not substitute fixture messages");
+        } else {
+            for action in ["mobile.send", "mobile.tcp-endpoint-apply", "mobile.propagation-sync"] {
+                assert!(
+                    opening_tag_with_id(&markup, action).contains("disabled"),
+                    "fixture action {action} must be disabled"
+                );
+            }
         }
     }
+}
+
+#[test]
+fn shared_shell_exposes_semantic_landmarks_labels_and_statuses() {
+    let markup = render(fixture("direct-message-queued"));
+
+    for required in [
+        "aria-labelledby=\"mobile.app-title\"",
+        "id=\"mobile.app-title\"",
+        "role=\"status\" aria-live=\"polite\"",
+        "aria-label=\"Conversations\"",
+        "for=\"mobile.tcp-endpoint\"",
+        "for=\"mobile.draft.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+        "for=\"mobile.delivery-method\"",
+        "type=\"button\"",
+    ] {
+        assert!(markup.contains(required), "missing semantic contract: {required}");
+    }
+
+    assert!(!markup.contains("tabindex=\"1\""));
+    assert!(!markup.contains("onclick="));
+}
+
+#[test]
+fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
+    for required in [
+        "min-inline-size: 20rem",
+        "font: -apple-system-body",
+        "font: -apple-system-title1",
+        "font: -apple-system-caption1",
+        "min-block-size: 100dvh",
+        "env(safe-area-inset-top)",
+        "env(safe-area-inset-bottom)",
+        "min-block-size: 2.75rem",
+        "[data-target=\"android\"] button",
+        "min-block-size: 3rem",
+        "@media (min-width: 52rem)",
+        "@media (prefers-color-scheme: dark)",
+        "@media (prefers-contrast: more)",
+        "@media (prefers-reduced-motion: reduce)",
+    ] {
+        assert!(MOBILE_CSS.contains(required), "missing mobile style contract: {required}");
+    }
+
+    assert!(!MOBILE_CSS.contains("outline: none"));
 }
 
 #[test]
@@ -155,7 +215,9 @@ fn tcp_only_state_renders_messaging_as_enabled_without_rnode() {
     assert!(markup.contains("id=\"mobile.bearer.bluetooth-rnode\""));
     assert!(markup.contains("data-state=\"unavailable\""));
     assert!(markup.contains("id=\"mobile.send\""));
-    assert!(markup.contains("data-enabled=\"true\""));
+    let send = opening_tag_with_id(&markup, "mobile.send");
+    assert!(send.contains("data-enabled=\"false\""));
+    assert!(send.contains("disabled"));
 }
 
 #[test]
@@ -175,12 +237,13 @@ fn network_renders_independent_denied_interrupted_and_unverified_bearers() {
         bearer.reason = Some(reason.into());
 
         let markup = render(state_fixture);
-        assert!(markup.contains("id=\"mobile.bearer.tcp\" data-state=\"connected\""));
-        assert!(markup.contains(&format!(
-            "id=\"mobile.bearer.{kind}\" data-state=\"{state}\" data-reason=\"{reason}\""
-        )));
+        let tcp = opening_tag_with_id(&markup, "mobile.bearer.tcp");
+        assert!(tcp.contains("data-state=\"connected\""));
+        let bearer = opening_tag_with_id(&markup, &format!("mobile.bearer.{kind}"));
+        assert!(bearer.contains(&format!("data-state=\"{state}\"")));
+        assert!(bearer.contains(&format!("data-reason=\"{reason}\"")));
         assert!(markup.contains("id=\"mobile.send\""));
-        assert!(markup.contains("data-enabled=\"true\""));
+        assert!(opening_tag_with_id(&markup, "mobile.send").contains("disabled"));
     }
 }
 
@@ -192,6 +255,7 @@ fn network_projection_exposes_the_backend_endpoint_as_an_editable_control() {
     assert!(markup.contains("id=\"mobile.tcp-endpoint\""));
     assert!(markup.contains("value=\"rns.styrene.io:4242\""));
     assert!(markup.contains("id=\"mobile.tcp-endpoint-apply\""));
+    assert!(opening_tag_with_id(&markup, "mobile.tcp-endpoint-apply").contains("disabled"));
 }
 
 #[test]
@@ -242,7 +306,9 @@ fn messaging_components_distinguish_queue_upload_delivery_and_empty_live_state()
 }
 
 fn render_propagation(propagation: PropagationUpdate) -> String {
-    dioxus_ssr::render_element(rsx! { PropagationPanel { propagation } })
+    dioxus_ssr::render_element(rsx! {
+        PropagationPanel { propagation, actions_enabled: true }
+    })
 }
 
 #[test]
@@ -351,4 +417,5 @@ fn composer_projects_backend_draft_revision_and_retryability() {
     assert!(markup.contains("newer draft"));
     assert!(markup.contains("id=\"mobile.delivery-method\""));
     assert!(markup.contains("id=\"mobile.retry.message-direct-1\""));
+    assert!(opening_tag_with_id(&markup, "mobile.retry.message-direct-1").contains("disabled"));
 }
