@@ -21,7 +21,9 @@ use styrened::mobile::{
     MobileUsbFallbackDisposition, persist_mobile_tcp_endpoint,
 };
 #[cfg(target_os = "android")]
-use styrened::mobile::{MobileRNodeAttempt, MobileRNodeBearer, RNodeBearerInfo, RNodeBearerKind};
+use styrened::mobile::{
+    MobileRNodeAttempt, MobileRNodeBearer, MobileRNodeWriteBatch, RNodeBearerInfo, RNodeBearerKind,
+};
 
 const DEFAULT_ENDPOINT: &str = "rns.styrene.io:4242";
 const ACTION_CAPACITY: usize = 64;
@@ -535,10 +537,8 @@ async fn run_android_usb(
                     link.write(response).await.map_err(|error| error.code)?;
                 }
             }
-            if let Some(writes) = node.poll_rnode_bytes(attempt).await? {
-                for write in writes {
-                    link.write(write).await.map_err(|error| error.code)?;
-                }
+            if let Some(batch) = node.poll_rnode_bytes(attempt).await? {
+                write_android_usb_handoff(&node, attempt, &link, batch).await?;
             }
             let connected = node
                 .session_snapshot()
@@ -577,10 +577,8 @@ async fn probe_android_usb(
     if !connected {
         return Err("Android USB RNode is not connected".into());
     }
-    while let Some(writes) = node.poll_rnode_bytes(attempt).await? {
-        for write in writes {
-            link.write(write).await.map_err(|error| error.code)?;
-        }
+    while let Some(batch) = node.poll_rnode_bytes(attempt).await? {
+        write_android_usb_handoff(node, attempt, link, batch).await?;
     }
     let outcome = node.announce_outcome().await.map_err(|error| error.to_string())?;
     if !outcome.local_dispatch_accepted {
@@ -589,11 +587,8 @@ async fn probe_android_usb(
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
-        if let Some(writes) = node.poll_rnode_bytes(attempt).await? {
-            let frame_bytes = writes.iter().map(Vec::len).sum();
-            for write in writes {
-                link.write(write).await.map_err(|error| error.code)?;
-            }
+        if let Some(batch) = node.poll_rnode_bytes(attempt).await? {
+            let frame_bytes = write_android_usb_handoff(node, attempt, link, batch).await?;
             return Ok(AndroidUsbProbeOutcome { frame_bytes });
         }
         if tokio::time::Instant::now() >= deadline {
@@ -601,6 +596,26 @@ async fn probe_android_usb(
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+}
+
+#[cfg(target_os = "android")]
+async fn write_android_usb_handoff(
+    node: &MobileNode,
+    attempt: MobileRNodeAttempt,
+    link: &crate::android_usb::AndroidUsbLink,
+    batch: MobileRNodeWriteBatch,
+) -> Result<usize, String> {
+    let frame_bytes = batch.writes.iter().map(Vec::len).sum();
+    for write in batch.writes {
+        if let Err(error) = link.write(write).await {
+            let _ = node.fail_rnode_write(attempt, batch.handoff).await;
+            return Err(error.code);
+        }
+    }
+    if !node.complete_rnode_write(attempt, batch.handoff).await? {
+        return Err("RNode write handoff became stale before completion".into());
+    }
+    Ok(frame_bytes)
 }
 
 async fn synchronize_backend_generation(
