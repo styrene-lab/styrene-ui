@@ -138,6 +138,7 @@ fn bluetooth_controls_require_explicit_selection_and_keep_forget_reachable() {
                 }],
                 approved: Some(BleApprovedPeripheral { id: approved_id }),
                 failure: Some(BleControlFailure::ConnectionInterrupted),
+                diagnostic_code: Some("ios_ble_disconnected".into()),
             },
         }
     });
@@ -168,6 +169,7 @@ fn bluetooth_controls_render_typed_denial_and_nonretryable_failure() {
                     id: BlePeripheralId::new("incompatible-rnode").unwrap(),
                 }),
                 failure: Some(BleControlFailure::IncompatiblePeripheral),
+                diagnostic_code: Some("nus_service_missing".into()),
             },
         }
     });
@@ -178,6 +180,29 @@ fn bluetooth_controls_render_typed_denial_and_nonretryable_failure() {
     assert!(opening_tag_with_id(&markup, "mobile.bluetooth-scan").contains("disabled"));
     assert!(opening_tag_with_id(&markup, "mobile.bluetooth-retry").contains("disabled"));
     assert!(!opening_tag_with_id(&markup, "mobile.bluetooth-forget").contains("disabled"));
+}
+
+#[test]
+fn bluetooth_scanning_shows_bounded_indeterminate_progress() {
+    let markup = dioxus_ssr::render_element(rsx! {
+        BleShell {
+            target: TargetClass::Ios,
+            fixture: fixture("live-empty-connected"),
+            state: BleControlState {
+                permission: AuthorizationState::Granted,
+                adapter: BleAdapterState::Ready,
+                phase: BleControlPhase::Scanning,
+                candidates: Vec::new(),
+                approved: None,
+                failure: None,
+                diagnostic_code: None,
+            },
+        }
+    });
+
+    assert!(markup.contains("Scanning for RNodes"));
+    assert!(markup.contains("role=\"progressbar\""));
+    assert!(markup.contains("This takes up to 10 seconds"));
 }
 
 fn opening_tag_with_id<'a>(markup: &'a str, id: &str) -> &'a str {
@@ -530,6 +555,8 @@ fn tcp_only_state_renders_messaging_as_enabled_without_rnode() {
     assert!(markup.contains("id=\"mobile.bearer.tcp\""));
     assert!(markup.contains("data-state=\"connected\""));
     assert!(markup.contains("id=\"mobile.bearer.bluetooth-rnode\""));
+    assert!(markup.contains("id=\"mobile.bearer.bluetooth-rnode.state\""));
+    assert!(markup.contains("aria-label=\"bluetooth-rnode bearer unavailable\""));
     assert!(markup.contains("data-state=\"unavailable\""));
     assert!(markup.contains("id=\"mobile.send\""));
     let send = opening_tag_with_id(&markup, "mobile.send");

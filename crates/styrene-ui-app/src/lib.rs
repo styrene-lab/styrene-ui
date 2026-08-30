@@ -197,6 +197,8 @@ pub fn BleRNodeControls(
     };
     let status = if !actions_enabled {
         "Fixture data. Bluetooth actions are disabled."
+    } else if state.phase == BleControlPhase::Scanning {
+        "Scanning for compatible RNodes. This takes up to 10 seconds."
     } else if let Some(reason) = scan_reason {
         ble_disabled_reason(reason)
     } else if scan.is_none() {
@@ -233,6 +235,15 @@ pub fn BleRNodeControls(
                     }
                 },
                 {scan_label}
+            }
+            if state.phase == BleControlPhase::Scanning {
+                div {
+                    class: "scan-progress",
+                    role: "progressbar",
+                    "aria-label": "Bluetooth RNode scan progress",
+                    "aria-valuetext": "Scanning for compatible RNodes",
+                    span {}
+                }
             }
             p {
                 id: "mobile.bluetooth-status",
@@ -321,6 +332,9 @@ pub fn BleRNodeControls(
                     "aria-live": if failure == &BleControlFailure::PlatformUnavailable { "polite" } else { "assertive" },
                     "data-retryable": failure.is_retryable().to_string(),
                     {ble_failure(failure)}
+                }
+                if let Some(code) = &state.diagnostic_code {
+                    p { class: "technical-value", "Diagnostic: {code}" }
                 }
                 button {
                     id: "mobile.bluetooth-retry",
@@ -804,7 +818,16 @@ pub fn MobileShell(
                                 p { class: "field-hint", {reason.clone()} }
                             }
                         }
-                        span { class: "state-chip", {bearer.state.to_string()} }
+                        span {
+                            id: format!("mobile.bearer.{}.state", bearer.kind.as_str()),
+                            class: "state-chip",
+                            "aria-label": format!(
+                                "{} bearer {}",
+                                bearer.kind.as_str(),
+                                bearer.state
+                            ),
+                            {bearer.state.to_string()}
+                        }
                     }
                 }
                 PropagationPanel {

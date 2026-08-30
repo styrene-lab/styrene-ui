@@ -83,6 +83,7 @@ impl IosBleHost {
             candidates: Vec::new(),
             approved,
             failure: None,
+            diagnostic_code: None,
         };
         let mut generation = 0_u64;
         let mut adapter = None::<IosBleAdapter>;
@@ -90,13 +91,15 @@ impl IosBleHost {
         let mut pending_scan = false;
         let mut pending_connect = state.approved.as_ref().map(|approved| approved.id.clone());
         let mut deadline = None;
-        if pending_connect.is_some() && state.permission == AuthorizationState::Granted {
+        if state.permission == AuthorizationState::Granted {
             install_adapter(&mut adapter, &mut events);
-            state.phase = BleControlPhase::Reconnecting;
-            deadline = Some((
-                tokio::time::Instant::now() + CONNECTION_DEADLINE,
-                PendingOperation::Connect,
-            ));
+            if pending_connect.is_some() {
+                state.phase = BleControlPhase::Reconnecting;
+                deadline = Some((
+                    tokio::time::Instant::now() + CONNECTION_DEADLINE,
+                    PendingOperation::Connect,
+                ));
+            }
         }
         self.publish(state.clone());
 
@@ -127,6 +130,7 @@ impl IosBleHost {
                                 |permission| permission.state,
                             );
                             state.failure = None;
+                            state.diagnostic_code = None;
                             state.candidates.clear();
                             if state.permission == AuthorizationState::Granted {
                                 if let Some(mut current) = adapter.take() {
@@ -154,12 +158,13 @@ impl IosBleHost {
                                 node.platform_service().set_bluetooth_approved(true).await;
                                 state.phase = BleControlPhase::Connecting;
                                 state.failure = None;
+                                state.diagnostic_code = None;
                                 deadline = Some((tokio::time::Instant::now() + CONNECTION_DEADLINE, PendingOperation::Connect));
                                 if let Err(error) = adapter.connect(current, &id) {
                                     deadline = None;
                                     state.phase = BleControlPhase::Idle;
                                     state.failure = Some(BleControlFailure::ConnectionFailed);
-                                    let _ = error;
+                                    state.diagnostic_code = Some(error.code);
                                 }
                                 self.publish(state.clone());
                             }
@@ -176,6 +181,7 @@ impl IosBleHost {
                             pending_scan = false;
                             state.phase = BleControlPhase::Reconnecting;
                             state.failure = None;
+                            state.diagnostic_code = None;
                             deadline = Some((tokio::time::Instant::now() + CONNECTION_DEADLINE, PendingOperation::Connect));
                             self.publish(state.clone());
                         }
@@ -192,6 +198,7 @@ impl IosBleHost {
                             state.approved = None;
                             state.phase = BleControlPhase::Idle;
                             state.failure = None;
+                            state.diagnostic_code = None;
                             self.publish(state.clone());
                         }
                     }
@@ -222,6 +229,7 @@ impl IosBleHost {
                                         deadline = None;
                                         state.phase = BleControlPhase::Idle;
                                         state.failure = Some(BleControlFailure::ConnectionFailed);
+                                        state.diagnostic_code = Some("ios_ble_connect_start_failed".into());
                                     }
                                 }
                             }
@@ -264,13 +272,17 @@ impl IosBleHost {
                             deadline = None;
                             state.phase = BleControlPhase::Idle;
                             state.failure = Some(control_failure(failure));
+                            state.diagnostic_code = Some(format!("ios_ble_{failure:?}"));
                             self.publish(state.clone());
                         }
-                        IosBleEvent::Disconnected { .. } => {
+                        IosBleEvent::Disconnected { diagnostic_code, .. } => {
                             deadline = None;
                             if state.approved.is_some() {
                                 state.phase = BleControlPhase::Idle;
                                 state.failure = Some(BleControlFailure::ConnectionInterrupted);
+                                if state.diagnostic_code.is_none() {
+                                    state.diagnostic_code = Some(diagnostic_code);
+                                }
                             }
                             self.publish(state.clone());
                         }
@@ -293,6 +305,7 @@ impl IosBleHost {
                             }
                             state.phase = BleControlPhase::Idle;
                             state.failure = Some(BleControlFailure::ConnectionFailed);
+                            state.diagnostic_code = Some("ios_ble_connection_deadline".into());
                         }
                     }
                     self.publish(state.clone());
@@ -322,8 +335,9 @@ async fn run_connected(
         tokio::select! {
             result = &mut pump => {
                 state.phase = BleControlPhase::Idle;
-                if !forgotten && result.is_err() {
+                if !forgotten && let Err(error) = result {
                     state.failure = Some(BleControlFailure::ConnectionInterrupted);
+                    state.diagnostic_code = Some(error);
                 }
                 return forgotten;
             }
@@ -333,6 +347,7 @@ async fn run_connected(
                         forgotten = true;
                         state.approved = None;
                         state.failure = None;
+                        state.diagnostic_code = None;
                         let _ = updates.force_send(state.clone());
                         let _ = cancel.try_send(());
                     }

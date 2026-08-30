@@ -998,7 +998,7 @@ fn mobile_config(endpoint: &str) -> Result<MobileConfig, String> {
         display_name: None,
         identity_backend,
         interfaces: vec![MobileInterfaceConfig::TcpClient { remote_address: endpoint.into() }],
-        enable_rnode_channel: cfg!(target_os = "android"),
+        enable_rnode_channel: cfg!(any(target_os = "android", target_os = "ios")),
     })
 }
 

@@ -183,6 +183,7 @@ pub fn App() -> Element {
             candidates: Vec::new(),
             approved: None,
             failure: Some(BleControlFailure::PlatformUnavailable),
+            diagnostic_code: Some("platform_unavailable".into()),
         };
         #[cfg(target_os = "ios")]
         let ble_controls = {
@@ -335,7 +336,7 @@ mod tests {
 
     use super::*;
 
-    const BACKEND_REVISION: &str = "12de63c44a09f2c483334a47afd1fc4bfd5d4cc0";
+    const BACKEND_REVISION: &str = "7dbe68e0e7a2e5e657e4c6c55b304a6a009ab992";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
     const FIXTURE_PROVENANCE: &str =

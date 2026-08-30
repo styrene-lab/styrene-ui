@@ -314,6 +314,7 @@ pub struct BleControlState {
     pub candidates: Vec<BleCandidate>,
     pub approved: Option<BleApprovedPeripheral>,
     pub failure: Option<BleControlFailure>,
+    pub diagnostic_code: Option<String>,
 }
 
 impl Default for BleControlState {
@@ -325,6 +326,7 @@ impl Default for BleControlState {
             candidates: Vec::new(),
             approved: None,
             failure: None,
+            diagnostic_code: None,
         }
     }
 }

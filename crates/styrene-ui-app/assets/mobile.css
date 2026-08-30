@@ -533,6 +533,34 @@ label {
   margin-block-start: 0.85rem;
 }
 
+.scan-progress {
+  position: relative;
+  overflow: hidden;
+  block-size: 0.35rem;
+  margin-block-start: 0.75rem;
+  border-radius: 999rem;
+  background: var(--line);
+}
+
+.scan-progress > span {
+  position: absolute;
+  inset-block: 0;
+  inline-size: 42%;
+  border-radius: inherit;
+  background: var(--accent);
+  animation: bluetooth-scan 1.15s ease-in-out infinite alternate;
+}
+
+@keyframes bluetooth-scan {
+  from {
+    translate: -10% 0;
+  }
+
+  to {
+    translate: 150% 0;
+  }
+}
+
 .approved-peripheral {
   margin-block-start: 1rem;
   padding-block-start: 1rem;
