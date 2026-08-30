@@ -295,7 +295,7 @@ pub fn BleRNodeControls(
     rsx! {
         article {
             id: "mobile.bluetooth-rnode",
-            class: "settings-card bluetooth-card",
+            class: "surface-card settings-card bluetooth-card",
             "aria-labelledby": "mobile.bluetooth-rnode-heading",
             "data-phase": ble_phase(state.phase),
             "data-permission": authorization_state(state.permission),
@@ -872,7 +872,7 @@ pub fn MobileShell(
                 {
                     article {
                         id: "mobile.android-usb",
-                        class: "settings-card",
+                        class: "surface-card settings-card",
                         "aria-labelledby": "mobile.android-usb-heading",
                         div {
                             h3 { id: "mobile.android-usb-heading", "Android USB fallback" }
@@ -896,7 +896,7 @@ pub fn MobileShell(
                         }
                         for attachment in android_usb_attachments.clone() {
                             article {
-                                class: "bearer-card",
+                                class: "surface-card bearer-card",
                                 "data-device-id": attachment.device_id.to_string(),
                                 "data-vendor-id": attachment.vendor_id.to_string(),
                                 "data-product-id": attachment.product_id.to_string(),
@@ -963,7 +963,7 @@ pub fn MobileShell(
                 for bearer in &fixture.bearers {
                     article {
                         id: format!("mobile.bearer.{}", bearer.kind.as_str()),
-                        class: "bearer-card",
+                        class: "surface-card bearer-card",
                         "data-state": bearer.state.to_string(),
                         "data-reason": bearer.reason.clone().unwrap_or_default(),
                         div {
@@ -1005,7 +1005,7 @@ pub fn MobileShell(
                     }
                 }
                 article {
-                    class: "settings-card identity-card",
+                    class: "surface-card settings-card identity-card",
                     h3 { "Node identity" }
                     p {
                         id: "mobile.identity",
@@ -1015,7 +1015,7 @@ pub fn MobileShell(
                     }
                 }
                 article {
-                    class: "settings-card",
+                    class: "surface-card settings-card",
                     h3 { "About this build" }
                     p { "Styrene mobile application" }
                     p { class: "technical-value", "Generation {fixture.generation}" }
@@ -1075,7 +1075,7 @@ fn EndpointEditor(
         && endpoint_value != configured_endpoint.trim();
     rsx! {
         div {
-            class: "settings-card",
+            class: "surface-card settings-card",
             label { r#for: "mobile.tcp-endpoint", "TCP endpoint" }
             input {
                 id: "mobile.tcp-endpoint",
@@ -1102,6 +1102,7 @@ fn EndpointEditor(
             }
             button {
                 id: "mobile.tcp-endpoint-apply",
+                class: "primary-action",
                 r#type: "button",
                 disabled: !can_apply,
                 onclick: move |_| {
@@ -1144,7 +1145,7 @@ pub fn PropagationPanel(
     rsx! {
         section {
             id: "mobile.propagation",
-            class: "product-section",
+            class: "surface-card product-section",
             "aria-labelledby": "mobile.propagation-heading",
             "data-ready": propagation.ready.to_string(),
             "data-sync-state": propagation.sync_state.as_str(),
@@ -1214,6 +1215,7 @@ pub fn PropagationPanel(
             }
             button {
                 id: "mobile.propagation-sync",
+                class: "primary-action",
                 disabled: !sync_enabled,
                 "aria-describedby": "mobile.propagation-status",
                 onclick: move |_| {
@@ -1539,6 +1541,7 @@ pub fn Composer(
                 }
                 button {
                     id: "mobile.send",
+                    class: "primary-action",
                     r#type: "submit",
                     "data-enabled": send_enabled.to_string(),
                     disabled: !send_enabled,
