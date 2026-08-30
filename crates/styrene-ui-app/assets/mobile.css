@@ -19,6 +19,8 @@
   --warning-soft: #fff0cb;
   --warning-line: #b98536;
   --danger: #8c2f25;
+  --danger-soft: #f7e1dc;
+  --danger-line: #b95e53;
   --focus: #006fa8;
   --navigation: #12201c;
   --navigation-ink: #b8c6c0;
@@ -155,9 +157,8 @@ label {
   min-block-size: 100vh;
   min-block-size: 100dvh;
   margin-inline: auto;
-  padding-block:
-    max(1rem, env(safe-area-inset-top))
-    max(6.5rem, env(safe-area-inset-bottom));
+  padding-block-start: max(1rem, env(safe-area-inset-top));
+  padding-block-end: calc(4.5rem + env(safe-area-inset-bottom));
   padding-inline:
     max(1rem, env(safe-area-inset-left))
     max(1rem, env(safe-area-inset-right));
@@ -216,6 +217,27 @@ label {
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.session-status[data-tone="caution"],
+.state-chip[data-tone="caution"] {
+  border-color: var(--warning-line);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.session-status[data-tone="negative"],
+.state-chip[data-tone="negative"] {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.session-status[data-tone="neutral"],
+.state-chip[data-tone="neutral"] {
+  border-color: var(--line-strong);
+  background: var(--surface-raised);
+  color: var(--ink-muted);
 }
 
 .fixture-banner,
@@ -624,18 +646,18 @@ label {
 
 .destination-bar {
   position: fixed;
-  inset-inline-start: 50%;
-  inset-block-end: max(0.65rem, env(safe-area-inset-bottom));
+  inset-inline: 0;
+  inset-block-end: 0;
   z-index: 10;
   display: grid;
-  inline-size: min(calc(100% - 1.25rem), 40rem);
+  inline-size: 100%;
   grid-template-columns: repeat(4, 1fr);
-  padding: 0.35rem;
-  border: 0.0625rem solid rgb(255 255 255 / 12%);
-  border-radius: var(--radius-panel);
+  padding: 0.35rem max(0.35rem, env(safe-area-inset-right)) max(0.35rem, env(safe-area-inset-bottom)) max(0.35rem, env(safe-area-inset-left));
+  border: 0;
+  border-block-start: 0.0625rem solid rgb(255 255 255 / 12%);
+  border-radius: 0;
   background: var(--navigation);
-  box-shadow: 0 0.35rem 0 rgb(0 0 0 / 28%);
-  translate: -50% 0;
+  box-shadow: 0 -0.125rem 0 rgb(0 0 0 / 18%);
 }
 
 .destination-item {
@@ -734,6 +756,8 @@ label {
     --warning-soft: #3a290d;
     --warning-line: #a57830;
     --danger: #ffb4a8;
+    --danger-soft: #401b17;
+    --danger-line: #b9675d;
     --focus: #68c7ff;
     --navigation: #030706;
     --navigation-ink: #aebdb6;

@@ -132,7 +132,7 @@ final class StyreneMobileUITests: XCTestCase {
 
         XCTAssertTrue(app.staticTexts["Approved RNode"].waitForExistence(timeout: 5))
         XCTAssertTrue(connectedStatus(in: app).waitForExistence(timeout: 30))
-        XCTAssertTrue(app.buttons["Forget"].isHittable)
+        XCTAssertTrue(app.buttons["Disconnect and forget RNode"].isHittable)
     }
 
     func testPhysicalBluetoothRNodeRetry() throws {
@@ -173,11 +173,11 @@ final class StyreneMobileUITests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.92)).tap()
         XCTAssertTrue(app.staticTexts["Approved RNode"].waitForExistence(timeout: 5))
 
-        let forget = app.buttons["Forget"]
+        let forget = app.buttons["Disconnect and forget RNode"]
         if !forget.isHittable {
             app.swipeUp()
         }
-        let visibleForget = app.buttons["Forget"]
+        let visibleForget = app.buttons["Disconnect and forget RNode"]
         XCTAssertTrue(visibleForget.isHittable)
         visibleForget.tap()
 
@@ -187,7 +187,7 @@ final class StyreneMobileUITests: XCTestCase {
 
     private func connectedStatus(in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label ==[c] 'bluetooth-rnode bearer connected'"))
+            .matching(NSPredicate(format: "label ==[c] 'Bluetooth RNode bearer connected'"))
             .firstMatch
     }
 

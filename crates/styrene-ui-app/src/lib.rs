@@ -12,7 +12,7 @@ use styrene_ui_platform::{
 use styrene_ui_state::{
     BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod, LocalAnnounceOutcome,
     Message, MobileAction, MobileActionKind, MobileFixture, MobileStore, Peer, PropagationEvidence,
-    PropagationUpdate, RuntimeBoundary, SyncState, TargetClass, TransportEvidence,
+    PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState, TargetClass, TransportEvidence,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -89,6 +89,52 @@ impl MobileDestination {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StatusTone {
+    Positive,
+    Caution,
+    Negative,
+    Neutral,
+}
+
+impl StatusTone {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Positive => "positive",
+            Self::Caution => "caution",
+            Self::Negative => "negative",
+            Self::Neutral => "neutral",
+        }
+    }
+
+    const fn for_session(phase: SessionPhase) -> Self {
+        match phase {
+            SessionPhase::Connected => Self::Positive,
+            SessionPhase::Starting | SessionPhase::Reconnecting => Self::Caution,
+            SessionPhase::Failed => Self::Negative,
+        }
+    }
+
+    const fn for_bearer(state: BearerState) -> Self {
+        match state {
+            BearerState::Connected => Self::Positive,
+            BearerState::Reconnecting | BearerState::Unverified => Self::Caution,
+            BearerState::Disconnected => Self::Negative,
+            BearerState::Unavailable => Self::Neutral,
+        }
+    }
+
+    const fn for_ble(phase: BleControlPhase) -> Self {
+        match phase {
+            BleControlPhase::Connected => Self::Positive,
+            BleControlPhase::Scanning
+            | BleControlPhase::Connecting
+            | BleControlPhase::Reconnecting => Self::Caution,
+            BleControlPhase::Idle => Self::Neutral,
+        }
+    }
+}
+
 fn short_hash(hash: &str) -> String {
     hash.chars().take(8).collect()
 }
@@ -103,6 +149,14 @@ fn peer_name(hash: &str, peers: &[Peer]) -> String {
         .find(|peer| peer.destination_hash == hash)
         .and_then(|peer| peer.display_name.clone())
         .unwrap_or_else(|| format!("Peer {}", short_hash(hash)))
+}
+
+const fn bearer_label(kind: BearerKind) -> &'static str {
+    match kind {
+        BearerKind::Tcp => "TCP",
+        BearerKind::BluetoothRnode => "Bluetooth RNode",
+        BearerKind::AndroidUsb => "Android USB",
+    }
 }
 
 const fn authorization_state(state: AuthorizationState) -> &'static str {
@@ -152,6 +206,9 @@ const fn ble_disabled_reason(reason: BleControlDisabledReason) -> &'static str {
         }
         BleControlDisabledReason::AdapterUnavailable(_) => "Bluetooth adapter is unavailable",
         BleControlDisabledReason::OperationInProgress => "Bluetooth operation is in progress",
+        BleControlDisabledReason::AlreadyConnected => {
+            "The approved Bluetooth RNode is already connected"
+        }
         BleControlDisabledReason::NoApprovedPeripheral => "No Bluetooth RNode is approved",
         BleControlDisabledReason::NoRetryableFailure => "There is no retryable Bluetooth failure",
     }
@@ -188,6 +245,7 @@ pub fn BleRNodeControls(
     let selection_disabled = !actions_enabled || select.is_none() || selection_reason.is_some();
     let retry_disabled = !actions_enabled || retry.is_none() || retry_reason.is_some();
     let forget_disabled = !actions_enabled || forget.is_none() || forget_reason.is_some();
+    let connected = state.phase == BleControlPhase::Connected;
     let scan_label = if state.permission == AuthorizationState::NotDetermined {
         "Allow Bluetooth and scan"
     } else if state.phase == BleControlPhase::Scanning {
@@ -195,10 +253,24 @@ pub fn BleRNodeControls(
     } else {
         "Scan for RNodes"
     };
+    let forget_label = if matches!(
+        state.phase,
+        BleControlPhase::Connecting | BleControlPhase::Connected | BleControlPhase::Reconnecting
+    ) {
+        "Disconnect and forget RNode"
+    } else {
+        "Forget RNode"
+    };
     let status = if !actions_enabled {
         "Fixture data. Bluetooth actions are disabled."
     } else if state.phase == BleControlPhase::Scanning {
         "Scanning for compatible RNodes. This takes up to 10 seconds."
+    } else if state.phase == BleControlPhase::Connecting {
+        "Connecting to the approved RNode."
+    } else if state.phase == BleControlPhase::Connected {
+        "The approved RNode is connected. Disconnect and forget it before choosing another."
+    } else if state.phase == BleControlPhase::Reconnecting {
+        "Reconnecting to the approved RNode."
     } else if let Some(reason) = scan_reason {
         ble_disabled_reason(reason)
     } else if scan.is_none() {
@@ -221,20 +293,28 @@ pub fn BleRNodeControls(
                     h3 { id: "mobile.bluetooth-rnode-heading", "Bluetooth RNode" }
                     p { class: "field-hint", "Scan only when your RNode is in its pairing window. Selection is required before connection." }
                 }
-                span { class: "state-chip", {ble_phase(state.phase)} }
+                span {
+                    id: "mobile.bluetooth-phase",
+                    class: "state-chip",
+                    "data-tone": StatusTone::for_ble(state.phase).as_str(),
+                    "aria-label": format!("Bluetooth RNode {}", ble_phase(state.phase)),
+                    {ble_phase(state.phase)}
+                }
             }
-            button {
-                id: "mobile.bluetooth-scan",
-                r#type: "button",
-                class: "secondary-action",
-                disabled: scan_disabled,
-                "aria-describedby": "mobile.bluetooth-status",
-                onclick: move |_| {
-                    if let Some(handler) = scan {
-                        handler.call(());
-                    }
-                },
-                {scan_label}
+            if !connected {
+                button {
+                    id: "mobile.bluetooth-scan",
+                    r#type: "button",
+                    class: "secondary-action",
+                    disabled: scan_disabled,
+                    "aria-describedby": "mobile.bluetooth-status",
+                    onclick: move |_| {
+                        if let Some(handler) = scan {
+                            handler.call(());
+                        }
+                    },
+                    {scan_label}
+                }
             }
             if state.phase == BleControlPhase::Scanning {
                 div {
@@ -271,13 +351,19 @@ pub fn BleRNodeControls(
                                 handler.call(());
                             }
                         },
-                        "Forget"
+                        {forget_label}
                     }
                 }
             }
-            if state.candidates.is_empty() {
-                p { class: "field-hint", "No compatible RNodes discovered." }
-            } else {
+            if !connected
+                && state.candidates.is_empty()
+                && state.approved.is_none()
+                && state.permission == AuthorizationState::Granted
+                && state.adapter == BleAdapterState::Ready
+                && state.phase == BleControlPhase::Idle
+            {
+                p { class: "field-hint", "No scan results." }
+            } else if !connected && !state.candidates.is_empty() {
                 ul { class: "peripheral-list", "aria-label": "Discovered Bluetooth RNodes",
                     for candidate in state.candidates.clone() {
                         {
@@ -286,7 +372,15 @@ pub fn BleRNodeControls(
                                 .display_name
                                 .clone()
                                 .unwrap_or_else(|| "Unnamed RNode".into());
-                            let action_name = format!("Approve and connect {display_name}");
+                            let already_approved = state
+                                .approved
+                                .as_ref()
+                                .is_some_and(|approved| approved.id == candidate.id);
+                            let action_name = if already_approved {
+                                format!("{display_name} is already approved")
+                            } else {
+                                format!("Approve and connect {display_name}")
+                            };
                             rsx! {
                                 li {
                                     class: "peripheral-row",
@@ -299,9 +393,14 @@ pub fn BleRNodeControls(
                                         }
                                     }
                                     button {
+                                        id: format!(
+                                            "mobile.bluetooth-candidate.{}",
+                                            candidate.id.as_str()
+                                        ),
                                         r#type: "button",
                                         class: "secondary-action",
-                                        disabled: selection_disabled,
+                                        "data-disposition": if already_approved { "approved" } else { "available" },
+                                        disabled: selection_disabled || already_approved,
                                         "aria-label": action_name,
                                         "aria-describedby": if selection_reason.is_some() { "mobile.bluetooth-selection-disabled" } else { "mobile.bluetooth-status" },
                                         onclick: move |_| {
@@ -309,7 +408,7 @@ pub fn BleRNodeControls(
                                                 handler.call(candidate_id.clone());
                                             }
                                         },
-                                        "Use RNode"
+                                        if already_approved { "Approved" } else { "Use RNode" }
                                     }
                                 }
                             }
@@ -527,7 +626,9 @@ pub fn MobileShell(
                     "aria-live": "polite",
                     "aria-atomic": "true",
                     "data-phase": fixture.session.phase.as_str(),
-                    {fixture.session.phase.as_str()}
+                    "data-tone": StatusTone::for_session(fixture.session.phase).as_str(),
+                    "aria-label": format!("Session {}", fixture.session.phase.as_str()),
+                    {format!("Session {}", fixture.session.phase.as_str())}
                 }
             }
             if let Some(failure) = &fixture.session.failure {
@@ -813,17 +914,18 @@ pub fn MobileShell(
                         "data-state": bearer.state.to_string(),
                         "data-reason": bearer.reason.clone().unwrap_or_default(),
                         div {
-                            h3 { {bearer.kind.as_str()} }
+                            h3 { {bearer_label(bearer.kind)} }
                             if let Some(reason) = &bearer.reason {
-                                p { class: "field-hint", {reason.clone()} }
+                                p { class: "technical-value", "Reason: {reason}" }
                             }
                         }
                         span {
                             id: format!("mobile.bearer.{}.state", bearer.kind.as_str()),
                             class: "state-chip",
+                            "data-tone": StatusTone::for_bearer(bearer.state).as_str(),
                             "aria-label": format!(
                                 "{} bearer {}",
-                                bearer.kind.as_str(),
+                                bearer_label(bearer.kind),
                                 bearer.state
                             ),
                             {bearer.state.to_string()}

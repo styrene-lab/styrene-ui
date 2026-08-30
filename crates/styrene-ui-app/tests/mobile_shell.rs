@@ -177,6 +177,7 @@ fn bluetooth_controls_render_typed_denial_and_nonretryable_failure() {
     assert!(markup.contains("Bluetooth permission is denied"));
     assert!(markup.contains("required Nordic UART service"));
     assert!(markup.contains("data-retryable=\"false\""));
+    assert!(!markup.contains("No scan results"));
     assert!(opening_tag_with_id(&markup, "mobile.bluetooth-scan").contains("disabled"));
     assert!(opening_tag_with_id(&markup, "mobile.bluetooth-retry").contains("disabled"));
     assert!(!opening_tag_with_id(&markup, "mobile.bluetooth-forget").contains("disabled"));
@@ -203,6 +204,69 @@ fn bluetooth_scanning_shows_bounded_indeterminate_progress() {
     assert!(markup.contains("Scanning for RNodes"));
     assert!(markup.contains("role=\"progressbar\""));
     assert!(markup.contains("This takes up to 10 seconds"));
+}
+
+#[test]
+fn bluetooth_connected_state_hides_stale_scan_and_selection_actions() {
+    let approved_id = BlePeripheralId::new("connected-rnode").unwrap();
+    let markup = dioxus_ssr::render_element(rsx! {
+        BleShell {
+            target: TargetClass::Ios,
+            fixture: fixture("live-empty-connected"),
+            state: BleControlState {
+                permission: AuthorizationState::Granted,
+                adapter: BleAdapterState::Ready,
+                phase: BleControlPhase::Connected,
+                candidates: vec![BleCandidate {
+                    id: approved_id.clone(),
+                    display_name: Some("Field RNode".into()),
+                    rssi_dbm: Some(-51),
+                }],
+                approved: Some(BleApprovedPeripheral { id: approved_id }),
+                failure: None,
+                diagnostic_code: None,
+            },
+        }
+    });
+
+    assert!(markup.contains("The approved RNode is connected"));
+    assert!(markup.contains("Disconnect and forget RNode"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.bluetooth-phase").contains("data-tone=\"positive\"")
+    );
+    assert!(!markup.contains("id=\"mobile.bluetooth-scan\""));
+    assert!(!markup.contains("Use RNode"));
+    assert!(!markup.contains("data-peripheral-id"));
+}
+
+#[test]
+fn bluetooth_marks_the_approved_scan_result_as_non_actionable() {
+    let approved_id = BlePeripheralId::new("approved-rnode").unwrap();
+    let markup = dioxus_ssr::render_element(rsx! {
+        BleShell {
+            target: TargetClass::Ios,
+            fixture: fixture("live-empty-connected"),
+            state: BleControlState {
+                permission: AuthorizationState::Granted,
+                adapter: BleAdapterState::Ready,
+                phase: BleControlPhase::Idle,
+                candidates: vec![BleCandidate {
+                    id: approved_id.clone(),
+                    display_name: Some("Field RNode".into()),
+                    rssi_dbm: Some(-61),
+                }],
+                approved: Some(BleApprovedPeripheral { id: approved_id }),
+                failure: None,
+                diagnostic_code: None,
+            },
+        }
+    });
+
+    let candidate = opening_tag_with_id(&markup, "mobile.bluetooth-candidate.approved-rnode");
+    assert!(candidate.contains("data-disposition=\"approved\""));
+    assert!(candidate.contains("disabled"));
+    assert!(markup.contains("Field RNode is already approved"));
+    assert!(markup.contains(">Approved</button>"));
 }
 
 fn opening_tag_with_id<'a>(markup: &'a str, id: &str) -> &'a str {
@@ -475,6 +539,10 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
     }
 
     assert!(!MOBILE_CSS.contains("outline: none"));
+    assert!(MOBILE_CSS.contains(
+        ".destination-bar {\n  position: fixed;\n  inset-inline: 0;\n  inset-block-end: 0;"
+    ));
+    assert!(MOBILE_CSS.contains("padding-block-end: calc(4.5rem + env(safe-area-inset-bottom))"));
 }
 
 #[test]
@@ -556,7 +624,7 @@ fn tcp_only_state_renders_messaging_as_enabled_without_rnode() {
     assert!(markup.contains("data-state=\"connected\""));
     assert!(markup.contains("id=\"mobile.bearer.bluetooth-rnode\""));
     assert!(markup.contains("id=\"mobile.bearer.bluetooth-rnode.state\""));
-    assert!(markup.contains("aria-label=\"bluetooth-rnode bearer unavailable\""));
+    assert!(markup.contains("aria-label=\"Bluetooth RNode bearer unavailable\""));
     assert!(markup.contains("data-state=\"unavailable\""));
     assert!(markup.contains("id=\"mobile.send\""));
     let send = opening_tag_with_id(&markup, "mobile.send");
@@ -566,10 +634,10 @@ fn tcp_only_state_renders_messaging_as_enabled_without_rnode() {
 
 #[test]
 fn network_renders_independent_denied_interrupted_and_unverified_bearers() {
-    for (kind, state, reason) in [
-        ("bluetooth-rnode", "unavailable", "permission_denied"),
-        ("bluetooth-rnode", "disconnected", "connection_interrupted"),
-        ("android-usb", "unverified", "physical_evidence_absent"),
+    for (kind, state, reason, tone) in [
+        ("bluetooth-rnode", "unavailable", "permission_denied", "neutral"),
+        ("bluetooth-rnode", "disconnected", "connection_interrupted", "negative"),
+        ("android-usb", "unverified", "physical_evidence_absent", "caution"),
     ] {
         let mut state_fixture = fixture("direct-message-queued");
         let bearer = state_fixture
@@ -586,6 +654,8 @@ fn network_renders_independent_denied_interrupted_and_unverified_bearers() {
         let bearer = opening_tag_with_id(&markup, &format!("mobile.bearer.{kind}"));
         assert!(bearer.contains(&format!("data-state=\"{state}\"")));
         assert!(bearer.contains(&format!("data-reason=\"{reason}\"")));
+        let bearer_status = opening_tag_with_id(&markup, &format!("mobile.bearer.{kind}.state"));
+        assert!(bearer_status.contains(&format!("data-tone=\"{tone}\"")));
         assert!(markup.contains("id=\"mobile.send\""));
         assert!(opening_tag_with_id(&markup, "mobile.send").contains("disabled"));
     }
