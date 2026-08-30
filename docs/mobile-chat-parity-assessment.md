@@ -4,7 +4,7 @@ Assessment date: 2026-08-30
 
 UI assessment base revision: `6c6ace7652644c6bf6dc27922029a4cf311eb8bd`
 
-Backend integration revision: `4997bcb7b62fab42ce9ebd21558d0e1a902fc531`
+Backend integration revision: `899da81302c5f4e92f60a2fdaf396c26e813ba76`
 
 ## Scope
 
@@ -37,7 +37,7 @@ The current evidence inventory is:
 | Mobile minimum v1 | 8 fixtures | Shared reducer and rendered-state contract |
 
 The UI copy of the application corpus is byte-identical to backend revision
-`4997bcb7b62fab42ce9ebd21558d0e1a902fc531`. Copying the corpus does not add
+`899da81302c5f4e92f60a2fdaf396c26e813ba76`. Copying the corpus does not add
 application execution evidence or complete a parity row.
 
 ## Reference Applications
@@ -58,10 +58,10 @@ displayed delivery states also cannot establish authenticated receipt semantics.
 ## Backend Readiness
 
 The backend P0 contract is 34 of 35 tasks complete. The remaining task requires
-physical iOS and Android custody handoffs. The broader mobile minimum remains 47
+physical iOS and Android custody handoffs. The broader mobile minimum remains 48
 of 73 tasks complete and retains separate packaged, RF, and application gates.
 
-Backend revision `4997bcb7b62fab42ce9ebd21558d0e1a902fc531` provides these UI-ready contracts:
+Backend revision `899da81302c5f4e92f60a2fdaf396c26e813ba76` provides these UI-ready contracts:
 
 - Fail-closed Keychain and Android Keystore selection with secret-free custody status.
 - A distinct offline-ready runtime state and generation-scoped session truth.
@@ -84,7 +84,7 @@ formal application-parity outcomes.
 | Journey | Current assessment | Main gap |
 |---|---|---|
 | Shared iOS and Android shell | Strong shared-source evidence | Android packaged replay is absent |
-| Identity display and custody | Backend ready, UI incomplete | Custody status is not projected; physical handoffs remain open |
+| Identity display and custody | Shared projection implemented | Physical handoffs remain open |
 | TCP setup and reconnect | Strong partial | Packaged endpoint-failure and reconnect journeys are absent |
 | Canonical peer discovery | Backend ready, UI incomplete | The live UI does not start an empty conversation from discovery |
 | Conversations and drafts | Strong partial | Packaged failure, restart, and upgrade journeys are absent |
@@ -95,7 +95,7 @@ formal application-parity outcomes.
 | Standard propagation client | Backend executable | The composer is not gated by current propagation readiness |
 | Restart restoration | Backend executable | Physical process-death and upgrade evidence is absent |
 | Degraded state | Backend ready, UI incomplete | Several live phases still collapse into `Reconnecting` |
-| Settings and diagnostics | Backend ready, UI incomplete | Custody, capabilities, and diagnostic export are not surfaced |
+| Settings and diagnostics | Strong partial | Capabilities and diagnostic export are not surfaced |
 
 ## UI Gaps
 
@@ -105,12 +105,11 @@ The following product gaps block packaged acceptance:
    route, bearer, and backend failure evidence.
 2. The live session projection collapses distinct backend phases into
    `Reconnecting`.
-3. The UI does not expose backend custody status.
-4. A discovered canonical peer cannot start a durable empty conversation.
-5. Propagated composition is available without a selected ready propagation node.
-6. The action channel can reject work without a surfaced typed result.
-7. No tracked Android packaged automation harness exists.
-8. No packaged live send, reply, unread, retry, reconnect, propagation, process
+3. A discovered canonical peer cannot start a durable empty conversation.
+4. Propagated composition is available without a selected ready propagation node.
+5. The action channel can reject work without a surfaced typed result.
+6. No tracked Android packaged automation harness exists.
+7. No packaged live send, reply, unread, retry, reconnect, propagation, process
    death, or upgrade journey exists on both platforms.
 
 These are UI and packaged-evidence gaps. They must not be restated as missing
@@ -160,7 +159,7 @@ The current evidence does not support these claims:
 
 ## Follow-Up Order
 
-1. Project secret-free custody status and execute physical custody handoffs.
+1. Execute physical custody handoffs against the secret-free custody projection.
 2. Preserve complete live lifecycle and delivery evidence in shared UI state.
 3. Add discovery-to-conversation and propagation-readiness actions.
 4. Surface typed action-channel rejection.

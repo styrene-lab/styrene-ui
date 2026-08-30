@@ -2,7 +2,9 @@ use std::collections::HashSet;
 
 use styrene_ui_state::{
     ApplyResult, Bearer, BearerEvent, BearerKind, BearerState, Conversation, DeliveryEvidence,
-    DeliveryMethod, DraftClearDisposition, EndpointUpdate, LocalAnnounceOutcome, MessageEvent,
+    DeliveryMethod, DraftClearDisposition, EndpointUpdate, IdentityCustody,
+    IdentityCustodyAuthentication, IdentityCustodyAvailability, IdentityCustodyBackend,
+    IdentityCustodyDowngrade, IdentityCustodyProtection, LocalAnnounceOutcome, MessageEvent,
     MessageSnapshot, MobileAction, MobileActionKind, MobileFixture, MobileMinimumCorpus,
     MobileStore, PeerEvent, PeerSnapshot, Profile, PropagationEvidence, PropagationProgress,
     PropagationUpdate, SendOutcome, SessionPhase, SyncState, TargetClass, TypedFailure,
@@ -33,6 +35,35 @@ fn shared_mobile_minimum_fixture_deserializes_strictly() {
         corpus.fixtures.iter().map(|fixture| fixture.id.as_str()).collect::<HashSet<_>>().len(),
         corpus.fixtures.len()
     );
+    assert!(corpus.fixtures.iter().all(|fixture| fixture.session.custody.is_none()));
+    let serialized = serde_json::to_value(&corpus).expect("mobile minimum fixture must serialize");
+    assert!(
+        serialized["fixtures"]
+            .as_array()
+            .expect("fixtures must be an array")
+            .iter()
+            .all(|fixture| fixture["session"].get("custody").is_none())
+    );
+}
+
+#[test]
+fn custody_projection_round_trips_in_renderer_neutral_state() {
+    let mut fixture = fixture("live-empty-connected");
+    fixture.session.custody = Some(IdentityCustody {
+        requested_backend: IdentityCustodyBackend::Keychain,
+        active_backend: Some(IdentityCustodyBackend::Keychain),
+        protection: Some(IdentityCustodyProtection::PlatformProtected),
+        authentication: IdentityCustodyAuthentication::DeviceAuthentication,
+        availability: IdentityCustodyAvailability::Available,
+        downgrade: IdentityCustodyDowngrade::None,
+        failure: None,
+    });
+
+    let bytes = serde_json::to_vec(&fixture).expect("custody fixture must serialize");
+    let restored: MobileFixture =
+        serde_json::from_slice(&bytes).expect("custody fixture must deserialize");
+
+    assert_eq!(restored.session.custody, fixture.session.custody);
 }
 
 #[test]
