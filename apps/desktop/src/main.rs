@@ -357,7 +357,11 @@ fn App() -> Element {
                 span { class: "identity", "{id_display}" }
                 span {
                     class: if view.runtime.connected { "badge connected" } else { "badge disconnected" },
-                    "{profile_label}: {view.runtime.connection_mode}"
+                    if matches!(&*selected_profile.read(), backend::RuntimeProfile::Fixture { .. }) {
+                        "Fixture: {fixture_id}"
+                    } else {
+                        "{profile_label}: {view.runtime.connection_mode}"
+                    }
                 }
                 div { class: "profile-config", aria_label: "Runtime profile configuration",
                     select {
@@ -417,7 +421,7 @@ fn App() -> Element {
                 button {
                     class: "activity-toggle",
                     onclick: move |_| activity_open.toggle(),
-                    "Activity {view.activity.entries.len()}"
+                    "Activity ({view.activity.entries.len()})"
                 }
             }
 

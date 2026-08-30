@@ -137,39 +137,48 @@ pub fn NetworkPage(
             section { class: "network-operations",
                 div { class: "network-operation-heading",
                     div {
-                        h2 { "Operator Workflows" }
-                        p { "Commands submit typed daemon operations. Progress and outcomes below are daemon observations." }
+                        span { class: "network-operation-kicker", "Network control" }
+                        h2 { "Network operations" }
+                        p { "Start a bounded daemon operation. Results remain separate from submitted commands." }
                     }
                     if let Some(reason) = &capability_reason {
-                        span { id: "network-operation-disabled", class: "network-operation-disabled", "Mutations disabled: {reason}" }
+                        span { id: "network-operation-disabled", class: "network-operation-status unavailable", "Read-only session · {reason}" }
                     } else {
-                        span { class: "network-operation-ready", "Operate controls negotiated" }
+                        span { class: "network-operation-status", "Permissions checked per action" }
                     }
                 }
                 div { class: "network-operation-inputs",
-                    input {
-                        aria_label: "Destination hash",
-                        placeholder: "Destination hash",
-                        value: "{target}",
-                        oninput: move |event| target.set(event.value()),
+                    label { class: "network-operation-field",
+                        span { "Destination hash" }
+                        input {
+                            placeholder: "Enter a destination hash",
+                            value: "{target}",
+                            oninput: move |event| target.set(event.value()),
+                        }
                     }
-                    input {
-                        aria_label: "Link ID",
-                        placeholder: "Link ID (close/request)",
-                        value: "{link_id}",
-                        oninput: move |event| link_id.set(event.value()),
+                    label { class: "network-operation-field",
+                        span { "Active link ID" }
+                        input {
+                            placeholder: "Enter a link ID",
+                            value: "{link_id}",
+                            oninput: move |event| link_id.set(event.value()),
+                        }
                     }
-                    input {
-                        aria_label: "Request path",
-                        placeholder: "/request/path",
-                        value: "{request_path}",
-                        oninput: move |event| request_path.set(event.value()),
+                    label { class: "network-operation-field",
+                        span { "Request path" }
+                        input {
+                            placeholder: "/request/path",
+                            value: "{request_path}",
+                            oninput: move |event| request_path.set(event.value()),
+                        }
                     }
-                    input {
-                        aria_label: "Request data",
-                        placeholder: "Request data",
-                        value: "{request_data}",
-                        oninput: move |event| request_data.set(event.value()),
+                    label { class: "network-operation-field",
+                        span { "Request data" }
+                        input {
+                            placeholder: "Optional request payload",
+                            value: "{request_data}",
+                            oninput: move |event| request_data.set(event.value()),
+                        }
                     }
                 }
                 div { class: "network-operation-actions",
@@ -195,44 +204,45 @@ pub fn NetworkPage(
                             } else {
                                 None
                             };
-                            let reason_id = format!("network-{}-disabled", kind.as_str());
+                            let input_hint = if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) { "Requires an active link ID" } else if kind == NetworkOperationKind::Announce { "No destination required" } else { "Requires a destination hash" };
                             rsx! {
-                                button {
-                                    disabled: disabled_reason.is_some(),
-                                    title: disabled_reason.clone().unwrap_or_else(|| "Submit typed daemon operation".into()),
-                                    aria_describedby: disabled_reason.as_ref().map(|_| reason_id.as_str()),
-                                    aria_label: format!("{label} using {}", if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) { selected_link.as_str() } else { destination.as_str() }),
-                                    onclick: move |_| {
-                                        let mut request = StartNetworkOperationInfo::default();
-                                        request.kind = kind;
-                                        request.timeout_ms = 15_000;
-                                        if matches!(kind, NetworkOperationKind::PathRequest | NetworkOperationKind::LinkOpen) && !destination.is_empty() {
-                                            request.destination_hash = Some(destination.clone());
-                                        }
-                                        if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) && !selected_link.is_empty() {
-                                            request.link_id = Some(selected_link.clone());
-                                        }
-                                        let command = DaemonCommand::StartNetworkOperation(request);
-                                        if action.is_destructive() {
-                                            if let Some(pending) = network_confirmation(
-                                                &safety_policy.read(),
-                                                label,
-                                                if selected_link.is_empty() { destination.clone() } else { selected_link.clone() },
-                                                "timeout=15000 ms",
-                                                "Closes the active link and interrupts traffic using it.",
-                                                action.clone(),
-                                                command,
-                                            ) {
-                                                confirmation.set(Some(pending));
+                                div { class: "network-action-tile",
+                                    button {
+                                        class: if destructive { "network-operation-button danger" } else { "network-operation-button" },
+                                        disabled: disabled_reason.is_some(),
+                                        title: if input_missing { input_hint } else if disabled_reason.is_some() { "Unavailable in this session" } else { "Submit typed daemon operation" },
+                                        aria_describedby: disabled_reason.as_ref().map(|_| "network-action-guidance"),
+                                        aria_label: format!("{label} using {}", if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) { selected_link.as_str() } else { destination.as_str() }),
+                                        onclick: move |_| {
+                                            let mut request = StartNetworkOperationInfo::default();
+                                            request.kind = kind;
+                                            request.timeout_ms = 15_000;
+                                            if matches!(kind, NetworkOperationKind::PathRequest | NetworkOperationKind::LinkOpen) && !destination.is_empty() {
+                                                request.destination_hash = Some(destination.clone());
                                             }
-                                        } else {
-                                            on_network_command.call(command);
-                                        }
-                                    },
-                                    "{label}"
-                                }
-                                if let Some(reason) = &disabled_reason {
-                                    small { id: "{reason_id}", class: "control-disabled-reason", "{label} disabled: {reason}" }
+                                            if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) && !selected_link.is_empty() {
+                                                request.link_id = Some(selected_link.clone());
+                                            }
+                                            let command = DaemonCommand::StartNetworkOperation(request);
+                                            if action.is_destructive() {
+                                                if let Some(pending) = network_confirmation(
+                                                    &safety_policy.read(),
+                                                    label,
+                                                    if selected_link.is_empty() { destination.clone() } else { selected_link.clone() },
+                                                    "timeout=15000 ms",
+                                                    "Closes the active link and interrupts traffic using it.",
+                                                    action.clone(),
+                                                    command,
+                                                ) {
+                                                    confirmation.set(Some(pending));
+                                                }
+                                            } else {
+                                                on_network_command.call(command);
+                                            }
+                                        },
+                                        "{label}"
+                                    }
+                                    small { "{input_hint}" }
                                 }
                             }
                         }
@@ -249,31 +259,33 @@ pub fn NetworkPage(
                             None
                         };
                         rsx! {
-                    button {
-                        disabled: request_reason.is_some(),
-                        title: request_reason.clone().unwrap_or_else(|| "Send native request".into()),
-                        aria_describedby: request_reason.as_ref().map(|_| "network-request-disabled"),
-                        onclick: move |_| {
-                            let mut request = StartRequestInfo::default();
-                            request.link_id = link_id.read().trim().to_string();
-                            request.path = request_path.read().trim().to_string();
-                            request.data = request_data.read().as_bytes().to_vec();
-                            request.timeout_ms = 15_000;
-                            request.max_response_size = 4 * 1024 * 1024;
-                            on_network_command.call(DaemonCommand::StartRequest(request));
-                        },
-                        "Send request"
-                    }
-                    if let Some(reason) = &request_reason {
-                        small { id: "network-request-disabled", class: "control-disabled-reason", "Send request disabled: {reason}" }
-                    }
+                            div { class: "network-action-tile",
+                                button {
+                                    class: "network-operation-button",
+                                    disabled: request_reason.is_some(),
+                                    title: if link_id.read().trim().is_empty() { "Requires an active link ID" } else if request_path.read().trim().is_empty() { "Requires a request path" } else if request_reason.is_some() { "Unavailable in this session" } else { "Send native request" },
+                                    aria_describedby: request_reason.as_ref().map(|_| "network-action-guidance"),
+                                    onclick: move |_| {
+                                        let mut request = StartRequestInfo::default();
+                                        request.link_id = link_id.read().trim().to_string();
+                                        request.path = request_path.read().trim().to_string();
+                                        request.data = request_data.read().as_bytes().to_vec();
+                                        request.timeout_ms = 15_000;
+                                        request.max_response_size = 4 * 1024 * 1024;
+                                        on_network_command.call(DaemonCommand::StartRequest(request));
+                                    },
+                                    "Send request"
+                                }
+                                small { "Requires a link ID and request path" }
+                            }
                         }
                     }
                 }
+                p { id: "network-action-guidance", class: "network-action-guidance", "Unavailable actions need required input or permission from the active session." }
                 div { class: "network-observation-grid",
-                    div {
+                    div { class: "network-observation-panel",
                         h3 { "Operation observations" }
-                        if operations.is_empty() { p { "No operation observations." } }
+                        if operations.is_empty() { p { class: "network-observation-empty", "None recorded in this session." } }
                         for operation in operations.iter().rev() {
                             article { class: "network-observation",
                                 strong { "{operation.kind.as_str()}" }
@@ -311,9 +323,9 @@ pub fn NetworkPage(
                             }
                         }
                     }
-                    div {
-                        h3 { "Request and resource observations" }
-                        if requests.is_empty() { p { "No native request observations." } }
+                    div { class: "network-observation-panel",
+                        h3 { "Native requests" }
+                        if requests.is_empty() { p { class: "network-observation-empty", "None recorded in this session." } }
                         for request in requests.iter().rev() {
                             article { class: "network-observation",
                                 strong { "{request.path_hash}" }
@@ -350,9 +362,9 @@ pub fn NetworkPage(
                             }
                         }
                     }
-                    div {
-                        h3 { "General resource transfers" }
-                        if resources.is_empty() { p { "No resource transfer observations." } }
+                    div { class: "network-observation-panel",
+                        h3 { "Resource transfers" }
+                        if resources.is_empty() { p { class: "network-observation-empty", "None recorded in this session." } }
                         for resource in resources.iter().rev() {
                             article { class: "network-observation",
                                 strong { {format!("{:?}", resource.direction)} }
