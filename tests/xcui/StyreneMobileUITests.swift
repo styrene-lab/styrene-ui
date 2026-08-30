@@ -91,6 +91,41 @@ final class StyreneMobileUITests: XCTestCase {
         XCTAssertTrue(app.buttons["More"].isHittable)
     }
 
+    func testLiveEditableInputKeyboardChrome() throws {
+        let app = XCUIApplication(bundleIdentifier: "io.styrene.mesh")
+        app.launch()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+        if app.staticTexts["Fixture data. Network actions are disabled."].exists {
+            throw XCTSkip("Requires the live package and software keyboard.")
+        }
+
+        let network = app.buttons["Network"]
+        XCTAssertTrue(network.waitForExistence(timeout: 5))
+        network.tap()
+        XCUIDevice.shared.orientation = .landscapeLeft
+
+        let endpoint = app.textFields.firstMatch
+        XCTAssertTrue(endpoint.waitForExistence(timeout: 5))
+        XCTAssertTrue(endpoint.isEnabled)
+        endpoint.tap()
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        let keyboardOnboarding = app.buttons["Continue"]
+        if keyboardOnboarding.waitForExistence(timeout: 2) {
+            keyboardOnboarding.tap()
+            endpoint.tap()
+            XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        }
+        XCTAssertGreaterThan(keyboard.frame.width, 200)
+        XCTAssertGreaterThan(keyboard.frame.height, 150)
+        XCTAssertEqual(app.toolbars.count, 0, "WebKit input accessory toolbar is visible")
+
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "live-input-keyboard-chrome"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testPhysicalBluetoothRNodeApprovalAndReadback() throws {
         guard ProcessInfo.processInfo.environment["STYRENE_BLE_ACCEPTANCE"] == "1" else {
             throw XCTSkip("Requires a physical NUS RNode in its pairing window.")
