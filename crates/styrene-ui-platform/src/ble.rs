@@ -302,6 +302,7 @@ pub enum BleControlDisabledReason {
     PermissionUnavailable,
     AdapterUnavailable(BleAdapterState),
     OperationInProgress,
+    AlreadyConnected,
     NoApprovedPeripheral,
     NoRetryableFailure,
 }
@@ -346,6 +347,9 @@ impl BleControlState {
         }
         if self.adapter != BleAdapterState::Ready {
             return Some(BleControlDisabledReason::AdapterUnavailable(self.adapter));
+        }
+        if self.phase == BleControlPhase::Connected {
+            return Some(BleControlDisabledReason::AlreadyConnected);
         }
         if self.phase.is_busy() {
             return Some(BleControlDisabledReason::OperationInProgress);
@@ -552,5 +556,12 @@ mod tests {
             Some(BleControlDisabledReason::OperationInProgress)
         );
         assert_eq!(state.forget_disabled_reason(), None);
+
+        state.phase = BleControlPhase::Connected;
+        assert_eq!(state.scan_disabled_reason(), Some(BleControlDisabledReason::AlreadyConnected));
+        assert_eq!(
+            state.selection_disabled_reason(),
+            Some(BleControlDisabledReason::AlreadyConnected)
+        );
     }
 }
