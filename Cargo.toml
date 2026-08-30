@@ -1,19 +1,33 @@
 [workspace]
-resolver = "2"
-members = ["crates/styrene-ui-state"]
+resolver = "3"
+members = [
+    "apps/mobile",
+    "apps/mobile-android",
+    "apps/mobile-ios",
+    "crates/styrene-ui-apple-bridge",
+    "crates/styrene-ui-app",
+    "crates/styrene-ui-platform",
+    "crates/styrene-ui-state",
+]
 exclude = ["apps/desktop"]
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 rust-version = "1.97"
 license = "MIT"
 repository = "https://github.com/styrene-lab/styrene-ui"
 authors = ["Styrene Labs"]
 
 [workspace.dependencies]
+async-channel = "2"
+dioxus = { version = "=0.8.0-alpha.1", default-features = false, features = ["html", "macro", "signals"] }
+dioxus-ssr = { version = "=0.8.0-alpha.1", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+styrene-ui-state = { path = "crates/styrene-ui-state" }
+styrene-ui-platform = { path = "crates/styrene-ui-platform" }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -21,3 +35,6 @@ unsafe_code = "forbid"
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+
+[patch.crates-io]
+wry = { path = "vendor/wry" }

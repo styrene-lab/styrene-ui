@@ -10,6 +10,7 @@ delivery decisions in this repository.
 ## Boundaries
 
 - `crates/styrene-ui-state`: framework-independent state, reducers, and selectors.
+- `crates/styrene-ui-platform`: typed OS-service contracts and generation-aware platform events.
 - `apps/desktop`: extracted desktop Dioxus source; excluded until its old relative
   dependencies are replaced with immutable public contracts.
 - `tests/fixtures`: versioned copies of backend-owned fixtures with source revision

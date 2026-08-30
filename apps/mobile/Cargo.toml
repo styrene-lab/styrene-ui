@@ -1,0 +1,44 @@
+[package]
+name = "styrene-mobile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+ui-test = []
+
+[dependencies]
+async-channel.workspace = true
+dioxus.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+styrene-ui-app = { path = "../../crates/styrene-ui-app" }
+styrene-ui-platform.workspace = true
+styrene-ui-state.workspace = true
+
+[target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
+styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "7dbe68e0e7a2e5e657e4c6c55b304a6a009ab992" }
+styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "7dbe68e0e7a2e5e657e4c6c55b304a6a009ab992", default-features = false, features = ["bundled-sqlite", "mobile-keychain"] }
+tokio.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "=0.21.1"
+manganis = { version = "=0.8.0-alpha.1" }
+styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "7dbe68e0e7a2e5e657e4c6c55b304a6a009ab992" }
+styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "7dbe68e0e7a2e5e657e4c6c55b304a6a009ab992", default-features = false, features = ["bundled-sqlite", "mobile-android-keystore"] }
+tokio.workspace = true
+wry = { version = "=0.55.1", default-features = false }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+block2 = { version = "=0.6.2", default-features = false, features = ["alloc"] }
+objc2 = { version = "=0.6.4", default-features = false, features = ["std"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["NSError", "NSString"] }
+objc2-ui-kit = { version = "=0.3.2", default-features = false, features = ["UIApplication", "UIResponder", "UIContentSizeCategory"] }
+objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["block2", "UNNotificationSettings", "UNUserNotificationCenter"] }
+styrene-ui-apple-bridge = { path = "../../crates/styrene-ui-apple-bridge" }
+
+[lints]
+workspace = true
