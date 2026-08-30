@@ -344,7 +344,7 @@ mod tests {
 
     use super::*;
 
-    const BACKEND_REVISION: &str = "92eb6397deeca826d514855b8e4d82cac9068d1e";
+    const BACKEND_REVISION: &str = "aea19faa00133c05794f458fb137096989f8495e";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
     const FIXTURE_PROVENANCE: &str =
