@@ -344,11 +344,13 @@ mod tests {
 
     use super::*;
 
-    const BACKEND_REVISION: &str = "aea19faa00133c05794f458fb137096989f8495e";
+    const BACKEND_REVISION: &str = "4997bcb7b62fab42ce9ebd21558d0e1a902fc531";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
     const FIXTURE_PROVENANCE: &str =
         include_str!("../../../tests/fixtures/mobile-minimum-v1/README.md");
+    const APPLICATION_PROVENANCE: &str =
+        include_str!("../../../tests/fixtures/mobile-application-parity-v1/README.md");
     const PARITY_CONTRACT: &str = include_str!("../../../docs/parity-corpus.md");
 
     #[test]
@@ -377,6 +379,7 @@ mod tests {
         assert!(WORKSPACE_MANIFEST.contains("edition = \"2024\""));
         assert_eq!(MOBILE_MANIFEST.matches(BACKEND_REVISION).count(), 4);
         assert!(FIXTURE_PROVENANCE.contains(BACKEND_REVISION));
+        assert!(APPLICATION_PROVENANCE.contains(BACKEND_REVISION));
         assert!(PARITY_CONTRACT.contains(BACKEND_REVISION));
         assert!(PARITY_CONTRACT.contains("styrene-mobile-integration-v1"));
         assert!(PARITY_CONTRACT.contains("Not consumed by UI"));
