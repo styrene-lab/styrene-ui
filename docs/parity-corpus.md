@@ -5,21 +5,21 @@ bytes, and parity claims. This repository owns presentation fixtures and
 packaged-target replay evidence only.
 
 The current integration revision is
-`7dbe68e0e7a2e5e657e4c6c55b304a6a009ab992` from
+`aea19faa00133c05794f458fb137096989f8495e` from
 `https://github.com/styrene-lab/styrene-rs.git`.
 
 | Corpus | Backend path | UI status | SHA-256 |
 |---|---|---|---|
 | Mobile minimum v1 (`styrene-mobile-minimum-v1`) | `tests/fixtures/mobile-minimum-v1/states.json` | Mirrored semantically under `tests/fixtures/mobile-minimum-v1` | Canonical JSON `64dadb685eddad5dd80d954708eeb894a1784d8dbd5c025122a093ac6110b00c` |
-| Mobile integration v1 (`styrene-mobile-integration-v1`) | `tests/fixtures/mobile-integration-v1/corpus.json` | Authoritative acceptance inventory; rows are referenced by ID in packaged evidence | File `d8ea971e98675d8a7344a7b468b55cbbf4a0b108d077ae2531f0b481ee15f2de` |
-| Mobile application parity v1 | Proposed path `tests/fixtures/mobile-application-parity-v1/corpus.json` | Not admitted because no tracked corpus exists at the integration revision | N/A |
-| RNS fixture index v2 | Planned path `tests/interop/fixtures/rns/index-v2.json` | Not consumed by UI until the tracked backend index and validator land | N/A |
+| Mobile integration v1 (`styrene-mobile-integration-v1`) | `tests/fixtures/mobile-integration-v1/corpus.json` | 56-case authoritative acceptance inventory; referenced by ID, not mirrored | File `391932fe38c4841826d7130549554f7f5e89730099ac75f4791e9881abe6e59c` |
+| Mobile application parity v1 (`styrene-mobile-application-parity-v1`) | `tests/fixtures/mobile-application-parity-v1/corpus.json` | 11 admitted workflow and authority rows; not packaged evidence | File `a43b5e749202e25df1cd4bfbfc90e4d996b59d7e0375beff008ffb85617cbea4` |
+| RNS fixture index v2 | `tests/interop/fixtures/rns/index-v2.json` | Tracked backend protocol authority; Not consumed by UI | File `57d479317d73595b6dad62afe17bfff0998f7a99e2150d28e3cdf2e3f6d46ec1` |
 
-The planned RNS v2 authority identifies Reticulum 1.5.1 revision
-`149e4151095adf098b8f53eab0c03b37169e8559`. That plan and local failing tests
-do not establish executable parity evidence. The currently tracked protocol
-manifest remains schema v1 with Reticulum 1.4.2 revision
-`b48b96e61676504e0a4e527b33b9a0b4495c6872`.
+The tracked RNS v2 index identifies Reticulum 1.5.1 revision
+`149e4151095adf098b8f53eab0c03b37169e8559` and preserves Reticulum 1.4.2
+revision `b48b96e61676504e0a4e527b33b9a0b4495c6872` for legacy vectors. These
+backend authorities do not establish packaged UI or external-application
+evidence.
 
 Component fixtures prove rendering and reducer behavior only. Packaged iOS and
 Android runs must identify the backend revision, UI revision, artifact hash,

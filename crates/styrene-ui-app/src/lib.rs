@@ -112,6 +112,7 @@ impl StatusTone {
             SessionPhase::Connected => Self::Positive,
             SessionPhase::Starting | SessionPhase::Reconnecting => Self::Caution,
             SessionPhase::Failed => Self::Negative,
+            SessionPhase::Offline => Self::Neutral,
         }
     }
 
