@@ -36,7 +36,7 @@ pub enum IosBleEvent {
     Candidate { generation: CoreBluetoothGeneration, candidate: BleCandidate },
     Ready { generation: CoreBluetoothGeneration, write_limit: BleWriteLimit },
     Failed { generation: CoreBluetoothGeneration, failure: CoreBluetoothFailure },
-    Disconnected { generation: CoreBluetoothGeneration },
+    Disconnected { generation: CoreBluetoothGeneration, diagnostic_code: String },
 }
 
 pub struct IosBleEventStream {
@@ -139,12 +139,18 @@ define_class!(
             &self,
             _: &CBCentralManager,
             peripheral: &CBPeripheral,
-            _: Option<&NSError>,
+            error: Option<&NSError>,
         ) {
             let generation = self.take_active(peripheral);
             if let Some(generation) = generation {
-                self.send_event(IosBleEvent::Disconnected { generation });
-                let _ = self.reads().try_send(Err(failure("ios_ble_disconnected", true)));
+                let diagnostic_code = ns_error_code("ios_ble_disconnected", error);
+                self.send_event(IosBleEvent::Disconnected {
+                    generation,
+                    diagnostic_code: diagnostic_code.clone(),
+                });
+                let _ = self
+                    .reads()
+                    .try_send(Err(PlatformFailure { code: diagnostic_code, retryable: true }));
             }
         }
     }
@@ -700,4 +706,11 @@ fn core_failure(failure: CoreBluetoothFailure) -> PlatformFailure {
 
 fn failure(code: &str, retryable: bool) -> PlatformFailure {
     PlatformFailure { code: code.into(), retryable }
+}
+
+fn ns_error_code(prefix: &str, error: Option<&NSError>) -> String {
+    error.map_or_else(
+        || prefix.to_owned(),
+        |error| format!("{prefix}_{}_{}", error.domain(), error.code()),
+    )
 }

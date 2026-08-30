@@ -91,6 +91,106 @@ final class StyreneMobileUITests: XCTestCase {
         XCTAssertTrue(app.buttons["More"].isHittable)
     }
 
+    func testPhysicalBluetoothRNodeApprovalAndReadback() throws {
+        guard ProcessInfo.processInfo.environment["STYRENE_BLE_ACCEPTANCE"] == "1" else {
+            throw XCTSkip("Requires a physical NUS RNode in its pairing window.")
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "io.styrene.mesh")
+        addUIInterruptionMonitor(withDescription: "Bluetooth permission") { alert in
+            let allow = alert.buttons["Allow"]
+            if allow.exists {
+                allow.tap()
+                return true
+            }
+            return false
+        }
+        app.activate()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+
+        let network = app.buttons["Network"]
+        XCTAssertTrue(network.waitForExistence(timeout: 5))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.92)).tap()
+        XCTAssertTrue(app.staticTexts["Bluetooth RNode"].waitForExistence(timeout: 5))
+
+        let scan = app.buttons.matching(
+            NSPredicate(format: "label IN %@", ["Allow Bluetooth and scan", "Scan for RNodes"])
+        ).firstMatch
+        XCTAssertTrue(scan.waitForExistence(timeout: 5))
+        scan.tap()
+        app.tap()
+
+        let candidatePredicate = NSPredicate(format: "label BEGINSWITH 'Approve and connect '")
+        let candidate = app.buttons.matching(candidatePredicate).firstMatch
+        XCTAssertTrue(candidate.waitForExistence(timeout: 15), "No compatible NUS RNode discovered")
+        app.swipeUp()
+        let visibleCandidate = app.buttons.matching(candidatePredicate).firstMatch
+        XCTAssertTrue(visibleCandidate.isHittable, "Discovered RNode action is obscured")
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: visibleCandidate)
+        waitForExpectations(timeout: 12)
+        visibleCandidate.tap()
+
+        XCTAssertTrue(app.staticTexts["Approved RNode"].waitForExistence(timeout: 5))
+        XCTAssertTrue(connectedStatus(in: app).waitForExistence(timeout: 30))
+        XCTAssertTrue(app.buttons["Forget"].isHittable)
+    }
+
+    func testPhysicalBluetoothRNodeRetry() throws {
+        guard ProcessInfo.processInfo.environment["STYRENE_BLE_ACCEPTANCE"] == "1" else {
+            throw XCTSkip("Requires an approved physical NUS RNode.")
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "io.styrene.mesh")
+        app.activate()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.92)).tap()
+        XCTAssertTrue(app.staticTexts["Bluetooth RNode"].waitForExistence(timeout: 5))
+
+        if connectedStatus(in: app).waitForExistence(timeout: 20) {
+            return
+        }
+
+        let retry = app.buttons["Retry Bluetooth connection"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 5))
+        if !retry.isHittable {
+            app.swipeUp()
+        }
+        let visibleRetry = app.buttons["Retry Bluetooth connection"]
+        XCTAssertTrue(visibleRetry.isHittable)
+        visibleRetry.tap()
+
+        XCTAssertTrue(connectedStatus(in: app).waitForExistence(timeout: 30))
+    }
+
+    func testPhysicalBluetoothRNodeForget() throws {
+        guard ProcessInfo.processInfo.environment["STYRENE_BLE_ACCEPTANCE"] == "1" else {
+            throw XCTSkip("Requires an approved physical NUS RNode.")
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "io.styrene.mesh")
+        app.activate()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.92)).tap()
+        XCTAssertTrue(app.staticTexts["Approved RNode"].waitForExistence(timeout: 5))
+
+        let forget = app.buttons["Forget"]
+        if !forget.isHittable {
+            app.swipeUp()
+        }
+        let visibleForget = app.buttons["Forget"]
+        XCTAssertTrue(visibleForget.isHittable)
+        visibleForget.tap()
+
+        XCTAssertFalse(app.staticTexts["Approved RNode"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Scan for RNodes"].isHittable)
+    }
+
+    private func connectedStatus(in app: XCUIApplication) -> XCUIElement {
+        app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label ==[c] 'bluetooth-rnode bearer connected'"))
+            .firstMatch
+    }
+
     private func launchFixture() -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "io.styrene.mesh")
         app.launchEnvironment["STYRENE_UI_FIXTURE_ID"] = "propagation-sync-complete"
