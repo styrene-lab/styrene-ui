@@ -109,22 +109,56 @@ The following gaps affect the mobile messaging minimum:
 
 ## Backend Readiness
 
-The backend assessment covers 22 capability areas at backend revision
+The backend assessment covers 23 capability areas at backend revision
 `7dbe68e0e7a2e5e657e4c6c55b304a6a009ab992`:
 
 - 10 areas are complete and directly projectable.
-- 6 areas have substantial backend support but need a mobile adapter or a more
+- 7 areas have substantial backend support but need a mobile adapter or a more
   accurate UI projection.
 - 6 areas require a new backend contract or durable backend state.
 
 These counts describe source readiness. They do not replace packaged or
-interoperability evidence.
+interoperability evidence. They are a coarse capability grouping and do not
+override the P0 defects below.
+
+### Critical Backend Defects
+
+The following defects must be resolved before the affected backend paths are
+used as mobile release evidence:
+
+1. `MobileNode::poll_hub` acknowledges every fetched ID after processing,
+   including messages rejected by decoding and messages that failed durable
+   storage. The hub can therefore delete an unaccepted message. Only durable
+   accepted messages and safe duplicates can be acknowledged.
+2. `poll_hub` creates a notification preview by slicing the message string at a
+   byte offset. A valid UTF-8 message can panic if byte 100 is inside a
+   multibyte character. Preview truncation must operate on character boundaries.
+3. `IdentityBackend::Keychain` falls back to a plaintext identity file when the
+   required feature or target is absent. `EncryptedFile` has the same fallback,
+   and its current mobile construction uses an empty static passphrase. Mobile
+   production builds must fail closed or report the downgrade explicitly.
+4. A booted node without an operational interface is reported as `Stopped`.
+   There is no distinct offline-but-runtime-ready state, despite that state
+   being required by the integration inventory.
+
+Source anchors:
+
+- `styrene-rs/crates/apps/styrened/src/mobile.rs:2550-2598` contains the inbound
+  processing, unsafe preview truncation, and unconditional acknowledgement.
+- `styrene-rs/crates/apps/styrened/src/mobile.rs:2790-2873` contains the
+  Keychain and encrypted-file plaintext fallback paths.
+- `styrene-rs/crates/apps/styrened/src/mobile.rs:1725-1735` maps offline boot to
+  `Stopped`.
+
+The newer standard-propagation acceptance path already has durable-before-ACK
+and rejected-not-acknowledgeable tests. The defect is in the separate legacy
+`poll_hub` path and does not invalidate those standard-propagation tests.
 
 ### Directly Projectable
 
 | Capability | Backend state | UI work |
 |---|---|---|
-| Contacts and aliases | Durable contact CRUD and restart persistence exist through typed IPC and `MobileNode` | Add contact state, alias workflows, and display-name precedence |
+| Contact CRUD | Durable aliases and notes survive restart through typed IPC and `MobileNode` | Add contact state and alias editing; conversation-name projection still needs adapter work |
 | Drafts | Revisioned drafts and conditional clearing are durable | Preserve and render the authoritative revision and clear disposition |
 | Send and outbox | Send persists before dispatch and returns a complete authoritative message | Project the returned message and terminal failure without replacing them with generic state |
 | Retry | Retry retains one canonical message and records another attempt | Render retry dispositions and attempt history |
@@ -133,7 +167,7 @@ interoperability evidence.
 | Delivery method and attempts | Requested and actual method, fallback, correlation, and attempts are present in `MessageInfo` | Extend `styrene-ui-state::Message` and `project_message` |
 | Receipt and resource evidence | Packet receipt and resource completion evidence includes exact hashes, state, outcome, timestamps, and progress | Add truthful expandable delivery detail |
 | Propagation message evidence | Durable propagation correlations include selected peer, transient and attempt IDs, relation, state, and timestamps | Distinguish upload from recipient delivery |
-| Propagation selection and sync | Candidates, policy, readiness, persisted selection, progress, failure, and bounded sync are exposed by `MobileNode` | Gate Propagated composition on the projected readiness state |
+| Standard propagation selection and sync | Candidates, policy, readiness, persisted selection, progress, failure, and bounded sync are exposed by `MobileNode` | Gate Propagated composition on readiness; do not use the defective legacy `poll_hub` path as release evidence |
 
 Primary source anchors:
 
@@ -164,6 +198,7 @@ before this projection is corrected.
 | Public identity and copy | Public identity and destination hashes are available through typed IPC | Add a focused mobile identity projection and host clipboard action |
 | Identity edit | Typed edit and re-announce exist | Add a mobile wrapper and persist edited metadata across process death before claiming restoration |
 | Session lifecycle | The mobile contract declares stopped, starting, connecting, connected, reconnecting, degraded, and failed | The backend snapshot currently emits only stopped, connecting, connected, and reconnecting; the UI then collapses all nonterminal transitional states into `Reconnecting` |
+| Conversation aliases | Contact aliases are durable | Resolve contact aliases into conversation summaries and emit mutation updates; summaries currently set `peer_name` to `None` |
 | Restart restoration | Identity, endpoint, messages, attempts, drafts, contacts, and unread state reopen from durable storage | Add forced-process-death, incomplete-operation, migration, and packaged host restoration evidence |
 | Pagination | Stable cursor-based conversation and message pages exist in IPC and storage | Add direct paged `MobileNode` methods and UI paging state instead of using the generic daemon escape hatch |
 | Settings and capabilities | Runtime capabilities, authorization, endpoint persistence, and durable conversation mute exist | Define a generation-scoped mobile settings snapshot and focused wrappers |
@@ -178,16 +213,18 @@ Relevant source anchors:
   identity query, edit, and announce.
 - `styrene-rs/crates/apps/styrened/src/daemon_facade.rs:864-950` exposes stable
   conversation and message page boundaries.
+- `styrene-rs/crates/apps/styrened/src/storage/messages.rs:4183-4194` currently
+  leaves the conversation peer name unresolved.
 
 ### Backend Work Required
 
 | Capability | Missing backend contract |
 |---|---|
 | First conversation from discovery | Conversations are grouped from persisted messages only. There is no durable create/open-empty-conversation operation or draft-only conversation projection. Discovery, arbitrary-destination send, and draft persistence already exist, so this can be a narrow messaging/storage addition. |
-| Identity custody status | Keychain, Android Keystore, encrypted-file, and development plaintext backends exist, but no public DTO reports the selected backend, protection level, availability, fallback, or custody health. |
+| Identity custody status | Keychain, Android Keystore, encrypted-file, and development plaintext backends exist, but no public DTO reports the selected backend, protection level, availability, fallback, or custody health. Keychain and encrypted-file selection can silently downgrade to plaintext. |
 | Per-message bearer and path evidence | Current bearer state and general path queries exist separately, but `MessageInfo` does not correlate an interface, bearer, next hop, or path observation to a delivery attempt. |
 | Durable action queue | Backend operations are direct async calls and do not expose a generation-scoped command queue, idempotency key, enqueue disposition, or queue state. A smaller UI-only fix can stop silently dropping actions and report busy state; durable replay requires backend design. |
-| Notifications and background execution | Message polling and conversation mute exist, but OS authorization, scheduling, badge, notification-open routing, iOS background-task, and Android foreground-service contracts do not. |
+| Notifications and background execution | Message polling and conversation mute exist, but OS authorization, scheduling, badge, notification-open routing, iOS background-task, and Android foreground-service contracts do not. The legacy polling helper must also be corrected before host scheduling because it can acknowledge unaccepted messages and panic during preview truncation. |
 | Mobile diagnostics and export | Internal diagnostics and bounded event streams exist, but there is no typed chronological mobile diagnostic projection, bounded redacted export, or share-ready artifact. |
 
 The first-conversation gap is visible in
@@ -196,6 +233,22 @@ conversation query groups only the `messages` table. The absent custody fields
 are visible in `styrene-rs/crates/libs/styrene-ipc/src/types.rs:66-75`. The
 message evidence boundary is visible in the same file at lines 474-522: it
 contains delivery evidence but no correlated bearer or path fields.
+
+### Deferred P1 Support
+
+Some backend support is ahead of the current mobile-minimum scope:
+
+- The daemon IPC supports bounded attachment metadata, integrity, storage,
+  chunk retrieval, transfer progress, cancellation, and attachment-preserving
+  retry. `MobileSendRequest` and the focused mobile API do not expose these
+  operations yet.
+- Stable authenticated cursor pagination is implemented in daemon IPC and
+  storage. The focused mobile API still returns simplified unpaged results.
+- Raw page browsing has a mobile wrapper, but typed mobile errors, structured
+  page workflows, and file transfer are incomplete.
+
+These capabilities can reduce future backend work, but they do not change the
+current exclusion of attachments and pages from the mobile messaging minimum.
 
 ## Implementation Split
 
@@ -212,20 +265,28 @@ behavior:
 5. Make action submission return a typed accepted, busy, or unavailable result
    instead of ignoring `try_send` failure.
 6. Add packaged journeys for the already implemented draft, send, failure,
-   retry, unread, reconnect, and propagation workflows.
+   retry, unread, reconnect, and standard-propagation workflows.
 
-The following work should include a small backend change before UI completion:
+The following work requires backend changes before UI completion:
 
-1. Add a durable empty-conversation or draft-only conversation projection, then
+1. Correct `poll_hub` durable acknowledgement and UTF-8 preview handling before
+   integrating background polling or notification previews.
+2. Make production identity backends fail closed and expose typed custody and
+   downgrade status.
+3. Add a distinct offline-ready lifecycle state and populate capability
+   generation.
+4. Add a durable empty-conversation or draft-only conversation projection, then
    add the discovery-to-conversation action.
-2. Add focused paged mobile methods rather than binding mobile UI code to the
+5. Resolve durable contact aliases in conversation summaries.
+6. Add focused paged mobile methods rather than binding mobile UI code to the
    full generic daemon trait.
-3. Add durable identity metadata and a custody-status DTO before showing an
-   authoritative identity security status.
-4. Add per-attempt bearer/path correlation before claiming route or bearer
+7. Add durable identity metadata before showing editable identity fields as
+   restored settings.
+8. Add per-attempt bearer/path correlation before claiming route or bearer
    evidence in message details.
-5. Define notification/background and diagnostic-export contracts before adding
-   those settings surfaces.
+9. Add storage health and forced-termination recovery evidence.
+10. Define notification/background and diagnostic-export contracts before adding
+    those settings surfaces.
 
 ## Current Evidence
 
@@ -271,10 +332,12 @@ The current evidence does not support these claims:
 
 ## Follow-Up Order
 
-1. Admit the backend-owned application corpus and P0 parity matrix.
-2. Project complete live lifecycle and delivery evidence.
-3. Add a typed start-conversation workflow from discovery.
-4. Make composer availability depend on propagation readiness.
-5. Add packaged send, reply, unread, retry, reconnect, propagation, and restart
+1. Correct legacy hub acknowledgement, UTF-8 preview handling, and production
+   identity fallback behavior.
+2. Admit the backend-owned application corpus and P0 parity matrix.
+3. Project complete live lifecycle and delivery evidence.
+4. Add a typed start-conversation workflow from discovery.
+5. Make composer availability depend on propagation readiness.
+6. Add packaged send, reply, unread, retry, reconnect, propagation, and restart
    scenarios.
-6. Add Android packaged parity and physical accessibility evidence.
+7. Add Android packaged parity and physical accessibility evidence.
