@@ -193,6 +193,7 @@ pub fn App() -> Element {
                 .bearers
                 .iter()
                 .find(|bearer| bearer.kind == styrene_ui_state::BearerKind::BluetoothRnode)
+                .filter(|_| controls.approved.is_some() && controls.failure.is_none())
             {
                 controls.phase = match bearer.state {
                     styrene_ui_state::BearerState::Connected => BleControlPhase::Connected,
@@ -201,6 +202,12 @@ pub fn App() -> Element {
                 };
             }
             controls
+        };
+        let usb_probe_ready = {
+            let selected = selected_usb.read();
+            let attachments = usb_attachments.read();
+            *usb_authorization.read() == Some(AuthorizationState::Granted)
+                && selected.as_ref().is_some_and(|selected| attachments.contains(selected))
         };
 
         return rsx! {
@@ -217,6 +224,7 @@ pub fn App() -> Element {
                 android_usb_failure: usb_failure.read().clone(),
                 android_usb_busy: *usb_busy.read(),
                 android_usb_probe_status: usb_probe_status.read().clone(),
+                android_usb_probe_ready: usb_probe_ready,
                 android_usb_refresh: move |()| {
                     if *usb_busy.read() {
                         return;

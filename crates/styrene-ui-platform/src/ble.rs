@@ -290,7 +290,7 @@ pub enum BleControlFailure {
 impl BleControlFailure {
     #[must_use]
     pub const fn is_retryable(&self) -> bool {
-        matches!(self, Self::ScanFailed | Self::ConnectionInterrupted | Self::ConnectionFailed)
+        matches!(self, Self::ConnectionInterrupted | Self::ConnectionFailed)
     }
 }
 
@@ -336,7 +336,18 @@ impl BleControlState {
     #[must_use]
     pub fn scan_disabled_reason(&self) -> Option<BleControlDisabledReason> {
         match self.permission {
-            AuthorizationState::NotDetermined | AuthorizationState::Granted => {}
+            // The first scan is the user gesture that requests permission. CoreBluetooth does not
+            // provide a useful adapter state until that request has started.
+            AuthorizationState::NotDetermined => {
+                if self.phase == BleControlPhase::Connected {
+                    return Some(BleControlDisabledReason::AlreadyConnected);
+                }
+                return self
+                    .phase
+                    .is_busy()
+                    .then_some(BleControlDisabledReason::OperationInProgress);
+            }
+            AuthorizationState::Granted => {}
             AuthorizationState::Denied => return Some(BleControlDisabledReason::PermissionDenied),
             AuthorizationState::Restricted => {
                 return Some(BleControlDisabledReason::PermissionRestricted);
@@ -534,6 +545,7 @@ mod tests {
         );
 
         state.permission = AuthorizationState::NotDetermined;
+        assert_eq!(state.scan_disabled_reason(), None);
         state.adapter = BleAdapterState::Ready;
         assert_eq!(state.scan_disabled_reason(), None);
         assert_eq!(
@@ -542,6 +554,8 @@ mod tests {
         );
 
         state.permission = AuthorizationState::Granted;
+        state.failure = Some(BleControlFailure::ScanFailed);
+        assert!(!state.failure.as_ref().unwrap().is_retryable());
         state.failure = Some(BleControlFailure::ConnectionInterrupted);
         assert_eq!(
             state.retry_disabled_reason(),

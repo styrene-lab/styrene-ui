@@ -84,7 +84,7 @@ impl MobileDestination {
             Self::Messages => "M",
             Self::People => "P",
             Self::Network => "N",
-            Self::More => "+",
+            Self::More => "...",
         }
     }
 }
@@ -156,6 +156,19 @@ const fn bearer_label(kind: BearerKind) -> &'static str {
         BearerKind::Tcp => "TCP",
         BearerKind::BluetoothRnode => "Bluetooth RNode",
         BearerKind::AndroidUsb => "Android USB",
+    }
+}
+
+fn bearer_reason_label(reason: &str) -> &'static str {
+    match reason {
+        "approved_device_absent" => "The approved device is not currently available.",
+        "connection_interrupted" | "socket_closed" => "The connection was interrupted.",
+        "invalid_tcp_endpoint" => "The configured TCP endpoint is invalid.",
+        "not_configured" => "This bearer is not configured.",
+        "not_selected" => "No device is selected.",
+        "permission_denied" => "Permission was denied.",
+        "physical_evidence_absent" => "A physical-device connection has not been verified.",
+        _ => "Additional diagnostic details are available for this bearer.",
     }
 }
 
@@ -476,6 +489,7 @@ pub fn MobileShell(
     #[props(default)] android_usb_select: Option<EventHandler<AndroidUsbAttachment>>,
     #[props(default)] android_usb_probe: Option<EventHandler<()>>,
     #[props(default)] android_usb_probe_status: Option<String>,
+    #[props(default)] android_usb_probe_ready: bool,
     #[props(default)] ble_controls: BleControlState,
     #[props(default)] ble_scan: Option<EventHandler<()>>,
     #[props(default)] ble_select: Option<EventHandler<BlePeripheralId>>,
@@ -576,7 +590,7 @@ pub fn MobileShell(
     });
 
     rsx! {
-        document::Title { "Styrene Messages" }
+        document::Title { "Styrene {active_destination.label()}" }
         document::Stylesheet { href: asset!("/assets/mobile.css") }
         main {
             class: "mobile-shell",
@@ -639,7 +653,12 @@ pub fn MobileShell(
                     "aria-live": "polite",
                     "data-code": failure.code.clone(),
                     "data-retryable": failure.retryable.to_string(),
-                    "Session unavailable ({failure.code})"
+                    if fixture.session.phase == SessionPhase::Failed {
+                        p { "Session unavailable. Open Network to review connection settings." }
+                    } else {
+                        p { "The last operation failed. Current session state is unchanged." }
+                    }
+                    p { class: "technical-value", "Diagnostic: {failure.code}" }
                 }
             }
             if boundary.fixture_marker_visible() {
@@ -758,40 +777,66 @@ pub fn MobileShell(
                     }
                 }
                 for peer in &fixture.peers {
-                    button {
-                        id: format!("mobile.peer.{}", peer.destination_hash),
-                        class: "peer-card",
-                        r#type: "button",
-                        "data-aspect": peer.aspect.clone(),
-                        "data-source": "canonical_announce",
-                        onclick: {
+                    {
+                        let has_conversation = fixture.conversations.iter().any(|conversation| {
+                            conversation.peer_hash == peer.destination_hash
+                        });
+                        let display_name = peer.display_name.clone().unwrap_or_else(|| {
+                            format!("Peer {}", short_hash(&peer.destination_hash))
+                        });
+                        if has_conversation {
                             let peer_hash = peer.destination_hash.clone();
-                            move |_| {
-                                selected_peer.set(Some(peer_hash.clone()));
-                                if let Some(action_sink) = action_sink {
-                                    action_sink.call(MobileAction::new(
-                                        fixture.generation,
-                                        MobileActionKind::SetActiveConversation {
-                                            peer_hash: Some(peer_hash.clone()),
-                                        },
-                                    ));
+                            rsx! {
+                                button {
+                                    id: format!("mobile.peer.{}", peer.destination_hash),
+                                    class: "peer-card",
+                                    r#type: "button",
+                                    "data-aspect": peer.aspect.clone(),
+                                    "data-source": "canonical_announce",
+                                    "data-action": "open-conversation",
+                                    onclick: move |_| {
+                                        selected_peer.set(Some(peer_hash.clone()));
+                                        if let Some(action_sink) = action_sink {
+                                            action_sink.call(MobileAction::new(
+                                                fixture.generation,
+                                                MobileActionKind::SetActiveConversation {
+                                                    peer_hash: Some(peer_hash.clone()),
+                                                },
+                                            ));
+                                        }
+                                        if !compact_thread_is_open {
+                                            back_navigation.open_thread();
+                                        }
+                                        compact_thread_open.set(true);
+                                        destination.set(MobileDestination::Messages);
+                                    },
+                                    span { class: "hash-glyph", {hash_glyph(&peer.destination_hash)} }
+                                    span {
+                                        class: "directory-copy",
+                                        strong { {display_name} }
+                                        span { class: "technical-value", {short_hash(&peer.destination_hash)} }
+                                    }
+                                    span { class: "row-action", "Open conversation" }
                                 }
-                                if !compact_thread_is_open {
-                                    back_navigation.open_thread();
+                            }
+                        } else {
+                            rsx! {
+                                article {
+                                    id: format!("mobile.peer.{}", peer.destination_hash),
+                                    class: "peer-card",
+                                    "data-aspect": peer.aspect.clone(),
+                                    "data-source": "canonical_announce",
+                                    "data-action": "unavailable",
+                                    span { class: "hash-glyph", {hash_glyph(&peer.destination_hash)} }
+                                    span {
+                                        class: "directory-copy",
+                                        strong { {display_name} }
+                                        span { class: "technical-value", {short_hash(&peer.destination_hash)} }
+                                    }
+                                    span { class: "row-action", "No conversation yet" }
                                 }
-                                compact_thread_open.set(true);
-                                destination.set(MobileDestination::Messages);
                             }
-                        },
-                        span { class: "hash-glyph", {hash_glyph(&peer.destination_hash)} }
-                        span {
-                            class: "directory-copy",
-                            strong {
-                                {peer.display_name.clone().unwrap_or_else(|| format!("Peer {}", short_hash(&peer.destination_hash)))}
-                            }
-                            span { class: "technical-value", {short_hash(&peer.destination_hash)} }
                         }
-                        span { class: "row-action", "Open" }
                     }
                 }
             }
@@ -836,7 +881,9 @@ pub fn MobileShell(
                         button {
                             r#type: "button",
                             class: "secondary-action",
-                            disabled: android_usb_busy,
+                            disabled: !live_actions_enabled
+                                || android_usb_busy
+                                || android_usb_refresh.is_none(),
                             onclick: move |_| {
                                 if let Some(handler) = android_usb_refresh {
                                     handler.call(());
@@ -860,7 +907,10 @@ pub fn MobileShell(
                                 button {
                                     r#type: "button",
                                     class: "secondary-action",
-                                    disabled: android_usb_busy,
+                                    disabled: !live_actions_enabled
+                                        || android_usb_busy
+                                        || android_usb_select.is_none(),
+                                    "aria-label": format!("Use USB device {}", attachment.device_id),
                                     onclick: move |_| {
                                         if let Some(handler) = android_usb_select {
                                             handler.call(attachment.clone());
@@ -882,7 +932,10 @@ pub fn MobileShell(
                                 id: "mobile.android-usb-probe",
                                 r#type: "button",
                                 class: "secondary-action",
-                                disabled: android_usb_busy || !android_usb_connected,
+                                disabled: !live_actions_enabled
+                                    || android_usb_busy
+                                    || !android_usb_connected
+                                    || !android_usb_probe_ready,
                                 onclick: move |_| {
                                     if let Some(handler) = android_usb_probe {
                                         handler.call(());
@@ -916,7 +969,7 @@ pub fn MobileShell(
                         div {
                             h3 { {bearer_label(bearer.kind)} }
                             if let Some(reason) = &bearer.reason {
-                                p { class: "technical-value", "Reason: {reason}" }
+                                p { class: "field-hint", {bearer_reason_label(reason)} }
                             }
                         }
                         span {
@@ -964,7 +1017,7 @@ pub fn MobileShell(
                 article {
                     class: "settings-card",
                     h3 { "About this build" }
-                    p { "Rust-owned Dioxus mobile shell" }
+                    p { "Styrene mobile application" }
                     p { class: "technical-value", "Generation {fixture.generation}" }
                 }
             }
@@ -1013,7 +1066,13 @@ fn EndpointEditor(
     enabled: bool,
     action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
+    let configured_endpoint = endpoint.clone();
     let mut endpoint_buffer = use_signal(|| endpoint);
+    let editing_enabled = enabled && action_sink.is_some();
+    let endpoint_value = endpoint_buffer.read().trim().to_owned();
+    let can_apply = editing_enabled
+        && !endpoint_value.is_empty()
+        && endpoint_value != configured_endpoint.trim();
     rsx! {
         div {
             class: "settings-card",
@@ -1024,24 +1083,33 @@ fn EndpointEditor(
                 r#type: "text",
                 inputmode: "url",
                 "aria-describedby": "mobile.tcp-endpoint-hint",
+                disabled: !editing_enabled,
                 value: endpoint_buffer,
                 oninput: move |event| endpoint_buffer.set(event.value()),
             }
             p {
                 id: "mobile.tcp-endpoint-hint",
                 class: "field-hint",
-                "Host and port, for example rns.styrene.io:4242."
+                if !editing_enabled {
+                    "Endpoint editing is unavailable in this view."
+                } else if endpoint_value.is_empty() {
+                    "Enter a host and port, for example rns.styrene.io:4242."
+                } else if endpoint_value == configured_endpoint.trim() {
+                    "Enter a different host and port to change the endpoint."
+                } else {
+                    "Apply this host and port to reconnect the TCP session."
+                }
             }
             button {
                 id: "mobile.tcp-endpoint-apply",
                 r#type: "button",
-                disabled: !enabled,
+                disabled: !can_apply,
                 onclick: move |_| {
-                    if enabled && let Some(action_sink) = action_sink {
+                    if can_apply && let Some(action_sink) = action_sink {
                         action_sink.call(MobileAction::new(
                             generation,
                             MobileActionKind::ApplyEndpoint {
-                                endpoint: endpoint_buffer.read().clone(),
+                                endpoint: endpoint_buffer.read().trim().to_owned(),
                             },
                         ));
                     }
@@ -1059,6 +1127,20 @@ pub fn PropagationPanel(
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
     let selected = propagation.selected_destination.as_deref().unwrap_or("No node selected");
+    let controls_enabled = actions_enabled && action_sink.is_some();
+    let sync_in_progress = propagation.sync_state == SyncState::InProgress;
+    let retry_allowed = propagation.failure.as_ref().is_none_or(|failure| failure.retryable);
+    let sync_enabled = controls_enabled && propagation.ready && !sync_in_progress && retry_allowed;
+    let selected_candidate_missing =
+        propagation.selected_destination.as_ref().is_some_and(|selected| {
+            !propagation.candidates.iter().any(|candidate| candidate.destination_hash == *selected)
+        });
+    let sync_label = match propagation.sync_state {
+        SyncState::Idle => "Sync now",
+        SyncState::InProgress => "Synchronizing",
+        SyncState::Complete => "Sync again",
+        SyncState::Failed => "Retry sync",
+    };
     rsx! {
         section {
             id: "mobile.propagation",
@@ -1078,9 +1160,9 @@ pub fn PropagationPanel(
             }
             select {
                 id: "mobile.propagation-node",
-                disabled: !actions_enabled,
+                disabled: !controls_enabled,
                 onchange: move |event| {
-                    if actions_enabled && let Some(action_sink) = action_sink {
+                    if controls_enabled && let Some(action_sink) = action_sink {
                         let destination_hash = (!event.value().is_empty()).then(|| event.value());
                         action_sink.call(MobileAction::new(
                             propagation.generation,
@@ -1089,6 +1171,14 @@ pub fn PropagationPanel(
                     }
                 },
                 option { value: "", "No node selected" }
+                if selected_candidate_missing {
+                    option {
+                        value: propagation.selected_destination.clone().unwrap_or_default(),
+                        selected: true,
+                        disabled: true,
+                        "Selected node is currently unavailable"
+                    }
+                }
                 for candidate in &propagation.candidates {
                     option {
                         value: candidate.destination_hash.clone(),
@@ -1124,22 +1214,17 @@ pub fn PropagationPanel(
             }
             button {
                 id: "mobile.propagation-sync",
-                disabled: !actions_enabled
-                    || !propagation.ready
-                    || propagation.sync_state == SyncState::InProgress,
+                disabled: !sync_enabled,
+                "aria-describedby": "mobile.propagation-status",
                 onclick: move |_| {
-                    if actions_enabled
-                        && propagation.ready
-                        && propagation.sync_state != SyncState::InProgress
-                        && let Some(action_sink) = action_sink
-                    {
+                    if sync_enabled && let Some(action_sink) = action_sink {
                         action_sink.call(MobileAction::new(
                             propagation.generation,
                             MobileActionKind::SyncPropagation,
                         ));
                     }
                 },
-                "Sync now"
+                {sync_label}
             }
             div {
                 id: "mobile.propagation-status",
@@ -1151,7 +1236,11 @@ pub fn PropagationPanel(
                         id: "mobile.propagation-failure",
                         "data-code": failure.code.clone(),
                         "data-retryable": failure.retryable.to_string(),
-                        "Synchronization failed"
+                        if failure.retryable {
+                            "Synchronization failed. Retry is available."
+                        } else {
+                            "Synchronization failed."
+                        }
                     }
                 } else if let Some(progress) = &propagation.progress {
                     span {
@@ -1159,13 +1248,25 @@ pub fn PropagationPanel(
                         "data-attempt-id": progress.attempt_id.clone(),
                         "data-received-count": progress.received_count.to_string(),
                         "data-received-bytes": progress.received_bytes.to_string(),
-                        "Synchronizing"
+                        "Synchronizing: {progress.received_count} messages and {progress.received_bytes} bytes received."
                     }
                 } else if propagation.sync_state == SyncState::Complete {
                     span {
                         id: "mobile.propagation-result",
-                        "{propagation.new_messages} new messages"
+                        if propagation.new_messages == 1 {
+                            "1 new message"
+                        } else {
+                            "{propagation.new_messages} new messages"
+                        }
                     }
+                } else if propagation.selected_destination.is_none() {
+                    span { "Select an active propagation node to synchronize." }
+                } else if !propagation.ready {
+                    span { "The selected propagation node is not ready." }
+                } else if propagation.sync_state == SyncState::Failed {
+                    span { "Synchronization failed. Retry is available." }
+                } else {
+                    span { "Ready to synchronize." }
                 }
             }
         }
@@ -1189,7 +1290,7 @@ pub fn ConversationList(
                     id: "mobile.messages-empty",
                     class: "empty-state",
                     h3 { "No conversations yet" }
-                    p { "Discover a peer to begin a private conversation." }
+                    p { "Open People to review discovered peers and existing conversations." }
                 }
             }
             for conversation in conversations {
@@ -1290,6 +1391,7 @@ pub fn DeliveryDetail(
     generation: u64,
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
+    let retry_enabled = actions_enabled && action_sink.is_some();
     let state = if message.delivery == DeliveryEvidence::Delivered {
         "Delivered"
     } else if let Some(lifecycle) = message.lifecycle {
@@ -1322,11 +1424,12 @@ pub fn DeliveryDetail(
             if message.failure.as_ref().is_some_and(|failure| failure.retryable) {
                 button {
                     id: format!("mobile.retry.{}", message.id),
-                    disabled: !actions_enabled,
+                    disabled: !retry_enabled,
+                    "aria-label": format!("Retry message {}", message.id),
                     onclick: {
                         let message_id = message.id.clone();
                         move |_| {
-                            if actions_enabled && let Some(action_sink) = action_sink {
+                            if retry_enabled && let Some(action_sink) = action_sink {
                                 action_sink.call(MobileAction::new(
                                     generation,
                                     MobileActionKind::RetryMessage {
@@ -1351,7 +1454,7 @@ pub fn Composer(
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
     let mut draft_buffers = use_signal(HashMap::<String, (u64, String)>::new);
-    let mut delivery_method = use_signal(|| DeliveryMethod::Direct);
+    let mut delivery_methods = use_signal(HashMap::<String, DeliveryMethod>::new);
     let draft_id = conversation.as_ref().map_or_else(
         || "mobile.draft".to_string(),
         |conversation| format!("mobile.draft.{}", conversation.peer_hash),
@@ -1366,7 +1469,13 @@ pub fn Composer(
             .filter(|(revision, _)| *revision == conversation.draft_revision)
             .map_or_else(|| conversation.draft.clone(), |(_, draft)| draft.clone())
     });
-    let enabled = enabled && conversation.is_some() && !draft.trim().is_empty();
+    let has_conversation = conversation.is_some();
+    let editing_enabled = has_conversation && action_sink.is_some();
+    let send_enabled = enabled && editing_enabled && !draft.trim().is_empty();
+    let delivery_method = peer_hash
+        .as_ref()
+        .and_then(|peer_hash| delivery_methods.read().get(peer_hash).copied())
+        .unwrap_or(DeliveryMethod::Direct);
     rsx! {
         form {
             key: "{draft_id}",
@@ -1378,7 +1487,7 @@ pub fn Composer(
                 let draft = draft.clone();
                 move |event| {
                     event.prevent_default();
-                    if enabled
+                    if send_enabled
                         && let (Some(action_sink), Some(peer_hash)) = (action_sink, &peer_hash)
                     {
                         action_sink.call(MobileAction::new(
@@ -1386,7 +1495,7 @@ pub fn Composer(
                             MobileActionKind::SendMessage {
                                 peer_hash: peer_hash.clone(),
                                 content: draft.clone(),
-                                requested_method: *delivery_method.read(),
+                                requested_method: delivery_method,
                                 draft_revision,
                             },
                         ));
@@ -1401,6 +1510,8 @@ pub fn Composer(
                     name: "message",
                     rows: "2",
                     placeholder: "Message",
+                    disabled: !editing_enabled,
+                    "aria-describedby": "mobile.composer-status",
                     "data-revision": draft_revision,
                     value: draft,
                     oninput: {
@@ -1429,8 +1540,8 @@ pub fn Composer(
                 button {
                     id: "mobile.send",
                     r#type: "submit",
-                    "data-enabled": enabled.to_string(),
-                    disabled: !enabled,
+                    "data-enabled": send_enabled.to_string(),
+                    disabled: !send_enabled,
                     "Send"
                 }
             }
@@ -1440,21 +1551,44 @@ pub fn Composer(
                 select {
                     id: "mobile.delivery-method",
                     name: "delivery-method",
-                    value: match *delivery_method.read() {
+                    disabled: !editing_enabled,
+                    value: match delivery_method {
                         DeliveryMethod::Direct => "direct",
                         DeliveryMethod::Opportunistic => "opportunistic",
                         DeliveryMethod::Propagated => "propagated",
                         DeliveryMethod::Unknown => "unknown",
                     },
-                    onchange: move |event| {
-                        delivery_method.set(if event.value() == "propagated" {
-                            DeliveryMethod::Propagated
-                        } else {
-                            DeliveryMethod::Direct
-                        });
+                    onchange: {
+                        let peer_hash = peer_hash.clone();
+                        move |event| {
+                            if let Some(peer_hash) = &peer_hash {
+                                let method = if event.value() == "propagated" {
+                                    DeliveryMethod::Propagated
+                                } else {
+                                    DeliveryMethod::Direct
+                                };
+                                delivery_methods.write().insert(peer_hash.clone(), method);
+                            }
+                        }
                     },
                     option { value: "direct", "Direct" }
                     option { value: "propagated", "Propagated" }
+                }
+            }
+            p {
+                id: "mobile.composer-status",
+                class: "field-hint",
+                role: "status",
+                if !has_conversation {
+                    "Choose a conversation before writing a message."
+                } else if !editing_enabled {
+                    "Draft editing is unavailable in this view."
+                } else if !enabled {
+                    "No bearer is connected. You can continue editing this saved draft."
+                } else if draft.trim().is_empty() {
+                    "Write a message to enable Send."
+                } else {
+                    "Ready to send."
                 }
             }
         }
