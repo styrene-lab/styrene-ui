@@ -542,7 +542,12 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
     assert!(MOBILE_CSS.contains(
         ".destination-bar {\n  position: fixed;\n  inset-inline: 0;\n  inset-block-end: 0;"
     ));
-    assert!(MOBILE_CSS.contains("padding-block-end: calc(4.5rem + env(safe-area-inset-bottom))"));
+    assert!(
+        MOBILE_CSS
+            .contains("--destination-bar-reserve: calc(4.5rem + env(safe-area-inset-bottom))")
+    );
+    assert!(MOBILE_CSS.contains("inset-block-end: var(--destination-bar-reserve)"));
+    assert!(MOBILE_CSS.contains("[data-keyboard-visible=\"true\"] .destination-bar"));
 }
 
 #[test]
@@ -595,6 +600,12 @@ fn session_failure_exposes_a_typed_visible_status() {
     assert!(failure.contains("role=\"status\""));
     assert!(failure.contains("data-code=\"invalid_tcp_endpoint\""));
     assert!(failure.contains("data-retryable=\"true\""));
+
+    let mut connected = fixture("recoverable-session-failure");
+    connected.session.phase = SessionPhase::Connected;
+    let connected = render(connected);
+    assert!(connected.contains("The last operation failed. Current session state is unchanged."));
+    assert!(!connected.contains("Session unavailable. Open Network"));
 }
 
 #[test]
@@ -679,6 +690,9 @@ fn repeated_announces_render_one_person_and_live_empty_renders_none() {
 
     assert_eq!(directory.matches("id=\"mobile.peer.e01b09b22ccc4e2755d29eead962677b\"").count(), 1);
     assert!(directory.contains("FPIG_SKYWAVE"));
+    assert!(directory.contains("data-action=\"unavailable\""));
+    assert!(directory.contains("No conversation yet"));
+    assert!(!directory.contains("Open conversation"));
     assert!(!live_empty.contains("id=\"mobile.peer."));
     assert!(!live_empty.contains("FPIG_SKYWAVE"));
 }
@@ -783,6 +797,7 @@ fn stale_propagation_metadata_disables_manual_sync_without_losing_selection() {
     assert!(markup.contains("780e7aa7b2f175c88f28c7ba8ab1b714"));
     assert!(markup.contains("data-ready=\"false\""));
     assert!(markup.contains("id=\"mobile.propagation-sync\" disabled"));
+    assert!(markup.contains("Selected node is currently unavailable"));
 }
 
 #[test]
