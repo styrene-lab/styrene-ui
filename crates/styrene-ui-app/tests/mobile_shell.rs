@@ -10,7 +10,9 @@ use styrene_ui_platform::{
     TextScaleCategory, WindowClass, WindowMetrics,
 };
 use styrene_ui_state::{
-    ApplyResult, BearerState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
+    ApplyResult, BearerState, IdentityCustody, IdentityCustodyAuthentication,
+    IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
+    IdentityCustodyProtection, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
     MobileStore, PropagationCandidate, PropagationPolicy, PropagationProgress, PropagationUpdate,
     RuntimeBoundary, SessionPhase, SyncState, TargetClass, TypedFailure,
 };
@@ -447,6 +449,61 @@ fn mobile_shell_uses_destination_navigation_and_starts_on_the_conversation_list(
 }
 
 #[test]
+fn more_projects_secret_free_identity_custody() {
+    let mut state = fixture("live-empty-connected");
+    state.session.custody = Some(IdentityCustody {
+        requested_backend: IdentityCustodyBackend::AndroidKeystore,
+        active_backend: Some(IdentityCustodyBackend::AndroidKeystore),
+        protection: Some(IdentityCustodyProtection::PlatformProtected),
+        authentication: IdentityCustodyAuthentication::DeviceAuthentication,
+        availability: IdentityCustodyAvailability::Available,
+        downgrade: IdentityCustodyDowngrade::None,
+        failure: None,
+    });
+
+    let markup = render(state);
+    let custody = opening_tag_with_id(&markup, "mobile.identity-custody");
+
+    assert!(custody.contains("aria-labelledby=\"mobile.identity-custody-heading\""));
+    assert!(custody.contains("data-availability=\"available\""));
+    assert!(custody.contains("data-downgrade=\"none\""));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.identity-custody-active")
+            .contains("data-backend=\"android_keystore\"")
+    );
+    assert!(markup.contains("Android Keystore"));
+    assert!(markup.contains("Platform protected"));
+    assert!(markup.contains("Device authentication"));
+    assert!(!markup.contains("private_key"));
+    assert!(!markup.contains("key_material"));
+}
+
+#[test]
+fn more_discloses_unavailable_downgraded_identity_custody() {
+    let mut state = fixture("live-empty-connected");
+    state.session.custody = Some(IdentityCustody {
+        requested_backend: IdentityCustodyBackend::Keychain,
+        active_backend: Some(IdentityCustodyBackend::EncryptedFile),
+        protection: Some(IdentityCustodyProtection::EncryptedAtRest),
+        authentication: IdentityCustodyAuthentication::HostKeyMaterial,
+        availability: IdentityCustodyAvailability::Unavailable,
+        downgrade: IdentityCustodyDowngrade::ActiveBackendMismatch,
+        failure: Some(TypedFailure { code: "backend_failure".into(), retryable: true }),
+    });
+
+    let markup = render(state);
+    let custody = opening_tag_with_id(&markup, "mobile.identity-custody");
+    let failure = opening_tag_with_id(&markup, "mobile.identity-custody-failure");
+
+    assert!(custody.contains("data-availability=\"unavailable\""));
+    assert!(custody.contains("data-downgrade=\"active_backend_mismatch\""));
+    assert!(markup.contains("Active backend mismatch"));
+    assert!(failure.contains("role=\"status\""));
+    assert!(failure.contains("data-code=\"backend_failure\""));
+    assert!(failure.contains("data-retryable=\"true\""));
+}
+
+#[test]
 fn web_history_back_capability_exposes_only_a_hidden_rust_action() {
     let markup = dioxus_ssr::render_element(rsx! {
         MobileShell {
@@ -532,6 +589,7 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
         "min-block-size: var(--size-touch-android)",
         "flex-wrap: wrap",
         "overflow-wrap: anywhere",
+        "@media (max-width: 30rem)",
         "@media (min-width: 52rem)",
         "@media (prefers-color-scheme: dark)",
         "@media (prefers-contrast: more)",
