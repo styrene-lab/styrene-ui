@@ -4,12 +4,22 @@ use std::thread;
 use std::time::Duration;
 
 use async_channel::{Receiver, Sender};
-use styrene_ipc::types::{MessageInfo, MessageLifecycleState};
+use styrene_ipc::DaemonIdentity;
+use styrene_ipc::types::{
+    IdentityCustodyAuthentication as BackendCustodyAuthentication,
+    IdentityCustodyAvailability as BackendCustodyAvailability,
+    IdentityCustodyBackend as BackendCustodyBackend,
+    IdentityCustodyDowngrade as BackendCustodyDowngrade,
+    IdentityCustodyFailureCode as BackendCustodyFailureCode, IdentityCustodyInfo,
+    IdentityCustodyProtection as BackendCustodyProtection, MessageInfo, MessageLifecycleState,
+};
 use styrene_ui_platform::AndroidUsbAttachment;
 use styrene_ui_state::{
     Bearer, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
-    ExpectedProjection, Message, MessageLifecycle, MobileAction, MobileActionKind, MobileFixture,
-    Peer, PeerSource, PersistenceState, Profile, Propagation, PropagationCandidate,
+    ExpectedProjection, IdentityCustody, IdentityCustodyAuthentication,
+    IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
+    IdentityCustodyProtection, Message, MessageLifecycle, MobileAction, MobileActionKind,
+    MobileFixture, Peer, PeerSource, PersistenceState, Profile, Propagation, PropagationCandidate,
     PropagationEvidence, PropagationPolicy, PropagationProgress, PropagationUpdate, Session,
     SessionPhase, SyncState, TransportEvidence, TypedFailure,
 };
@@ -767,6 +777,8 @@ async fn project(
     if session.generation != backend_generation {
         return Err("backend generation changed before projection".into());
     }
+    let identity =
+        node.facade.as_ref().query_identity().await.map_err(|error| error.to_string())?;
     let peers = node.peer_snapshot().await.map_err(|error| error.to_string())?;
     let propagation = node.propagation_snapshot().await.map_err(|error| error.to_string())?;
     let summaries = node.list_conversations().await?;
@@ -796,12 +808,17 @@ async fn project(
             generation,
             session: Session {
                 phase: project_phase(session.phase),
-                identity_hash: node.delivery_hash().unwrap_or_default(),
+                identity_hash: if identity.lxmf_destination_hash.is_empty() {
+                    node.delivery_hash().unwrap_or_default()
+                } else {
+                    identity.lxmf_destination_hash
+                },
                 endpoint: session.endpoint,
                 failure: session.failure.map(|failure| TypedFailure {
                     code: format!("{:?}", failure.code).to_ascii_lowercase(),
                     retryable: failure.retryable,
                 }),
+                custody: identity.custody.as_ref().map(project_identity_custody),
             },
             bearers: session.bearers.iter().map(project_bearer).collect(),
             peers: peers
@@ -866,6 +883,62 @@ fn project_message(message: MessageInfo) -> Message {
         failure: failed
             .then_some(TypedFailure { code: "terminal_message".into(), retryable: true }),
         lifecycle: Some(lifecycle),
+    }
+}
+
+fn project_identity_custody(custody: &IdentityCustodyInfo) -> IdentityCustody {
+    IdentityCustody {
+        requested_backend: match custody.requested_backend {
+            BackendCustodyBackend::Keychain => IdentityCustodyBackend::Keychain,
+            BackendCustodyBackend::AndroidKeystore => IdentityCustodyBackend::AndroidKeystore,
+            BackendCustodyBackend::EncryptedFile => IdentityCustodyBackend::EncryptedFile,
+            BackendCustodyBackend::PlaintextFile => IdentityCustodyBackend::PlaintextFile,
+        },
+        active_backend: custody.active_backend.map(|backend| match backend {
+            BackendCustodyBackend::Keychain => IdentityCustodyBackend::Keychain,
+            BackendCustodyBackend::AndroidKeystore => IdentityCustodyBackend::AndroidKeystore,
+            BackendCustodyBackend::EncryptedFile => IdentityCustodyBackend::EncryptedFile,
+            BackendCustodyBackend::PlaintextFile => IdentityCustodyBackend::PlaintextFile,
+        }),
+        protection: custody.protection.map(|protection| match protection {
+            BackendCustodyProtection::PlatformProtected => {
+                IdentityCustodyProtection::PlatformProtected
+            }
+            BackendCustodyProtection::EncryptedAtRest => IdentityCustodyProtection::EncryptedAtRest,
+            BackendCustodyProtection::DevelopmentPlaintext => {
+                IdentityCustodyProtection::DevelopmentPlaintext
+            }
+        }),
+        authentication: match custody.authentication {
+            BackendCustodyAuthentication::DeviceAuthentication => {
+                IdentityCustodyAuthentication::DeviceAuthentication
+            }
+            BackendCustodyAuthentication::HostKeyMaterial => {
+                IdentityCustodyAuthentication::HostKeyMaterial
+            }
+            BackendCustodyAuthentication::None => IdentityCustodyAuthentication::None,
+        },
+        availability: match custody.availability {
+            BackendCustodyAvailability::Available => IdentityCustodyAvailability::Available,
+            BackendCustodyAvailability::Unavailable => IdentityCustodyAvailability::Unavailable,
+        },
+        downgrade: match custody.downgrade {
+            BackendCustodyDowngrade::None => IdentityCustodyDowngrade::None,
+            BackendCustodyDowngrade::ActiveBackendMismatch => {
+                IdentityCustodyDowngrade::ActiveBackendMismatch
+            }
+        },
+        failure: custody.failure.as_ref().map(|failure| TypedFailure {
+            code: match failure.code {
+                BackendCustodyFailureCode::UnsupportedTarget => "unsupported_target",
+                BackendCustodyFailureCode::FeatureDisabled => "feature_disabled",
+                BackendCustodyFailureCode::AuthenticationRequired => "authentication_required",
+                BackendCustodyFailureCode::KeyMaterialRequired => "key_material_required",
+                BackendCustodyFailureCode::BackendFailure => "backend_failure",
+            }
+            .into(),
+            retryable: failure.retryable,
+        }),
     }
 }
 
@@ -1038,6 +1111,7 @@ fn failed_update(generation: u64, code: &str, _message: String) -> SessionUpdate
             identity_hash: String::new(),
             endpoint: Some(DEFAULT_ENDPOINT.into()),
             failure: Some(TypedFailure { code: code.into(), retryable: true }),
+            custody: None,
         },
         bearers: Vec::new(),
         peers: Vec::new(),
@@ -1074,6 +1148,7 @@ mod tests {
         assert_eq!(update.fixture.profile, Profile::Live);
         assert_eq!(update.fixture.session.phase, SessionPhase::Starting);
         assert!(update.fixture.session.failure.is_none());
+        assert!(update.fixture.session.custody.is_none());
     }
 
     #[test]
@@ -1087,6 +1162,35 @@ mod tests {
     fn backend_offline_ready_state_remains_distinct_from_reconnecting() {
         assert_eq!(project_phase(MobileConnectionPhase::Offline), SessionPhase::Offline);
         assert_eq!(SessionPhase::Offline.as_str(), "offline");
+    }
+
+    #[test]
+    fn backend_custody_projection_is_typed_and_secret_free() {
+        let custody = IdentityCustodyInfo {
+            requested_backend: BackendCustodyBackend::AndroidKeystore,
+            active_backend: Some(BackendCustodyBackend::AndroidKeystore),
+            protection: Some(BackendCustodyProtection::PlatformProtected),
+            authentication: BackendCustodyAuthentication::DeviceAuthentication,
+            availability: BackendCustodyAvailability::Unavailable,
+            downgrade: BackendCustodyDowngrade::None,
+            failure: Some(styrene_ipc::types::IdentityCustodyFailure {
+                code: BackendCustodyFailureCode::AuthenticationRequired,
+                retryable: true,
+            }),
+        };
+
+        let projected = project_identity_custody(&custody);
+
+        assert_eq!(projected.requested_backend, IdentityCustodyBackend::AndroidKeystore);
+        assert_eq!(projected.active_backend, Some(IdentityCustodyBackend::AndroidKeystore));
+        assert_eq!(projected.protection, Some(IdentityCustodyProtection::PlatformProtected));
+        assert_eq!(projected.authentication, IdentityCustodyAuthentication::DeviceAuthentication);
+        assert_eq!(projected.availability, IdentityCustodyAvailability::Unavailable);
+        assert_eq!(projected.downgrade, IdentityCustodyDowngrade::None);
+        assert_eq!(
+            projected.failure,
+            Some(TypedFailure { code: "authentication_required".into(), retryable: true })
+        );
     }
 
     #[test]

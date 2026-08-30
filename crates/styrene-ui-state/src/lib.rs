@@ -343,6 +343,113 @@ pub struct Session {
     pub identity_hash: String,
     pub endpoint: Option<String>,
     pub failure: Option<TypedFailure>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custody: Option<IdentityCustody>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IdentityCustody {
+    pub requested_backend: IdentityCustodyBackend,
+    pub active_backend: Option<IdentityCustodyBackend>,
+    pub protection: Option<IdentityCustodyProtection>,
+    pub authentication: IdentityCustodyAuthentication,
+    pub availability: IdentityCustodyAvailability,
+    pub downgrade: IdentityCustodyDowngrade,
+    pub failure: Option<TypedFailure>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyBackend {
+    Keychain,
+    AndroidKeystore,
+    EncryptedFile,
+    PlaintextFile,
+}
+
+impl IdentityCustodyBackend {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Keychain => "keychain",
+            Self::AndroidKeystore => "android_keystore",
+            Self::EncryptedFile => "encrypted_file",
+            Self::PlaintextFile => "plaintext_file",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyProtection {
+    PlatformProtected,
+    EncryptedAtRest,
+    DevelopmentPlaintext,
+}
+
+impl IdentityCustodyProtection {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PlatformProtected => "platform_protected",
+            Self::EncryptedAtRest => "encrypted_at_rest",
+            Self::DevelopmentPlaintext => "development_plaintext",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyAuthentication {
+    DeviceAuthentication,
+    HostKeyMaterial,
+    None,
+}
+
+impl IdentityCustodyAuthentication {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DeviceAuthentication => "device_authentication",
+            Self::HostKeyMaterial => "host_key_material",
+            Self::None => "none",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyAvailability {
+    Available,
+    Unavailable,
+}
+
+impl IdentityCustodyAvailability {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Available => "available",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityCustodyDowngrade {
+    None,
+    ActiveBackendMismatch,
+}
+
+impl IdentityCustodyDowngrade {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::ActiveBackendMismatch => "active_backend_mismatch",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

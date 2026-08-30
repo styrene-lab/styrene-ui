@@ -677,6 +677,45 @@ label {
   margin-block-end: 0;
 }
 
+.identity-custody {
+  margin-block-start: 1rem;
+  padding-block-start: 1rem;
+  border-block-start: var(--stroke) solid var(--line);
+}
+
+.identity-custody h4 {
+  margin-block: 0 0.75rem;
+}
+
+.identity-custody dl {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) minmax(0, 1.5fr);
+  gap: 0.5rem 1rem;
+  margin: 0;
+}
+
+.identity-custody dt {
+  color: var(--ink-muted);
+}
+
+.identity-custody dd {
+  min-inline-size: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+@media (max-width: 30rem) {
+  .identity-custody dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.25rem;
+  }
+
+  .identity-custody dd:not(:last-child) {
+    margin-block-end: 0.5rem;
+  }
+}
+
 /* Persistent destination navigation */
 
 .destination-bar {
