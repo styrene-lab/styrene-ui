@@ -10,8 +10,10 @@ use styrene_ui_platform::{
     WindowClass,
 };
 use styrene_ui_state::{
-    BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod, LocalAnnounceOutcome,
-    Message, MobileAction, MobileActionKind, MobileFixture, MobileStore, Peer, PropagationEvidence,
+    BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
+    IdentityCustodyAuthentication, IdentityCustodyAvailability, IdentityCustodyBackend,
+    IdentityCustodyDowngrade, IdentityCustodyProtection, LocalAnnounceOutcome, Message,
+    MobileAction, MobileActionKind, MobileFixture, MobileStore, Peer, PropagationEvidence,
     PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState, TargetClass, TransportEvidence,
 };
 
@@ -170,6 +172,47 @@ fn bearer_reason_label(reason: &str) -> &'static str {
         "permission_denied" => "Permission was denied.",
         "physical_evidence_absent" => "A physical-device connection has not been verified.",
         _ => "Additional diagnostic details are available for this bearer.",
+    }
+}
+
+const fn custody_backend_label(backend: IdentityCustodyBackend) -> &'static str {
+    match backend {
+        IdentityCustodyBackend::Keychain => "Apple Keychain",
+        IdentityCustodyBackend::AndroidKeystore => "Android Keystore",
+        IdentityCustodyBackend::EncryptedFile => "Encrypted file",
+        IdentityCustodyBackend::PlaintextFile => "Development plaintext file",
+    }
+}
+
+const fn custody_protection_label(protection: IdentityCustodyProtection) -> &'static str {
+    match protection {
+        IdentityCustodyProtection::PlatformProtected => "Platform protected",
+        IdentityCustodyProtection::EncryptedAtRest => "Encrypted at rest",
+        IdentityCustodyProtection::DevelopmentPlaintext => "Development plaintext",
+    }
+}
+
+const fn custody_authentication_label(
+    authentication: IdentityCustodyAuthentication,
+) -> &'static str {
+    match authentication {
+        IdentityCustodyAuthentication::DeviceAuthentication => "Device authentication",
+        IdentityCustodyAuthentication::HostKeyMaterial => "Host key material",
+        IdentityCustodyAuthentication::None => "None",
+    }
+}
+
+const fn custody_availability_label(availability: IdentityCustodyAvailability) -> &'static str {
+    match availability {
+        IdentityCustodyAvailability::Available => "Available",
+        IdentityCustodyAvailability::Unavailable => "Unavailable",
+    }
+}
+
+const fn custody_downgrade_label(downgrade: IdentityCustodyDowngrade) -> &'static str {
+    match downgrade {
+        IdentityCustodyDowngrade::None => "None",
+        IdentityCustodyDowngrade::ActiveBackendMismatch => "Active backend mismatch",
     }
 }
 
@@ -1013,6 +1056,61 @@ pub fn MobileShell(
                         class: "identity",
                         "aria-label": format!("Local identity {}", fixture.session.identity_hash),
                         {fixture.session.identity_hash.clone()}
+                    }
+                    if let Some(custody) = &fixture.session.custody {
+                        section {
+                            id: "mobile.identity-custody",
+                            class: "identity-custody",
+                            "aria-labelledby": "mobile.identity-custody-heading",
+                            "data-availability": custody.availability.as_str(),
+                            "data-downgrade": custody.downgrade.as_str(),
+                            h4 { id: "mobile.identity-custody-heading", "Identity custody" }
+                            dl {
+                                dt { "Requested storage" }
+                                dd {
+                                    id: "mobile.identity-custody-requested",
+                                    "data-backend": custody.requested_backend.as_str(),
+                                    {custody_backend_label(custody.requested_backend)}
+                                }
+                                dt { "Active storage" }
+                                dd {
+                                    id: "mobile.identity-custody-active",
+                                    "data-backend": custody.active_backend.map(IdentityCustodyBackend::as_str),
+                                    {custody.active_backend.map_or("Unavailable", custody_backend_label)}
+                                }
+                                dt { "Protection" }
+                                dd {
+                                    id: "mobile.identity-custody-protection",
+                                    "data-protection": custody.protection.map(IdentityCustodyProtection::as_str),
+                                    {custody.protection.map_or("Unavailable", custody_protection_label)}
+                                }
+                                dt { "Authentication" }
+                                dd {
+                                    id: "mobile.identity-custody-authentication",
+                                    "data-authentication": custody.authentication.as_str(),
+                                    {custody_authentication_label(custody.authentication)}
+                                }
+                                dt { "Availability" }
+                                dd {
+                                    id: "mobile.identity-custody-availability",
+                                    {custody_availability_label(custody.availability)}
+                                }
+                                dt { "Downgrade" }
+                                dd {
+                                    id: "mobile.identity-custody-downgrade",
+                                    {custody_downgrade_label(custody.downgrade)}
+                                }
+                            }
+                            if let Some(failure) = &custody.failure {
+                                p {
+                                    id: "mobile.identity-custody-failure",
+                                    role: "status",
+                                    "data-code": failure.code.clone(),
+                                    "data-retryable": failure.retryable.to_string(),
+                                    "Identity custody is unavailable: {failure.code}"
+                                }
+                            }
+                        }
                     }
                 }
                 article {
