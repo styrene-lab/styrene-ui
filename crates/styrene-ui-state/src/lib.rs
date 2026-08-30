@@ -631,6 +631,7 @@ impl RuntimeBoundary {
 #[serde(rename_all = "snake_case")]
 pub enum SessionPhase {
     Starting,
+    Offline,
     Connected,
     Reconnecting,
     Failed,
@@ -641,6 +642,7 @@ impl SessionPhase {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Starting => "starting",
+            Self::Offline => "offline",
             Self::Connected => "connected",
             Self::Reconnecting => "reconnecting",
             Self::Failed => "failed",
