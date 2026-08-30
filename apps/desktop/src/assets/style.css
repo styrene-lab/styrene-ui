@@ -2539,10 +2539,11 @@ body {
     }
 }
 .network-operations {
-  margin-bottom: 1rem;
-  padding: 1rem;
-  border: 1px solid var(--border, #30363d);
-  background: color-mix(in srgb, var(--panel, #161b22) 92%, #58a6ff 8%);
+  margin: 14px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: linear-gradient(135deg, rgba(88, 166, 255, 0.08), transparent 42%), var(--surface);
 }
 
 .network-operation-heading,
@@ -2554,20 +2555,83 @@ body {
   flex-wrap: wrap;
 }
 
-.network-operation-heading { justify-content: space-between; }
-.network-operation-heading h2 { margin: 0; }
-.network-operation-heading p { margin: .2rem 0 .75rem; color: var(--muted, #8b949e); }
-.network-operation-inputs input { flex: 1 1 13rem; min-width: 0; }
-.network-operation-actions { margin-top: .7rem; }
-.network-operation-disabled { color: #f85149; }
-.network-operation-ready { color: #3fb950; }
+.network-operation-heading { justify-content: space-between; align-items: flex-start; }
+.network-operation-heading h2 { margin: 2px 0 0; font-size: 21px; }
+.network-operation-heading p { margin: .25rem 0 1rem; color: var(--text-muted); }
+.network-operation-kicker {
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.network-operation-status {
+  padding: 5px 9px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.network-operation-status.unavailable { color: var(--orange); }
+.network-operation-inputs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.network-operation-field { display: grid; gap: 5px; min-width: 0; }
+.network-operation-field > span {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.network-operation-field input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.network-operation-field input::placeholder { color: var(--text-dim); }
+.network-operation-field input:focus { border-color: var(--accent); outline: none; }
+.network-operation-actions { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); margin-top: 12px; }
+.network-action-tile {
+  display: grid;
+  align-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  min-height: 74px;
+  padding: 9px;
+  background: rgba(13, 17, 23, .48);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.network-action-tile small { color: var(--text-muted); font-size: 10px; line-height: 1.3; }
+.network-operation-button {
+  padding: 7px 9px;
+  color: var(--text);
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.network-operation-button:not(:disabled):hover { color: var(--accent); border-color: var(--accent); }
+.network-operation-button.danger:not(:disabled) { color: var(--red); }
+.network-operation-button:disabled { color: var(--text-muted); opacity: .62; }
+.network-action-guidance { margin-top: 8px; color: var(--text-muted); font-size: 11px; }
 
 .network-observation-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: .7rem;
   margin-top: 1rem;
 }
+.network-observation-panel { min-width: 0; padding: 12px; background: rgba(13, 17, 23, .38); border: 1px solid var(--border); border-radius: 6px; }
+.network-observation-panel h3 { color: var(--text); font-size: 12px; }
+.network-observation-empty { margin-top: 5px; color: var(--text-muted); font-size: 11px; }
 
 .network-observation {
   display: grid;
@@ -2604,7 +2668,9 @@ body {
   }
   .network-observation-grid { grid-template-columns: 1fr; }
   .network-observation { grid-template-columns: 1fr; }
-  .network-operation-actions button { flex: 1 1 9rem; }
+  .network-operation-inputs { grid-template-columns: 1fr; }
+  .network-operation-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .network-operation-heading { flex-direction: column; }
 }
 .modal-backdrop {
     position: fixed;
