@@ -1,0 +1,18 @@
+[application]
+name = "Styrene"
+default_platform = "mobile"
+
+[ios]
+identifier = "io.styrene.mesh"
+deployment_target = "17.0"
+
+[permissions]
+camera = { description = "Styrene uses the camera to scan mesh device and contact codes." }
+bluetooth = { description = "Styrene uses Bluetooth to discover and communicate with nearby mesh radios." }
+
+[bundle]
+identifier = "io.styrene.mesh"
+publisher = "Styrene Labs"
+category = "public.app-category.social-networking"
+short_description = "Styrene mesh communicator for iOS"
+long_description = "Styrene is a Rust-owned Reticulum and LXMF mesh communicator for iOS."
