@@ -1,14 +1,15 @@
 //! IPC adapter for live and explicitly selected embedded daemon sessions.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tokio::net::UnixStream;
-use tokio::sync::{mpsc, oneshot, Mutex, Semaphore};
-use tokio::time::{timeout, Duration};
-use tracing::{debug, error, info, info_span, warn, Instrument};
+use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
+use tokio::time::{Duration, timeout};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use rmpv::Value as MpValue;
+use styrene_ipc::IpcError;
 use styrene_ipc::types::{
     ActiveCapabilitiesInfo, DaemonStatusInfo, DegradedCapabilityInfo, DeviceInfo,
     DiscoveredCapability, ExecResult, IdentityInfo, LinkEvent, LinkSnapshot, MessageInfo,
@@ -18,7 +19,6 @@ use styrene_ipc::types::{
     RouteEventKind, RouteLossReason, StandardPropagationSnapshot, StartNetworkOperationInfo,
     StartRequestInfo,
 };
-use styrene_ipc::IpcError;
 use styrene_ipc_server::wire::{self, Frame, MessageType, REQUEST_ID_SIZE};
 
 /// A single entry from the path table — routing info for one destination.
@@ -1375,10 +1375,10 @@ pub(crate) struct EmbeddedDaemon {
 impl EmbeddedDaemon {
     pub(crate) async fn shutdown(self) {
         self.handle.shutdown().await;
-        if let Err(error) = std::fs::remove_dir_all(&self.root) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                warn!(target: "dx::bridge", %error, path = %self.root.display(), "embedded state cleanup failed");
-            }
+        if let Err(error) = std::fs::remove_dir_all(&self.root)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            warn!(target: "dx::bridge", %error, path = %self.root.display(), "embedded state cleanup failed");
         }
     }
 
@@ -1900,6 +1900,9 @@ fn parse_observation(map: &[(MpValue, MpValue)]) -> ObservationMetadata {
     };
     observation.observed_at = item("observed_at").and_then(MpValue::as_i64);
     observation.connection_generation = item("connection_generation").and_then(MpValue::as_u64);
+    observation.ipc_connection_generation =
+        item("ipc_connection_generation").and_then(MpValue::as_u64);
+    observation.interface_generation = item("interface_generation").and_then(MpValue::as_u64);
     observation.age_secs = item("age_secs").and_then(MpValue::as_u64);
     observation.freshness_threshold_secs =
         item("freshness_threshold_secs").and_then(MpValue::as_u64);
@@ -2040,6 +2043,7 @@ fn parse_identity(p: &HashMap<String, MpValue>) -> IdentityInfo {
     info.display_name = mp_str(p, "display_name");
     info.icon = p.get("icon").and_then(|v| v.as_str()).map(|s| s.to_string());
     info.short_name = p.get("short_name").and_then(|v| v.as_str()).map(ToOwned::to_owned);
+    info.custody = p.get("custody").cloned().and_then(|value| rmpv::ext::from_value(value).ok());
     info
 }
 
@@ -2218,20 +2222,21 @@ mod tests {
     fn response_validation_requires_matching_request_id() {
         let request_id = [7; REQUEST_ID_SIZE];
         assert!(validate_response(frame(MessageType::Result, request_id), request_id).is_ok());
-        assert!(validate_response(frame(MessageType::Result, [8; REQUEST_ID_SIZE]), request_id)
-            .unwrap_err()
-            .to_string()
-            .contains("request ID mismatch"));
+        assert!(
+            validate_response(frame(MessageType::Result, [8; REQUEST_ID_SIZE]), request_id)
+                .unwrap_err()
+                .to_string()
+                .contains("request ID mismatch")
+        );
     }
 
     #[test]
     fn response_validation_rejects_events_and_errors() {
         let request_id = [9; REQUEST_ID_SIZE];
-        assert!(validate_response(
-            frame(MessageType::EventDevice, [0; REQUEST_ID_SIZE]),
-            request_id
-        )
-        .is_err());
+        assert!(
+            validate_response(frame(MessageType::EventDevice, [0; REQUEST_ID_SIZE]), request_id)
+                .is_err()
+        );
         let mut error = frame(MessageType::Error, request_id);
         error.payload.insert("error".into(), MpValue::from("denied"));
         assert_eq!(validate_response(error, request_id).unwrap_err().to_string(), "denied");

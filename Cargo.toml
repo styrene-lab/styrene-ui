@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "apps/desktop",
     "apps/mobile",
     "apps/mobile-android",
     "apps/mobile-ios",
@@ -9,7 +10,6 @@ members = [
     "crates/styrene-ui-platform",
     "crates/styrene-ui-state",
 ]
-exclude = ["apps/desktop"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,13 +21,27 @@ authors = ["Styrene Labs"]
 
 [workspace.dependencies]
 async-channel = "2"
+async-trait = "0.1"
 dioxus = { version = "=0.8.0-alpha.1", default-features = false, features = ["html", "macro", "signals"] }
 dioxus-ssr = { version = "=0.8.0-alpha.1", default-features = false }
+futures-util = "0.3"
+hex = "0.4"
+log = "0.4.27"
+rand_core = "0.6.4"
+rmp-serde = "1.3.0"
+rmpv = { version = "1.3.0", features = ["with-serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+styrene-interop-runner = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "899da81302c5f4e92f60a2fdaf396c26e813ba76" }
+styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "899da81302c5f4e92f60a2fdaf396c26e813ba76" }
+styrene-ipc-server = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "899da81302c5f4e92f60a2fdaf396c26e813ba76" }
+styrene-micron = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "899da81302c5f4e92f60a2fdaf396c26e813ba76" }
+styrene-rns = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "899da81302c5f4e92f60a2fdaf396c26e813ba76" }
 styrene-ui-state = { path = "crates/styrene-ui-state" }
 styrene-ui-platform = { path = "crates/styrene-ui-platform" }
+styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "899da81302c5f4e92f60a2fdaf396c26e813ba76" }
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+tracing = "0.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

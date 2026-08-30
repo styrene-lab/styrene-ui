@@ -8,6 +8,8 @@ The repository began as a history-preserving extraction of
 - Extracted path: `crates/apps/styrene-dx`
 - Initial extracted revision: `c640db4`
 - Destination: `https://github.com/styrene-lab/styrene-ui.git`
+- Desktop synchronization revision: `899da81302c5f4e92f60a2fdaf396c26e813ba76`
+- Tested backend contract revision: `899da81302c5f4e92f60a2fdaf396c26e813ba76`
 
 The extraction ran from an isolated clone with:
 
@@ -17,3 +19,8 @@ git push styrene-ui styrene-ui-main:main
 ```
 
 The source checkout and its history were not rewritten.
+
+Before the authority switch, the extracted desktop tree was synchronized with
+the source tree at the desktop synchronization revision above. All desktop
+backend dependencies are Git dependencies pinned to that same full revision;
+the workspace does not require a sibling `styrene-rs` checkout.
