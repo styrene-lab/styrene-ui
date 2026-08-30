@@ -895,6 +895,7 @@ fn project_lifecycle(lifecycle: MessageLifecycleState) -> MessageLifecycle {
 fn project_phase(phase: MobileConnectionPhase) -> SessionPhase {
     match phase {
         MobileConnectionPhase::Connected => SessionPhase::Connected,
+        MobileConnectionPhase::Offline => SessionPhase::Offline,
         MobileConnectionPhase::Failed => SessionPhase::Failed,
         MobileConnectionPhase::Stopped
         | MobileConnectionPhase::Starting
@@ -1080,6 +1081,12 @@ mod tests {
         assert_eq!(project_method(None), DeliveryMethod::Unknown);
         assert_eq!(project_method(Some("future-method")), DeliveryMethod::Unknown);
         assert_eq!(project_method(Some("direct")), DeliveryMethod::Direct);
+    }
+
+    #[test]
+    fn backend_offline_ready_state_remains_distinct_from_reconnecting() {
+        assert_eq!(project_phase(MobileConnectionPhase::Offline), SessionPhase::Offline);
+        assert_eq!(SessionPhase::Offline.as_str(), "offline");
     }
 
     #[test]
