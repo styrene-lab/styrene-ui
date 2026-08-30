@@ -516,6 +516,9 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
         "--radius-control:",
         "--radius-panel:",
         "--radius-status:",
+        "--size-touch-ios:",
+        "--size-touch-android:",
+        "--content-measure:",
         "--navigation-active:",
         "min-inline-size: 20rem",
         "font: -apple-system-body",
@@ -524,9 +527,9 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
         "min-block-size: 100dvh",
         "env(safe-area-inset-top)",
         "env(safe-area-inset-bottom)",
-        "min-block-size: 2.75rem",
+        "min-block-size: var(--size-touch-ios)",
         "[data-target=\"android\"] button",
-        "min-block-size: 3.25rem",
+        "min-block-size: var(--size-touch-android)",
         "flex-wrap: wrap",
         "overflow-wrap: anywhere",
         "@media (min-width: 52rem)",
@@ -539,6 +542,9 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
     }
 
     assert!(!MOBILE_CSS.contains("outline: none"));
+    assert!(!MOBILE_CSS.contains("#mobile\\."));
+    assert!(MOBILE_CSS.contains(".surface-card {"));
+    assert!(MOBILE_CSS.contains(".primary-action {"));
     assert!(MOBILE_CSS.contains(
         ".destination-bar {\n  position: fixed;\n  inset-inline: 0;\n  inset-block-end: 0;"
     ));
@@ -796,7 +802,7 @@ fn stale_propagation_metadata_disables_manual_sync_without_losing_selection() {
 
     assert!(markup.contains("780e7aa7b2f175c88f28c7ba8ab1b714"));
     assert!(markup.contains("data-ready=\"false\""));
-    assert!(markup.contains("id=\"mobile.propagation-sync\" disabled"));
+    assert!(opening_tag_with_id(&markup, "mobile.propagation-sync").contains("disabled"));
     assert!(markup.contains("Selected node is currently unavailable"));
 }
 
