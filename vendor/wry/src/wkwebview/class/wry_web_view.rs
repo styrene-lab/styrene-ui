@@ -67,7 +67,9 @@ define_class!(
       if let Some(builder) = &self.ivars().input_accessory_view_builder {
         builder(self)
       } else {
-        unsafe { objc2::msg_send![super(self), inputAccessoryView] }
+        // iOS already exposes keyboard dismissal. WebKit's form toolbar
+        // duplicates that action on iPhone in landscape.
+        None
       }
     }
   }
