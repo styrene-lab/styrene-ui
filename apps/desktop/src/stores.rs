@@ -449,7 +449,7 @@ impl DomainStores {
         let Some(expected) = self.runtime.server_generation else {
             return;
         };
-        if paths.iter().any(|path| path.observation.connection_generation != Some(expected)) {
+        if paths.iter().any(|path| path.observation.ipc_generation() != Some(expected)) {
             return;
         }
         self.network.paths = paths
@@ -479,7 +479,7 @@ impl DomainStores {
         };
         if interfaces
             .iter()
-            .any(|interface| interface.observation.connection_generation != Some(expected))
+            .any(|interface| interface.observation.ipc_generation() != Some(expected))
         {
             return;
         }
@@ -499,9 +499,9 @@ impl DomainStores {
     ) {
         if self.accepts(generation)
             && self.runtime.server_generation.is_some()
-            && operations.iter().all(|value| {
-                value.observation.connection_generation == self.runtime.server_generation
-            })
+            && operations
+                .iter()
+                .all(|value| value.observation.ipc_generation() == self.runtime.server_generation)
         {
             for operation in &mut operations {
                 if operation.detail.is_some() {
@@ -527,7 +527,7 @@ impl DomainStores {
             .active
             .iter()
             .chain(&snapshot.history)
-            .any(|value| value.observation.connection_generation != self.runtime.server_generation)
+            .any(|value| value.observation.ipc_generation() != self.runtime.server_generation)
         {
             return;
         }
@@ -543,9 +543,9 @@ impl DomainStores {
     ) {
         if self.accepts(generation)
             && self.runtime.server_generation.is_some()
-            && requests.iter().all(|value| {
-                value.observation.connection_generation == self.runtime.server_generation
-            })
+            && requests
+                .iter()
+                .all(|value| value.observation.ipc_generation() == self.runtime.server_generation)
         {
             for request in &mut requests {
                 request.response = None;
@@ -561,9 +561,9 @@ impl DomainStores {
     ) {
         if self.accepts(generation)
             && self.runtime.server_generation.is_some()
-            && resources.iter().all(|value| {
-                value.observation.connection_generation == self.runtime.server_generation
-            })
+            && resources
+                .iter()
+                .all(|value| value.observation.ipc_generation() == self.runtime.server_generation)
         {
             self.network.resources = resources;
         }
@@ -937,14 +937,12 @@ impl DomainStores {
         if !self.accepts(generation) {
             return;
         }
-        if append {
-            if let Some(current) = &self.propagation.snapshot {
-                let mut queue = current.queue.clone();
-                queue.extend(snapshot.queue);
-                queue.sort_by(|left, right| left.id.cmp(&right.id));
-                queue.dedup_by(|left, right| left.id == right.id);
-                snapshot.queue = queue;
-            }
+        if append && let Some(current) = &self.propagation.snapshot {
+            let mut queue = current.queue.clone();
+            queue.extend(snapshot.queue);
+            queue.sort_by(|left, right| left.id.cmp(&right.id));
+            queue.dedup_by(|left, right| left.id == right.id);
+            snapshot.queue = queue;
         }
         self.propagation.enabled = snapshot.enabled;
         self.propagation.state = if snapshot.enabled { DataState::Ready } else { DataState::Empty };
@@ -1276,7 +1274,7 @@ impl DomainStores {
         &self,
         observation: &styrene_ipc::types::ObservationMetadata,
     ) -> bool {
-        observation.connection_generation.is_some_and(|actual| {
+        observation.ipc_generation().is_some_and(|actual| {
             self.runtime.server_generation == Some(actual)
                 || self.runtime.event_server_generation == Some(actual)
         })
@@ -1521,10 +1519,10 @@ fn redact_endpoint(value: String) -> String {
     if ["token=", "password=", "secret="].iter().any(|marker| lowered.contains(marker)) {
         return "[REDACTED]".into();
     }
-    if let Some((scheme, remainder)) = without_query.split_once("://") {
-        if let Some((_, host)) = remainder.rsplit_once('@') {
-            return format!("{scheme}://[REDACTED]@{host}");
-        }
+    if let Some((scheme, remainder)) = without_query.split_once("://")
+        && let Some((_, host)) = remainder.rsplit_once('@')
+    {
+        return format!("{scheme}://[REDACTED]@{host}");
     }
     without_query.into()
 }
@@ -2401,19 +2399,20 @@ mod tests {
         degraded.id = "network.announce".into();
         degraded.reason = "transport worker unavailable".into();
         stores.runtime.capabilities.as_mut().unwrap().degraded.push(degraded);
-        assert!(stores
-            .mutation_availability("network.announce")
-            .unwrap_err()
-            .contains("transport worker unavailable"));
+        assert!(
+            stores
+                .mutation_availability("network.announce")
+                .unwrap_err()
+                .contains("transport worker unavailable")
+        );
 
         stores.apply_daemon_event(
             ConnectionGeneration(2),
             DaemonEvent::Disconnected("closed".into()),
         );
-        assert!(stores
-            .mutation_availability("network.announce")
-            .unwrap_err()
-            .contains("disconnected"));
+        assert!(
+            stores.mutation_availability("network.announce").unwrap_err().contains("disconnected")
+        );
         stores.begin_session("new", ConnectionGeneration(3));
         assert!(stores.runtime.capabilities.is_none());
     }
@@ -2421,7 +2420,7 @@ mod tests {
     #[test]
     fn operator_fixture_catalog_exercises_each_universal_execution_gate() {
         use styrene_ipc::operator_fixtures::{
-            operator_fixture_evidence, OperatorFixtureState, OPERATOR_FIXTURE_OPERATIONS,
+            OPERATOR_FIXTURE_OPERATIONS, OperatorFixtureState, operator_fixture_evidence,
         };
 
         for operation in OPERATOR_FIXTURE_OPERATIONS {
@@ -2512,14 +2511,18 @@ mod tests {
         stores.apply_daemon_event(ConnectionGeneration(2), DaemonEvent::Status(status));
 
         assert!(stores.mutation_availability_at(ConnectionGeneration(2), "page.browse").is_ok());
-        assert!(stores
-            .mutation_availability_at(ConnectionGeneration(1), "page.browse")
-            .unwrap_err()
-            .contains("stale"));
-        assert!(stores
-            .mutation_availability_at(ConnectionGeneration(2), "rpc.status")
-            .unwrap_err()
-            .contains("denied"));
+        assert!(
+            stores
+                .mutation_availability_at(ConnectionGeneration(1), "page.browse")
+                .unwrap_err()
+                .contains("stale")
+        );
+        assert!(
+            stores
+                .mutation_availability_at(ConnectionGeneration(2), "rpc.status")
+                .unwrap_err()
+                .contains("denied")
+        );
     }
 
     #[test]
@@ -2670,8 +2673,12 @@ mod tests {
         let mut operation = styrene_ipc::types::NetworkOperationInfo::default();
         operation.operation_id = "operation".into();
 
-        assert!(!stores
-            .apply_daemon_event(ConnectionGeneration(2), DaemonEvent::NetworkOperation(operation)));
+        assert!(
+            !stores.apply_daemon_event(
+                ConnectionGeneration(2),
+                DaemonEvent::NetworkOperation(operation)
+            )
+        );
         assert!(stores.network.operations.is_empty());
     }
 
