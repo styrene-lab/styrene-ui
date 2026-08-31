@@ -10,6 +10,7 @@ use styrene_ipc::types::{
     ResourceTransferInfo, StandardPropagationSnapshot, StartNetworkOperationInfo, StartRequestInfo,
 };
 use tokio::sync::{Mutex, mpsc};
+use tokio::time::{Duration, timeout};
 
 use crate::daemon_bridge::{self, DaemonEvent, InterfaceStats, PathTableEntry};
 
@@ -327,7 +328,8 @@ pub async fn open_session(
 ) -> Result<OpenedSession, String> {
     match profile {
         RuntimeProfile::Live { socket_path } => {
-            let (broker, events) = daemon_bridge::connect_ipc(&socket_path, generation).await?;
+            let (broker, events) =
+                open_live_session(&socket_path, generation, Duration::from_secs(15)).await?;
             Ok(OpenedSession {
                 backend: Arc::new(IpcBackend {
                     profile: RuntimeProfile::Live { socket_path },
@@ -356,6 +358,16 @@ pub async fn open_session(
         }
         RuntimeProfile::Fixture { fixture } => Ok(open_fixture(fixture, generation)),
     }
+}
+
+async fn open_live_session(
+    socket_path: &std::path::Path,
+    generation: ConnectionGeneration,
+    deadline: Duration,
+) -> Result<(daemon_bridge::RequestBroker, mpsc::Receiver<DaemonEvent>), String> {
+    timeout(deadline, daemon_bridge::connect_ipc(socket_path, generation))
+        .await
+        .map_err(|_| "daemon session negotiation timed out".to_string())?
 }
 
 struct IpcBackend {
@@ -1181,5 +1193,29 @@ mod tests {
         let result =
             open_session(RuntimeProfile::Live { socket_path: path }, ConnectionGeneration(1)).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn live_session_negotiation_has_a_finite_deadline() {
+        // Unix-domain socket paths are limited to roughly 100 bytes on macOS.
+        let path =
+            PathBuf::from(format!("/tmp/styrene-dx-unresponsive-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let listener =
+            tokio::net::UnixListener::bind(&path).expect("bind unresponsive daemon socket");
+        let server = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.expect("accept desktop connection");
+            std::future::pending::<()>().await;
+        });
+
+        let result =
+            open_live_session(&path, ConnectionGeneration(1), Duration::from_millis(25)).await;
+
+        server.abort();
+        let _ = std::fs::remove_file(path);
+        assert!(
+            matches!(result, Err(error) if error == "daemon session negotiation timed out"),
+            "unresponsive daemon must time out"
+        );
     }
 }
