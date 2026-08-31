@@ -4,15 +4,15 @@
 bytes, and parity claims. This repository owns presentation fixtures and
 packaged-target replay evidence only.
 
-The current integration revision is
-`899da81302c5f4e92f60a2fdaf396c26e813ba76` from
+The current integration baseline revision is
+`a6e4380117b9bdf509a944efd7fadb8ac6ccd225` from
 `https://github.com/styrene-lab/styrene-rs.git`.
 
 | Corpus | Backend path | UI status | SHA-256 |
 |---|---|---|---|
 | Mobile minimum v1 (`styrene-mobile-minimum-v1`) | `tests/fixtures/mobile-minimum-v1/states.json` | Mirrored semantically under `tests/fixtures/mobile-minimum-v1` | Canonical JSON `64dadb685eddad5dd80d954708eeb894a1784d8dbd5c025122a093ac6110b00c` |
 | Mobile integration v1 (`styrene-mobile-integration-v1`) | `tests/fixtures/mobile-integration-v1/corpus.json` | 56-case authoritative acceptance inventory; referenced by ID, not mirrored | File `391932fe38c4841826d7130549554f7f5e89730099ac75f4791e9881abe6e59c` |
-| Mobile application parity v1 (`styrene-mobile-application-parity-v1`) | `tests/fixtures/mobile-application-parity-v1/corpus.json` | Exact 11-row copy with backend provenance; not packaged evidence | File `a43b5e749202e25df1cd4bfbfc90e4d996b59d7e0375beff008ffb85617cbea4` |
+| Mobile application parity v1 (`styrene-mobile-application-parity-v1`) | `tests/fixtures/mobile-application-parity-v1/corpus.json` | Exact 11-row working copy with uncommitted Skywave build 9 candidate; not release or packaged evidence | File `2e6ea065cc414cb4d5e35669eb690736f12561dd837dd139c56ee920938b81cd` |
 | RNS fixture index v2 | `tests/interop/fixtures/rns/index-v2.json` | Tracked backend protocol authority; Not consumed by UI | File `67a7573fdf6433ea66717c5cfec6deb11173a80fc5addacb91003f3851cf3fea` |
 
 The tracked RNS v2 index identifies Reticulum 1.5.1 revision
