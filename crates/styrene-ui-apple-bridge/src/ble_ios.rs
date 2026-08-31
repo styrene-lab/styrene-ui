@@ -23,7 +23,7 @@ use styrene_ui_platform::{
 use crate::{
     CoreBluetoothApply, CoreBluetoothAttemptBoundary, CoreBluetoothEffect, CoreBluetoothFailure,
     CoreBluetoothGeneration, CoreBluetoothManagerState, CoreBluetoothNusCharacteristics,
-    CoreBluetoothWriteToken,
+    CoreBluetoothNusShutdown, CoreBluetoothWriteToken,
 };
 
 const EVENT_CAPACITY: usize = 64;
@@ -56,12 +56,14 @@ struct DelegateState {
     active_id: Option<String>,
     boundary: Option<CoreBluetoothAttemptBoundary>,
     pending_write: Option<CoreBluetoothWriteToken>,
+    dfu_shutdown_requested: bool,
 }
 
 struct BleDelegateIvars {
     events: Sender<IosBleEvent>,
     reads: Sender<Result<Vec<u8>, PlatformFailure>>,
     writes: Sender<Result<(), PlatformFailure>>,
+    shutdowns: Sender<Result<CoreBluetoothNusShutdown, PlatformFailure>>,
     state: Mutex<DelegateState>,
 }
 
@@ -141,8 +143,8 @@ define_class!(
             peripheral: &CBPeripheral,
             error: Option<&NSError>,
         ) {
-            let generation = self.take_active(peripheral);
-            if let Some(generation) = generation {
+            let active = self.take_active(peripheral);
+            if let Some((generation, shutdown)) = active {
                 let diagnostic_code = ns_error_code("ios_ble_disconnected", error);
                 self.send_event(IosBleEvent::Disconnected {
                     generation,
@@ -151,6 +153,10 @@ define_class!(
                 let _ = self
                     .reads()
                     .try_send(Err(PlatformFailure { code: diagnostic_code, retryable: true }));
+                let _ = self.writes().try_send(Err(failure("ios_ble_disconnected", true)));
+                if let Some(shutdown) = shutdown {
+                    let _ = self.ivars().shutdowns.try_send(shutdown);
+                }
             }
         }
     }
@@ -297,11 +303,13 @@ impl BleDelegate {
         events: Sender<IosBleEvent>,
         reads: Sender<Result<Vec<u8>, PlatformFailure>>,
         writes: Sender<Result<(), PlatformFailure>>,
+        shutdowns: Sender<Result<CoreBluetoothNusShutdown, PlatformFailure>>,
     ) -> Retained<Self> {
         let this = Self::alloc().set_ivars(BleDelegateIvars {
             events,
             reads,
             writes,
+            shutdowns,
             state: Mutex::new(DelegateState {
                 scan_generation: None,
                 scanning: false,
@@ -309,6 +317,7 @@ impl BleDelegate {
                 active_id: None,
                 boundary: None,
                 pending_write: None,
+                dfu_shutdown_requested: false,
             }),
         });
         // SAFETY: NSObject's parameterless init receives fully initialized ivars.
@@ -394,22 +403,40 @@ impl BleDelegate {
     }
 
     fn finish_connection(&self, peripheral: &CBPeripheral, failure: CoreBluetoothFailure) {
-        if let Some(generation) = self.take_active(peripheral) {
+        if let Some((generation, _)) = self.take_active(peripheral) {
             self.send_event(IosBleEvent::Failed { generation, failure });
         }
     }
 
-    fn take_active(&self, peripheral: &CBPeripheral) -> Option<CoreBluetoothGeneration> {
+    fn take_active(
+        &self,
+        peripheral: &CBPeripheral,
+    ) -> Option<(CoreBluetoothGeneration, Option<Result<CoreBluetoothNusShutdown, PlatformFailure>>)>
+    {
         let id = peripheral_id_string(peripheral);
         let mut state = self.ivars().state.lock().ok()?;
         if state.active_id != id {
             return None;
         }
         let generation = state.active_generation.take()?;
+        let shutdown = if state.dfu_shutdown_requested {
+            Some(state.boundary.as_mut().map_or_else(
+                || Err(failure("ios_ble_shutdown_boundary_missing", false)),
+                |boundary| {
+                    boundary.disconnected(generation);
+                    boundary
+                        .shutdown_token(generation)
+                        .map_err(|_| failure("ios_ble_shutdown_token_failed", false))
+                },
+            ))
+        } else {
+            None
+        };
         state.active_id = None;
         state.boundary = None;
         state.pending_write = None;
-        Some(generation)
+        state.dfu_shutdown_requested = false;
+        Some((generation, shutdown))
     }
 
     fn apply_write_completion(&self, succeeded: bool) -> Result<(), PlatformFailure> {
@@ -436,6 +463,13 @@ pub struct IosBleAdapter {
     events: Option<Receiver<IosBleEvent>>,
     reads: Receiver<Result<Vec<u8>, PlatformFailure>>,
     writes: Receiver<Result<(), PlatformFailure>>,
+    shutdowns: Receiver<Result<CoreBluetoothNusShutdown, PlatformFailure>>,
+}
+
+#[derive(Debug)]
+pub struct IosBleDfuHandoff {
+    pub(crate) shutdown: CoreBluetoothNusShutdown,
+    pub(crate) peripheral_id: BlePeripheralId,
 }
 
 impl IosBleAdapter {
@@ -444,7 +478,8 @@ impl IosBleAdapter {
         let (event_sender, events) = async_channel::bounded(EVENT_CAPACITY);
         let (read_sender, reads) = async_channel::bounded(BYTE_CAPACITY);
         let (write_sender, writes) = async_channel::bounded(1);
-        let delegate = BleDelegate::new(event_sender, read_sender, write_sender);
+        let (shutdown_sender, shutdowns) = async_channel::bounded(1);
+        let delegate = BleDelegate::new(event_sender, read_sender, write_sender, shutdown_sender);
         // SAFETY: The adapter retains the manager and delegate for the same lifetime.
         // A nil queue selects Apple's serial main dispatch queue.
         let manager = unsafe {
@@ -454,7 +489,15 @@ impl IosBleAdapter {
                 None,
             )
         };
-        Self { delegate, manager, active: RefCell::new(None), events: Some(events), reads, writes }
+        Self {
+            delegate,
+            manager,
+            active: RefCell::new(None),
+            events: Some(events),
+            reads,
+            writes,
+            shutdowns,
+        }
     }
 
     pub fn take_event_stream(&mut self) -> Option<IosBleEventStream> {
@@ -536,12 +579,59 @@ impl IosBleAdapter {
             state.active_id = Some(id.as_str().to_owned());
             state.boundary = Some(boundary);
             state.pending_write = None;
+            state.dfu_shutdown_requested = false;
         }
         self.stop_scan();
         self.active.replace(Some(peripheral.clone()));
         // SAFETY: The adapter retains the retrieved peripheral until terminal close.
         unsafe { self.manager.connectPeripheral_options(&peripheral, None) };
         Ok(())
+    }
+
+    /// Irreversibly stop NUS and wait for CoreBluetooth disconnect evidence.
+    ///
+    /// The caller supplies the separately admitted DFU peripheral identity. This
+    /// method never scans for or selects a bootloader peripheral.
+    ///
+    /// # Errors
+    ///
+    /// Returns a platform failure for inactive attempts, pending writes, duplicate
+    /// handoff, or a failed disconnect callback.
+    pub async fn shutdown_for_dfu(
+        self,
+        peripheral_id: BlePeripheralId,
+    ) -> Result<IosBleDfuHandoff, PlatformFailure> {
+        self.stop_scan();
+        let peripheral = self
+            .active
+            .borrow()
+            .clone()
+            .ok_or_else(|| failure("ios_ble_attempt_inactive", true))?;
+        {
+            let mut state = self
+                .delegate
+                .ivars()
+                .state
+                .lock()
+                .map_err(|_| failure("ios_ble_state_unavailable", false))?;
+            if state.active_generation.is_none() || state.boundary.is_none() {
+                return Err(failure("ios_ble_attempt_inactive", true));
+            }
+            if state.pending_write.is_some() {
+                return Err(failure("ios_ble_write_in_progress", true));
+            }
+            if state.dfu_shutdown_requested {
+                return Err(failure("ios_ble_shutdown_active", false));
+            }
+            state.dfu_shutdown_requested = true;
+        }
+        unsafe { self.manager.cancelPeripheralConnection(&peripheral) };
+        let shutdown = self
+            .shutdowns
+            .recv()
+            .await
+            .map_err(|_| failure("ios_ble_shutdown_callback_closed", true))??;
+        Ok(IosBleDfuHandoff { shutdown, peripheral_id })
     }
 
     fn write_characteristic(&self) -> Option<(Retained<CBPeripheral>, Retained<CBCharacteristic>)> {

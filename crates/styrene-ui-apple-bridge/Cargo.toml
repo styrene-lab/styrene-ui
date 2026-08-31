@@ -9,10 +9,8 @@ publish = false
 
 [dependencies]
 async-channel.workspace = true
-styrene-ui-platform.workspace = true
-
-[dev-dependencies]
 futures-lite = "2"
+styrene-ui-platform.workspace = true
 
 [target.'cfg(target_os = "ios")'.dependencies]
 block2 = { version = "=0.6.2", default-features = false, features = ["alloc"] }
