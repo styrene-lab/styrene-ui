@@ -2644,6 +2644,9 @@ mod tests {
         status.connection_generation = Some(9);
         status.active_capabilities = Some(Default::default());
         assert!(stores.apply_daemon_event(ConnectionGeneration(2), DaemonEvent::Status(status)));
+        stores.network.operations.push(Default::default());
+        stores.network.requests.push(Default::default());
+        stores.network.resources.push(Default::default());
 
         let mut mismatched = styrene_ipc::types::DaemonStatusInfo::default();
         mismatched.connection_generation = Some(10);
@@ -2653,6 +2656,9 @@ mod tests {
         );
         assert!(stores.runtime.server_generation.is_none());
         assert!(stores.runtime.capabilities.is_none());
+        assert!(stores.network.operations.is_empty());
+        assert!(stores.network.requests.is_empty());
+        assert!(stores.network.resources.is_empty());
 
         assert!(
             stores.apply_daemon_event(ConnectionGeneration(2), DaemonEvent::EventGeneration(11))

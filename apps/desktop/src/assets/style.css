@@ -2574,7 +2574,9 @@ body {
   font-size: 10px;
 }
 .network-operation-status.unavailable { color: var(--orange); }
-.network-operation-inputs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.network-operation-status.partial { color: var(--accent); }
+.network-operation-status.available { color: var(--green); }
+.network-operation-inputs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .network-operation-field { display: grid; gap: 5px; min-width: 0; }
 .network-operation-field > span {
   color: var(--text-muted);
@@ -2632,6 +2634,17 @@ body {
 .network-observation-panel { min-width: 0; padding: 12px; background: rgba(13, 17, 23, .38); border: 1px solid var(--border); border-radius: 6px; }
 .network-observation-panel h3 { color: var(--text); font-size: 12px; }
 .network-observation-empty { margin-top: 5px; color: var(--text-muted); font-size: 11px; }
+.network-record-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.network-record-actions button {
+  padding: 4px 7px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 10px;
+}
+.network-record-actions button:hover { color: var(--accent); border-color: var(--accent); }
 
 .network-observation {
   display: grid;
@@ -2643,6 +2656,7 @@ body {
 }
 
 .network-observation p { grid-column: 1 / -1; margin: 0; color: var(--muted, #8b949e); }
+.network-observation-relations { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .network-observation code {
   min-width: 0;
   overflow-wrap: anywhere;
