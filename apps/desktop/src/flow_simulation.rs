@@ -172,6 +172,7 @@ async fn run_use_case(use_case: &UseCase) -> Result<(), String> {
 }
 
 #[test]
+#[ignore = "run explicitly with tests/desktop/test-desktop-flows.sh"]
 fn desktop_flow_corpus_is_versioned_and_unique() {
     let corpus: UseCaseCorpus = serde_json::from_str(CORPUS).expect("valid desktop flow corpus");
     assert_eq!(corpus.schema_version, 1);
@@ -183,6 +184,7 @@ fn desktop_flow_corpus_is_versioned_and_unique() {
 }
 
 #[tokio::test]
+#[ignore = "run explicitly with tests/desktop/test-desktop-flows.sh"]
 async fn desktop_flow_corpus_executes_standard_use_cases() {
     let corpus: UseCaseCorpus = serde_json::from_str(CORPUS).expect("valid desktop flow corpus");
     for use_case in corpus.use_cases {
