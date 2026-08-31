@@ -509,8 +509,7 @@ pub fn parse_announce_name(raw: &str) -> ParsedAnnounceName {
     // Check for Styrene prefix
     if !trimmed.starts_with("styrene:") {
         // Truncate plain names to something reasonable
-        let display =
-            if trimmed.len() > 32 { format!("{}...", &trimmed[..32]) } else { trimmed.to_string() };
+        let display = truncate_with_ellipsis(trimmed, 32);
         return ParsedAnnounceName { display_name: display, ..Default::default() };
     }
 
@@ -559,17 +558,34 @@ fn extract_json_name(s: &str) -> String {
                 return rest[..end].to_string();
             }
             // Truncated — take what we have
-            let truncated = &rest[..rest.len().min(32)];
-            return truncated.to_string();
+            return rest.chars().take(32).collect();
         }
     }
     // Fallback: truncate the raw string
-    if s.len() > 24 { format!("{}...", &s[..24]) } else { s.to_string() }
+    truncate_with_ellipsis(s, 24)
+}
+
+fn truncate_with_ellipsis(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() { format!("{truncated}...") } else { truncated }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn announce_name_truncation_preserves_unicode_boundaries() {
+        let plain = format!("{}𝗵𝗵𝗵", "a".repeat(30));
+        assert_eq!(parse_announce_name(&plain).display_name, format!("{}𝗵𝗵...", "a".repeat(30)));
+
+        let truncated_json = format!(r#"{{"name":"{}𝗵𝗵"#, "a".repeat(31));
+        assert_eq!(extract_json_name(&truncated_json), format!("{}𝗵", "a".repeat(31)));
+
+        let fallback = format!("{{{}𝗵𝗵𝗵", "a".repeat(22));
+        assert_eq!(extract_json_name(&fallback), format!("{{{}𝗵...", "a".repeat(22)));
+    }
 
     #[test]
     fn message_lifecycle_preserves_authoritative_ipc_details() {
