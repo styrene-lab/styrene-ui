@@ -7,7 +7,7 @@ authoritative `styrene-rs` workspace contract.
 
 The repository was established from the history-preserving extraction of
 `crates/apps/styrene-dx` in `styrene-lab/styrene-rs`. `apps/desktop` is the
-candidate authority for the desktop operator console and resolves its backend
+authority for the desktop operator console and resolves its backend
 contracts from the immutable `styrene-rs` revision recorded in
 `docs/extraction-provenance.md`.
 
