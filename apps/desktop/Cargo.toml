@@ -13,15 +13,15 @@ name = "styrene-dx"
 path = "src/main.rs"
 
 [dependencies]
-# Dioxus core + platform renderers
-dioxus = { version = "0.7", features = ["desktop"] }
+# Dioxus core + platform renderer
+dioxus = { workspace = true, features = ["desktop", "hooks", "launch"] }
 
 # Daemon integration (hybrid: IPC socket or embedded)
-styrened = { path = "../styrened" }
-styrene-ipc = { path = "../../libs/styrene-ipc" }
-styrene-ipc-server = { path = "../../libs/styrene-ipc-server" }
-styrene-micron = { path = "../../libs/styrene-micron" }
-styrene-interop-runner = { path = "../../tests/styrene-interop-runner" }
+styrened.workspace = true
+styrene-ipc.workspace = true
+styrene-ipc-server.workspace = true
+styrene-micron.workspace = true
+styrene-interop-runner.workspace = true
 
 # Protocol crates
 styrene-rns = { workspace = true }
@@ -37,10 +37,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 rmpv = { workspace = true, features = ["with-serde"] }
 rmp-serde.workspace = true
 rand_core = { workspace = true, features = ["getrandom"] }
-futures-util = "0.3"
+futures-util.workspace = true
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-[lints]
-workspace = true
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "warn"
