@@ -5,10 +5,12 @@
 mod ble;
 #[cfg(target_os = "ios")]
 mod ble_ios;
+mod firmware;
 
 pub use ble::*;
 #[cfg(target_os = "ios")]
 pub use ble_ios::*;
+pub use firmware::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeAuthorization {
