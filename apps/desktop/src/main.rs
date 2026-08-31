@@ -13,6 +13,8 @@ use futures_util::StreamExt;
 mod backend;
 mod components;
 mod daemon_bridge;
+#[cfg(test)]
+mod flow_simulation;
 mod safety;
 mod scenario;
 mod scenario_process;
