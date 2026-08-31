@@ -741,7 +741,7 @@ mod tests {
             live_enabled: false,
         };
         assert_eq!(backend.catalog()[0].id, "fixture-discovery");
-        let run = backend.start("fixture-routed").await.unwrap();
+        let run = backend.start("fixture-routed").await.expect("start routed fixture scenario");
         assert_eq!(run.status, ScenarioStatus::Running);
         assert!(!run.evidence.is_empty());
         let terminal = backend.wait(&run.run_id).await.expect("fixture terminal result");
@@ -750,7 +750,13 @@ mod tests {
         assert_eq!(evidence.topology.host, "fixture-only");
         assert!(evidence.topology.ports.is_empty());
         assert_eq!(evidence.assertions[0].name, "fixture-playback-complete");
-        assert!(backend.cancel(&run.run_id).await.unwrap_err().contains("already terminal"));
+        assert!(
+            backend
+                .cancel(&run.run_id)
+                .await
+                .expect_err("terminal fixture scenario cancellation must fail")
+                .contains("already terminal")
+        );
     }
 
     #[tokio::test]
@@ -765,7 +771,12 @@ mod tests {
         for definition in live {
             let runner_id = definition.runner_id.expect("live runner ID");
             assert_eq!(definition.id, runner_id.as_str());
-            assert!(backend.availability(definition.id).unwrap_err().contains("not explicitly"));
+            assert!(
+                backend
+                    .availability(definition.id)
+                    .expect_err("disabled live scenario must be unavailable")
+                    .contains("not explicitly")
+            );
         }
     }
 
@@ -802,7 +813,13 @@ mod tests {
             live_enabled: true,
         };
         let running = backend.start("direct").await.expect("start first run");
-        assert!(backend.start("opportunistic").await.unwrap_err().contains("still active"));
+        assert!(
+            backend
+                .start("opportunistic")
+                .await
+                .expect_err("concurrent scenario start must fail")
+                .contains("still active")
+        );
         let terminal = backend.wait(&running.run_id).await.expect("first terminal result");
         assert_eq!(terminal.status, ScenarioStatus::Passed);
 

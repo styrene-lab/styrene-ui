@@ -1085,13 +1085,13 @@ mod tests {
             ConnectionGeneration(1),
         )
         .await
-        .unwrap();
+        .expect("open first high-cardinality fixture session");
         let second = open_session(
             RuntimeProfile::Fixture { fixture: FixtureId::HighCardinality },
             ConnectionGeneration(2),
         )
         .await
-        .unwrap();
+        .expect("open second high-cardinality fixture session");
 
         let normalize = |mut paths: Vec<PathTableEntry>| {
             for path in &mut paths {
@@ -1100,8 +1100,8 @@ mod tests {
             paths
         };
         assert_eq!(
-            normalize(first.backend.path_table().await.unwrap()),
-            normalize(second.backend.path_table().await.unwrap())
+            normalize(first.backend.path_table().await.expect("load first fixture path table")),
+            normalize(second.backend.path_table().await.expect("load second fixture path table"))
         );
         assert_eq!(first.backend.profile().label(), "Fixture");
         assert_eq!(first.generation, ConnectionGeneration(1));
