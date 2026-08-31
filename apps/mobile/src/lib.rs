@@ -379,8 +379,10 @@ mod tests {
         assert!(WORKSPACE_MANIFEST.contains("edition = \"2024\""));
         assert_eq!(MOBILE_MANIFEST.matches(BACKEND_REVISION).count(), 4);
         assert!(FIXTURE_PROVENANCE.contains(BACKEND_REVISION));
-        assert!(APPLICATION_PROVENANCE.contains(BACKEND_REVISION));
-        assert!(PARITY_CONTRACT.contains(BACKEND_REVISION));
+        assert!(APPLICATION_PROVENANCE.contains("Source baseline revision:"));
+        assert!(APPLICATION_PROVENANCE.contains("before using the UI copy as revision-locked"));
+        assert!(PARITY_CONTRACT.contains("current integration baseline revision"));
+        assert!(PARITY_CONTRACT.contains("uncommitted Skywave build 9 candidate"));
         assert!(PARITY_CONTRACT.contains("styrene-mobile-integration-v1"));
         assert!(PARITY_CONTRACT.contains("Not consumed by UI"));
     }

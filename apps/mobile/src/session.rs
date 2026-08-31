@@ -18,16 +18,20 @@ use styrene_ui_state::{
     Bearer, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
     ExpectedProjection, IdentityCustody, IdentityCustodyAuthentication,
     IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
-    IdentityCustodyProtection, Message, MessageLifecycle, MobileAction, MobileActionKind,
-    MobileFixture, Peer, PeerSource, PersistenceState, Profile, Propagation, PropagationCandidate,
-    PropagationEvidence, PropagationPolicy, PropagationProgress, PropagationUpdate, Session,
-    SessionPhase, SyncState, TransportEvidence, TypedFailure,
+    IdentityCustodyProtection, Message, MessageAttachment, MessageAttachmentTransfer,
+    MessageAttempt, MessageAuthentication, MessageDeliveryKind, MessageDeliveryObservation,
+    MessageDeliveryState, MessageDetails, MessageInterfaceObservation, MessageLifecycle,
+    MessagePropagationCorrelation, MessageRouteObservation, MessageRouteOutcome, MessageStampState,
+    MobileAction, MobileActionKind, MobileFixture, Peer, PeerSource, PersistenceState, Profile,
+    Propagation, PropagationCandidate, PropagationEvidence, PropagationPolicy, PropagationProgress,
+    PropagationUpdate, Session, SessionPhase, SessionRuntime, SyncState, TransportEvidence,
+    TypedFailure,
 };
 use styrened::mobile::{
     IdentityBackend, MobileBearerKind, MobileBearerReason, MobileBearerState, MobileConfig,
     MobileConnectionPhase, MobileDeliveryMethod, MobileInterfaceConfig, MobileNode,
-    MobilePeerAspect, MobilePropagationSnapshot, MobilePropagationSyncState, MobileSendRequest,
-    MobileStateEvent, MobileStateSubscription, MobileStateSubscriptionError,
+    MobilePeerAspect, MobilePropagationSnapshot, MobilePropagationSyncState, MobileRuntimeState,
+    MobileSendRequest, MobileStateEvent, MobileStateSubscription, MobileStateSubscriptionError,
     MobileUsbFallbackDisposition, persist_mobile_tcp_endpoint,
 };
 #[cfg(target_os = "android")]
@@ -213,6 +217,7 @@ impl MobileSession {
     pub fn starting_update() -> SessionUpdate {
         let mut update = failed_update(1, "starting", String::new());
         update.fixture.id = "embedded-live-starting".into();
+        update.fixture.session.runtime = SessionRuntime::Stopped;
         update.fixture.session.phase = SessionPhase::Starting;
         update.fixture.session.failure = None;
         update
@@ -692,6 +697,19 @@ async fn execute_action(node: &MobileNode, action: MobileActionKind) -> Result<(
                 messaging_failure("active_conversation_failed", error.retryable)
             })?;
         }
+        MobileActionKind::StartConversation { peer_hash } => {
+            node.start_conversation(&peer_hash)
+                .await
+                .map_err(|_| messaging_failure("conversation_start_failed", false))?;
+            node.set_active_conversation(Some(&peer_hash)).await.map_err(|error| {
+                messaging_failure("active_conversation_failed", error.retryable)
+            })?;
+        }
+        MobileActionKind::SetIdentityDisplayName { display_name } => {
+            node.facade.as_ref().set_identity(Some(&display_name), None, None).await.map_err(
+                |error| messaging_failure("identity_display_name_failed", error.is_retryable()),
+            )?;
+        }
         MobileActionKind::SaveDraft { peer_hash, content, .. } => {
             node.set_draft(&peer_hash, &content)
                 .await
@@ -807,12 +825,14 @@ async fn project(
             profile: Profile::Live,
             generation,
             session: Session {
+                runtime: project_runtime(session.runtime),
                 phase: project_phase(session.phase),
                 identity_hash: if identity.lxmf_destination_hash.is_empty() {
                     node.delivery_hash().unwrap_or_default()
                 } else {
                     identity.lxmf_destination_hash
                 },
+                display_name: identity.display_name,
                 endpoint: session.endpoint,
                 failure: session.failure.map(|failure| TypedFailure {
                     code: format!("{:?}", failure.code).to_ascii_lowercase(),
@@ -864,25 +884,184 @@ async fn project(
 
 fn project_message(message: MessageInfo) -> Message {
     let lifecycle = project_lifecycle(message.lifecycle_state);
-    let delivered = lifecycle == MessageLifecycle::Delivered;
-    let failed = matches!(
-        lifecycle,
-        MessageLifecycle::Failed | MessageLifecycle::Expired | MessageLifecycle::Rejected
-    );
+    let details = project_message_details(&message);
+    let delivered = details
+        .delivery_evidence
+        .iter()
+        .any(|evidence| evidence.state == MessageDeliveryState::Completed);
     Message {
         id: message.id,
         peer_hash: if message.is_outgoing { message.destination_hash } else { message.source_hash },
         content: message.content,
         requested_method: project_method(message.requested_delivery_method.as_deref()),
         actual_method: project_method(message.actual_delivery_method.as_deref()),
-        persistence: PersistenceState::Durable,
+        persistence: PersistenceState::Unknown,
         transport: TransportEvidence::None,
         propagation: PropagationEvidence::None,
         delivery: if delivered { DeliveryEvidence::Delivered } else { DeliveryEvidence::Pending },
         correlation_id: message.correlation_id.unwrap_or_default(),
-        failure: failed
-            .then_some(TypedFailure { code: "terminal_message".into(), retryable: true }),
+        failure: None,
         lifecycle: Some(lifecycle),
+        details,
+    }
+}
+
+fn project_message_details(message: &MessageInfo) -> MessageDetails {
+    MessageDetails {
+        projection_complete: message.projection_complete,
+        source_hash: message.source_hash.clone(),
+        destination_hash: message.destination_hash.clone(),
+        timestamp: message.timestamp,
+        lxmf_timestamp: message.lxmf_timestamp,
+        title: message.title.clone(),
+        status: message.status.clone(),
+        terminal_detail: message.terminal_detail.clone(),
+        is_outgoing: message.is_outgoing,
+        delivery_method: message.delivery_method.clone(),
+        requested_delivery_method: message.requested_delivery_method.clone(),
+        actual_delivery_method: message.actual_delivery_method.clone(),
+        fallback_reason: message.fallback_reason.clone(),
+        correlation_id: message.correlation_id.clone(),
+        attempts: message.attempts.iter().map(project_message_attempt).collect(),
+        propagation_correlations: message
+            .propagation_correlations
+            .iter()
+            .map(|correlation| MessagePropagationCorrelation {
+                relation: correlation.relation.clone(),
+                transient_id: correlation.transient_id.clone(),
+                attempt_id: correlation.attempt_id.clone(),
+                peer_hash: correlation.peer_hash.clone(),
+                state: correlation.state.clone(),
+                created_at: correlation.created_at,
+                updated_at: correlation.updated_at,
+            })
+            .collect(),
+        read: message.read,
+        attachment_info: message.attachment_info.as_ref().map(project_attachment),
+        attachments: message.attachments.iter().map(project_attachment).collect(),
+        authentication: match message.authentication_state {
+            styrene_ipc::types::MessageAuthenticationState::Verified => {
+                MessageAuthentication::Verified
+            }
+            styrene_ipc::types::MessageAuthenticationState::Invalid => {
+                MessageAuthentication::Invalid
+            }
+            styrene_ipc::types::MessageAuthenticationState::UnknownIdentity => {
+                MessageAuthentication::UnknownIdentity
+            }
+            styrene_ipc::types::MessageAuthenticationState::NotApplicable => {
+                MessageAuthentication::NotApplicable
+            }
+            _ => MessageAuthentication::Unknown,
+        },
+        stamp_state: match message.stamp_state {
+            styrene_ipc::types::MessageStampState::Verified => MessageStampState::Verified,
+            styrene_ipc::types::MessageStampState::Invalid => MessageStampState::Invalid,
+            styrene_ipc::types::MessageStampState::NotApplicable => {
+                MessageStampState::NotApplicable
+            }
+            _ => MessageStampState::Unknown,
+        },
+        stamp_value: message.stamp_value,
+        stamp_cost: message.stamp_cost,
+        delivery_evidence: message
+            .delivery_evidence
+            .iter()
+            .map(|evidence| MessageDeliveryObservation {
+                kind: match evidence.kind {
+                    styrene_ipc::types::MessageDeliveryEvidenceKind::PacketReceipt => {
+                        MessageDeliveryKind::PacketReceipt
+                    }
+                    styrene_ipc::types::MessageDeliveryEvidenceKind::ResourceCompletion => {
+                        MessageDeliveryKind::ResourceCompletion
+                    }
+                    _ => MessageDeliveryKind::Unknown,
+                },
+                hash: evidence.hash.clone(),
+                representation: evidence.representation.clone(),
+                state: match evidence.state {
+                    styrene_ipc::types::MessageDeliveryEvidenceState::Tracked => {
+                        MessageDeliveryState::Tracked
+                    }
+                    styrene_ipc::types::MessageDeliveryEvidenceState::Completed => {
+                        MessageDeliveryState::Completed
+                    }
+                    styrene_ipc::types::MessageDeliveryEvidenceState::Failed => {
+                        MessageDeliveryState::Failed
+                    }
+                    styrene_ipc::types::MessageDeliveryEvidenceState::Cancelled => {
+                        MessageDeliveryState::Cancelled
+                    }
+                    _ => MessageDeliveryState::Unknown,
+                },
+                outcome: evidence.outcome.clone(),
+                attempt: evidence.attempt,
+                correlation_id: evidence.correlation_id.clone(),
+                observed_at: evidence.observed_at,
+                terminal_at: evidence.terminal_at,
+                transferred_bytes: evidence.transferred_bytes,
+                total_bytes: evidence.total_bytes,
+                progress: evidence.progress,
+            })
+            .collect(),
+        retry_eligible: None,
+    }
+}
+
+fn project_message_attempt(attempt: &styrene_ipc::types::MessageAttemptInfo) -> MessageAttempt {
+    MessageAttempt {
+        message_id: attempt.message_id.clone(),
+        number: attempt.number,
+        started_unix_ms: attempt.started_unix_ms,
+        deadline_unix_ms: attempt.deadline_unix_ms,
+        state: attempt.state.clone(),
+        bearer: attempt.bearer.clone(),
+        route: MessageRouteObservation {
+            outcome: match attempt.route.outcome {
+                styrene_ipc::types::MessageAttemptRouteOutcome::Observed => {
+                    MessageRouteOutcome::Observed
+                }
+                _ => MessageRouteOutcome::Unknown,
+            },
+            connection_generation: attempt.route.connection_generation,
+            observed_at: attempt.route.observed_at,
+            next_hop: attempt.route.next_hop.clone(),
+            hops: attempt.route.hops,
+            stale: attempt.route.stale,
+            interface: attempt.route.interface.as_ref().map(|interface| {
+                MessageInterfaceObservation {
+                    id: interface.id.clone(),
+                    kind: interface.kind.clone(),
+                    generation: interface.generation,
+                }
+            }),
+        },
+    }
+}
+
+fn project_attachment(attachment: &styrene_ipc::types::AttachmentInfo) -> MessageAttachment {
+    MessageAttachment {
+        ordinal: attachment.ordinal,
+        id: attachment.id.clone(),
+        name: attachment.name.clone(),
+        content_type: attachment.content_type.clone(),
+        size: attachment.size,
+        checksum: attachment.checksum.clone(),
+        availability: attachment.availability.clone(),
+        integrity: attachment.integrity.clone(),
+        transfer: attachment.transfer.as_ref().map(|transfer| MessageAttachmentTransfer {
+            message_id: transfer.message_id.clone(),
+            transfer_id: transfer.transfer_id.clone(),
+            resource_hash: transfer.resource_hash.clone(),
+            representation: transfer.representation.clone(),
+            direction: transfer.direction.clone(),
+            state: transfer.state.clone(),
+            transferred: transfer.transferred,
+            total: transfer.total,
+            checksum_verified: transfer.checksum_verified,
+            cancellable: transfer.cancellable,
+            error: transfer.error.clone(),
+        }),
     }
 }
 
@@ -967,14 +1146,22 @@ fn project_lifecycle(lifecycle: MessageLifecycleState) -> MessageLifecycle {
 
 fn project_phase(phase: MobileConnectionPhase) -> SessionPhase {
     match phase {
+        MobileConnectionPhase::Stopped => SessionPhase::Stopped,
+        MobileConnectionPhase::Starting => SessionPhase::Starting,
+        MobileConnectionPhase::Connecting => SessionPhase::Connecting,
         MobileConnectionPhase::Connected => SessionPhase::Connected,
         MobileConnectionPhase::Offline => SessionPhase::Offline,
+        MobileConnectionPhase::Reconnecting => SessionPhase::Reconnecting,
+        MobileConnectionPhase::Degraded => SessionPhase::Degraded,
         MobileConnectionPhase::Failed => SessionPhase::Failed,
-        MobileConnectionPhase::Stopped
-        | MobileConnectionPhase::Starting
-        | MobileConnectionPhase::Connecting
-        | MobileConnectionPhase::Reconnecting
-        | MobileConnectionPhase::Degraded => SessionPhase::Reconnecting,
+    }
+}
+
+fn project_runtime(runtime: MobileRuntimeState) -> SessionRuntime {
+    match runtime {
+        MobileRuntimeState::Ready => SessionRuntime::Ready,
+        MobileRuntimeState::Failed => SessionRuntime::Failed,
+        MobileRuntimeState::Stopped => SessionRuntime::Stopped,
     }
 }
 
@@ -1107,8 +1294,10 @@ fn failed_update(generation: u64, code: &str, _message: String) -> SessionUpdate
         profile: Profile::Live,
         generation,
         session: Session {
+            runtime: SessionRuntime::Failed,
             phase: SessionPhase::Failed,
             identity_hash: String::new(),
+            display_name: String::new(),
             endpoint: Some(DEFAULT_ENDPOINT.into()),
             failure: Some(TypedFailure { code: code.into(), retryable: true }),
             custody: None,
@@ -1146,6 +1335,7 @@ mod tests {
         let update = MobileSession::starting_update();
 
         assert_eq!(update.fixture.profile, Profile::Live);
+        assert_eq!(update.fixture.session.runtime, SessionRuntime::Stopped);
         assert_eq!(update.fixture.session.phase, SessionPhase::Starting);
         assert!(update.fixture.session.failure.is_none());
         assert!(update.fixture.session.custody.is_none());
@@ -1159,9 +1349,128 @@ mod tests {
     }
 
     #[test]
+    fn backend_message_projection_preserves_authoritative_evidence_without_retry_inference() {
+        let mut route = styrene_ipc::types::MessageAttemptRouteObservation::default();
+        route.outcome = styrene_ipc::types::MessageAttemptRouteOutcome::Observed;
+        route.connection_generation = Some(7);
+        route.observed_at = Some(1_700_000_010);
+        route.next_hop = Some("next-hop".into());
+        route.hops = Some(2);
+        let mut interface = styrene_ipc::types::MessageAttemptInterfaceObservation::default();
+        interface.id = "interface-id".into();
+        interface.kind = "tcp-client".into();
+        interface.generation = 7;
+        route.interface = Some(interface);
+        let mut attempt = styrene_ipc::types::MessageAttemptInfo::default();
+        attempt.message_id = "message-1".into();
+        attempt.number = 2;
+        attempt.started_unix_ms = 1_700_000_000_000;
+        attempt.deadline_unix_ms = 1_700_000_030_000;
+        attempt.state = "failed".into();
+        attempt.bearer = Some("tcp".into());
+        attempt.route = route;
+
+        let mut propagation = styrene_ipc::types::MessagePropagationCorrelationInfo::default();
+        propagation.relation = "upload".into();
+        propagation.transient_id = "transient-1".into();
+        propagation.attempt_id = Some("attempt-2".into());
+        propagation.peer_hash = Some("propagation-node".into());
+        propagation.state = "accepted".into();
+        propagation.created_at = 1_700_000_001;
+        propagation.updated_at = 1_700_000_002;
+
+        let mut evidence = styrene_ipc::types::MessageDeliveryEvidenceInfo::default();
+        evidence.kind = styrene_ipc::types::MessageDeliveryEvidenceKind::PacketReceipt;
+        evidence.hash = "receipt-hash".into();
+        evidence.representation = "packet".into();
+        evidence.state = styrene_ipc::types::MessageDeliveryEvidenceState::Completed;
+        evidence.outcome = Some("delivered".into());
+        evidence.attempt = Some(2);
+        evidence.correlation_id = Some("correlation-1".into());
+        evidence.observed_at = 1_700_000_020;
+        evidence.terminal_at = Some(1_700_000_021);
+
+        let mut message = MessageInfo::default();
+        message.projection_complete = true;
+        message.id = "message-1".into();
+        message.source_hash = "local-source".into();
+        message.destination_hash = "remote-destination".into();
+        message.timestamp = 1_700_000_000;
+        message.lxmf_timestamp = Some(1_700_000_000.25);
+        message.content = "payload".into();
+        message.title = Some("title".into());
+        message.status = "failed".into();
+        message.lifecycle_state = MessageLifecycleState::Failed;
+        message.terminal_detail = Some("non-retryable policy rejection".into());
+        message.is_outgoing = true;
+        message.delivery_method = Some("propagated".into());
+        message.requested_delivery_method = Some("propagated".into());
+        message.actual_delivery_method = Some("direct".into());
+        message.fallback_reason = Some("node unavailable".into());
+        message.correlation_id = Some("correlation-1".into());
+        message.attempts = vec![attempt];
+        message.propagation_correlations = vec![propagation];
+        message.read = true;
+        message.authentication_state = styrene_ipc::types::MessageAuthenticationState::Verified;
+        message.stamp_state = styrene_ipc::types::MessageStampState::Verified;
+        message.stamp_value = Some(18);
+        message.stamp_cost = Some(16);
+        message.delivery_evidence = vec![evidence];
+
+        let projected = project_message(message);
+        let details = &projected.details;
+
+        assert!(details.projection_complete);
+        assert_eq!(details.source_hash, "local-source");
+        assert_eq!(details.destination_hash, "remote-destination");
+        assert_eq!(details.lxmf_timestamp, Some(1_700_000_000.25));
+        assert_eq!(details.terminal_detail.as_deref(), Some("non-retryable policy rejection"));
+        assert_eq!(details.requested_delivery_method.as_deref(), Some("propagated"));
+        assert_eq!(details.actual_delivery_method.as_deref(), Some("direct"));
+        assert_eq!(details.attempts[0].bearer.as_deref(), Some("tcp"));
+        assert_eq!(details.attempts[0].route.outcome, MessageRouteOutcome::Observed);
+        assert_eq!(
+            details.attempts[0].route.interface.as_ref().map(|interface| interface.generation),
+            Some(7)
+        );
+        assert_eq!(details.propagation_correlations[0].state, "accepted");
+        assert_eq!(details.delivery_evidence[0].state, MessageDeliveryState::Completed);
+        assert_eq!(details.authentication, MessageAuthentication::Verified);
+        assert_eq!(details.stamp_state, MessageStampState::Verified);
+        assert_eq!(details.retry_eligible, None);
+        assert_eq!(projected.persistence, PersistenceState::Unknown);
+        assert_eq!(projected.delivery, DeliveryEvidence::Delivered);
+        assert!(projected.failure.is_none());
+    }
+
+    #[test]
     fn backend_offline_ready_state_remains_distinct_from_reconnecting() {
         assert_eq!(project_phase(MobileConnectionPhase::Offline), SessionPhase::Offline);
         assert_eq!(SessionPhase::Offline.as_str(), "offline");
+    }
+
+    #[test]
+    fn backend_runtime_and_connection_phases_remain_distinct() {
+        for (backend, projected) in [
+            (MobileConnectionPhase::Stopped, SessionPhase::Stopped),
+            (MobileConnectionPhase::Offline, SessionPhase::Offline),
+            (MobileConnectionPhase::Starting, SessionPhase::Starting),
+            (MobileConnectionPhase::Connecting, SessionPhase::Connecting),
+            (MobileConnectionPhase::Connected, SessionPhase::Connected),
+            (MobileConnectionPhase::Reconnecting, SessionPhase::Reconnecting),
+            (MobileConnectionPhase::Degraded, SessionPhase::Degraded),
+            (MobileConnectionPhase::Failed, SessionPhase::Failed),
+        ] {
+            assert_eq!(project_phase(backend), projected);
+        }
+
+        for (backend, projected) in [
+            (MobileRuntimeState::Ready, SessionRuntime::Ready),
+            (MobileRuntimeState::Failed, SessionRuntime::Failed),
+            (MobileRuntimeState::Stopped, SessionRuntime::Stopped),
+        ] {
+            assert_eq!(project_runtime(backend), projected);
+        }
     }
 
     #[test]

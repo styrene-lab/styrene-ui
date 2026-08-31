@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MobileMinimumCorpus {
     pub schema_version: u32,
@@ -12,7 +12,7 @@ pub struct MobileMinimumCorpus {
     pub fixtures: Vec<MobileFixture>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MobileFixture {
     pub id: String,
@@ -66,6 +66,12 @@ pub enum MobileActionKind {
     SetActiveConversation {
         peer_hash: Option<String>,
     },
+    StartConversation {
+        peer_hash: String,
+    },
+    SetIdentityDisplayName {
+        display_name: String,
+    },
     SaveDraft {
         peer_hash: String,
         content: String,
@@ -86,6 +92,85 @@ pub enum MobileActionKind {
     SyncPropagation,
 }
 
+pub const LXMF_DESTINATION_INPUT_MAX_BYTES: usize = 32;
+pub const PEER_SEARCH_INPUT_MAX_BYTES: usize = 128;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DestinationEntryConstraint {
+    Empty,
+    Incomplete,
+    Ready,
+    Oversized,
+}
+
+impl DestinationEntryConstraint {
+    #[must_use]
+    pub const fn permits_submission(self) -> bool {
+        matches!(self, Self::Ready)
+    }
+}
+
+#[must_use]
+pub fn destination_entry_constraint(value: &str) -> DestinationEntryConstraint {
+    match value.trim().len() {
+        0 => DestinationEntryConstraint::Empty,
+        LXMF_DESTINATION_INPUT_MAX_BYTES => DestinationEntryConstraint::Ready,
+        length if length > LXMF_DESTINATION_INPUT_MAX_BYTES => {
+            DestinationEntryConstraint::Oversized
+        }
+        _ => DestinationEntryConstraint::Incomplete,
+    }
+}
+
+#[must_use]
+pub fn bounded_destination_input(value: &str) -> String {
+    bounded_input(value, LXMF_DESTINATION_INPUT_MAX_BYTES)
+}
+
+#[must_use]
+pub fn bounded_peer_search_input(value: &str) -> String {
+    bounded_input(value, PEER_SEARCH_INPUT_MAX_BYTES)
+}
+
+fn bounded_input(value: &str, accepted_bytes: usize) -> String {
+    let retained_bytes = accepted_bytes.saturating_add(1);
+    if value.len() <= retained_bytes {
+        return value.to_owned();
+    }
+
+    let mut end = 0;
+    for (index, character) in value.char_indices() {
+        let character_end = index + character.len_utf8();
+        if character_end > retained_bytes {
+            break;
+        }
+        end = character_end;
+    }
+    value[..end].to_owned()
+}
+
+#[must_use]
+pub fn start_conversation_action(generation: u64, value: &str) -> Option<MobileAction> {
+    destination_entry_constraint(value).permits_submission().then(|| {
+        MobileAction::new(
+            generation,
+            MobileActionKind::StartConversation { peer_hash: value.trim().to_owned() },
+        )
+    })
+}
+
+#[must_use]
+pub fn peer_matches_search(peer: &Peer, query: &str) -> bool {
+    let query = query.trim().to_ascii_lowercase();
+    query.is_empty()
+        || peer.destination_hash.to_ascii_lowercase().contains(&query)
+        || peer.aspect.to_ascii_lowercase().contains(&query)
+        || peer
+            .display_name
+            .as_deref()
+            .is_some_and(|name| name.to_ascii_lowercase().contains(&query))
+}
+
 impl MobileAction {
     #[must_use]
     pub const fn new(generation: u64, kind: MobileActionKind) -> Self {
@@ -93,7 +178,7 @@ impl MobileAction {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MobileStore {
     snapshot: MobileFixture,
     local_announce_outcome: Option<LocalAnnounceOutcome>,
@@ -334,17 +419,93 @@ impl MobileStore {
     pub fn messaging_available(&self) -> bool {
         self.snapshot.bearers.iter().any(|bearer| bearer.state == BearerState::Connected)
     }
+
+    #[must_use]
+    pub fn operational_summary(&self) -> OperationalSummary {
+        let mut route_observed = 0usize;
+        let mut route_unknown = 0usize;
+        for attempt in self.snapshot.messages.iter().flat_map(|message| &message.details.attempts) {
+            match attempt.route.outcome {
+                MessageRouteOutcome::Observed => route_observed = route_observed.saturating_add(1),
+                MessageRouteOutcome::Unknown => route_unknown = route_unknown.saturating_add(1),
+            }
+        }
+
+        OperationalSummary {
+            runtime: self.snapshot.session.runtime,
+            phase: self.snapshot.session.phase,
+            connected_bearers: self
+                .snapshot
+                .bearers
+                .iter()
+                .filter(|bearer| bearer.state == BearerState::Connected)
+                .count(),
+            bearer_count: self.snapshot.bearers.len(),
+            peer_count: self.snapshot.peers.len(),
+            unread_count: self
+                .snapshot
+                .conversations
+                .iter()
+                .fold(0u32, |total, conversation| total.saturating_add(conversation.unread_count)),
+            loaded_route_observed: route_observed,
+            loaded_route_unknown: route_unknown,
+            propagation_selected: self.propagation.selected_destination.is_some(),
+            propagation_ready: self.propagation.ready,
+            propagation_sync_state: self.propagation.sync_state,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OperationalSummary {
+    pub runtime: SessionRuntime,
+    pub phase: SessionPhase,
+    pub connected_bearers: usize,
+    pub bearer_count: usize,
+    pub peer_count: usize,
+    pub unread_count: u32,
+    /// Counts only route observations in the currently loaded message projection.
+    pub loaded_route_observed: usize,
+    /// Counts only explicitly unknown routes in the currently loaded message projection.
+    pub loaded_route_unknown: usize,
+    pub propagation_selected: bool,
+    pub propagation_ready: bool,
+    pub propagation_sync_state: SyncState,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Session {
+    #[serde(default)]
+    pub runtime: SessionRuntime,
     pub phase: SessionPhase,
     pub identity_hash: String,
+    #[serde(default)]
+    pub display_name: String,
     pub endpoint: Option<String>,
     pub failure: Option<TypedFailure>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custody: Option<IdentityCustody>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionRuntime {
+    #[default]
+    Ready,
+    Failed,
+    Stopped,
+}
+
+impl SessionRuntime {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+            Self::Stopped => "stopped",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -499,14 +660,14 @@ pub struct LocalAnnounceOutcome {
     pub failure: Option<TypedFailure>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MessageSnapshot {
     pub generation: u64,
     pub conversations: Vec<Conversation>,
     pub messages: Vec<Message>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MessageEvent {
     pub generation: u64,
     pub message: Message,
@@ -519,7 +680,7 @@ pub enum DraftClearDisposition {
     Superseded,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SendOutcome {
     pub generation: u64,
     pub message: Message,
@@ -556,7 +717,7 @@ pub struct Conversation {
     pub draft_revision: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Message {
     pub id: String,
@@ -572,6 +733,178 @@ pub struct Message {
     pub failure: Option<TypedFailure>,
     #[serde(default)]
     pub lifecycle: Option<MessageLifecycle>,
+    #[serde(default)]
+    pub details: MessageDetails,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MessageDetails {
+    pub projection_complete: bool,
+    pub source_hash: String,
+    pub destination_hash: String,
+    pub timestamp: i64,
+    pub lxmf_timestamp: Option<f64>,
+    pub title: Option<String>,
+    pub status: String,
+    pub terminal_detail: Option<String>,
+    pub is_outgoing: bool,
+    pub delivery_method: Option<String>,
+    pub requested_delivery_method: Option<String>,
+    pub actual_delivery_method: Option<String>,
+    pub fallback_reason: Option<String>,
+    pub correlation_id: Option<String>,
+    pub attempts: Vec<MessageAttempt>,
+    pub propagation_correlations: Vec<MessagePropagationCorrelation>,
+    pub read: bool,
+    pub attachment_info: Option<MessageAttachment>,
+    pub attachments: Vec<MessageAttachment>,
+    pub authentication: MessageAuthentication,
+    pub stamp_state: MessageStampState,
+    pub stamp_value: Option<u32>,
+    pub stamp_cost: Option<u32>,
+    pub delivery_evidence: Vec<MessageDeliveryObservation>,
+    pub retry_eligible: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MessageAttempt {
+    pub message_id: String,
+    pub number: u32,
+    pub started_unix_ms: i64,
+    pub deadline_unix_ms: i64,
+    pub state: String,
+    pub bearer: Option<String>,
+    pub route: MessageRouteObservation,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MessageRouteObservation {
+    pub outcome: MessageRouteOutcome,
+    pub connection_generation: Option<u64>,
+    pub observed_at: Option<i64>,
+    pub next_hop: Option<String>,
+    pub hops: Option<u32>,
+    pub stale: bool,
+    pub interface: Option<MessageInterfaceObservation>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MessageInterfaceObservation {
+    pub id: String,
+    pub kind: String,
+    pub generation: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageRouteOutcome {
+    Observed,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MessagePropagationCorrelation {
+    pub relation: String,
+    pub transient_id: String,
+    pub attempt_id: Option<String>,
+    pub peer_hash: Option<String>,
+    pub state: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MessageDeliveryObservation {
+    pub kind: MessageDeliveryKind,
+    pub hash: String,
+    pub representation: String,
+    pub state: MessageDeliveryState,
+    pub outcome: Option<String>,
+    pub attempt: Option<u32>,
+    pub correlation_id: Option<String>,
+    pub observed_at: i64,
+    pub terminal_at: Option<i64>,
+    pub transferred_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub progress: Option<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageDeliveryKind {
+    PacketReceipt,
+    ResourceCompletion,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageDeliveryState {
+    Tracked,
+    Completed,
+    Failed,
+    Cancelled,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageAuthentication {
+    Verified,
+    Invalid,
+    UnknownIdentity,
+    NotApplicable,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageStampState {
+    Verified,
+    Invalid,
+    NotApplicable,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MessageAttachment {
+    pub ordinal: u8,
+    pub id: String,
+    pub name: String,
+    pub content_type: String,
+    pub size: u64,
+    pub checksum: String,
+    pub availability: String,
+    pub integrity: String,
+    pub transfer: Option<MessageAttachmentTransfer>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MessageAttachmentTransfer {
+    pub message_id: String,
+    pub transfer_id: String,
+    pub resource_hash: Option<String>,
+    pub representation: String,
+    pub direction: String,
+    pub state: String,
+    pub transferred: u64,
+    pub total: u64,
+    pub checksum_verified: bool,
+    pub cancellable: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -737,10 +1070,13 @@ impl RuntimeBoundary {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionPhase {
+    Stopped,
     Starting,
     Offline,
+    Connecting,
     Connected,
     Reconnecting,
+    Degraded,
     Failed,
 }
 
@@ -748,10 +1084,13 @@ impl SessionPhase {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Stopped => "stopped",
             Self::Starting => "starting",
             Self::Offline => "offline",
+            Self::Connecting => "connecting",
             Self::Connected => "connected",
             Self::Reconnecting => "reconnecting",
+            Self::Degraded => "degraded",
             Self::Failed => "failed",
         }
     }
@@ -811,6 +1150,7 @@ pub enum DeliveryMethod {
 #[serde(rename_all = "snake_case")]
 pub enum PersistenceState {
     Durable,
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

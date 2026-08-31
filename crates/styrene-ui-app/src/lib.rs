@@ -6,15 +6,19 @@ use dioxus::prelude::*;
 use styrene_ui_platform::{
     AndroidUsbAttachment, Appearance, ApplicationLifecycle, AuthorizationState, BleAdapterState,
     BleControlDisabledReason, BleControlFailure, BleControlPhase, BleControlState, BlePeripheralId,
-    Contrast, KeyboardGeometry, MotionPreference, PlatformInsets, PlatformSnapshot, TextScale,
-    WindowClass,
+    Contrast, KeyboardGeometry, MotionPreference, PermissionKind, PlatformInsets, PlatformSnapshot,
+    TextScale, WindowClass,
 };
 use styrene_ui_state::{
     BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
-    IdentityCustodyAuthentication, IdentityCustodyAvailability, IdentityCustodyBackend,
-    IdentityCustodyDowngrade, IdentityCustodyProtection, LocalAnnounceOutcome, Message,
-    MobileAction, MobileActionKind, MobileFixture, MobileStore, Peer, PropagationEvidence,
-    PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState, TargetClass, TransportEvidence,
+    DestinationEntryConstraint, IdentityCustodyAuthentication, IdentityCustodyAvailability,
+    IdentityCustodyBackend, IdentityCustodyDowngrade, IdentityCustodyProtection,
+    LXMF_DESTINATION_INPUT_MAX_BYTES, LocalAnnounceOutcome, Message, MobileAction,
+    MobileActionKind, MobileFixture, MobileStore, OperationalSummary, PEER_SEARCH_INPUT_MAX_BYTES,
+    Peer, PropagationEvidence, PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState,
+    TargetClass, TransportEvidence, TypedFailure, bounded_destination_input,
+    bounded_peer_search_input, destination_entry_constraint, peer_matches_search,
+    start_conversation_action,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -112,9 +116,12 @@ impl StatusTone {
     const fn for_session(phase: SessionPhase) -> Self {
         match phase {
             SessionPhase::Connected => Self::Positive,
-            SessionPhase::Starting | SessionPhase::Reconnecting => Self::Caution,
+            SessionPhase::Starting
+            | SessionPhase::Connecting
+            | SessionPhase::Reconnecting
+            | SessionPhase::Degraded => Self::Caution,
             SessionPhase::Failed => Self::Negative,
-            SessionPhase::Offline => Self::Neutral,
+            SessionPhase::Stopped | SessionPhase::Offline => Self::Neutral,
         }
     }
 
@@ -541,12 +548,16 @@ pub fn MobileShell(
     #[props(default)] ble_forget: Option<EventHandler<()>>,
 ) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
-    let messaging_available = MobileStore::new(fixture.clone()).messaging_available();
+    let store = MobileStore::new(fixture.clone());
+    let messaging_available = store.messaging_available();
+    let operational_summary = store.operational_summary();
     let live_actions_enabled = boundary.live_network_allowed();
     let action_sink = live_actions_enabled.then_some(action_sink).flatten();
+    let propagation = propagation.unwrap_or_else(|| PropagationUpdate::from_fixture(&fixture));
     let mut destination = use_signal(|| MobileDestination::Messages);
     let mut selected_peer = use_signal(|| None::<String>);
     let mut compact_thread_open = use_signal(|| false);
+    let mut new_message_open = use_signal(|| false);
 
     let active_destination = *destination.read();
     let selected_hash = selected_peer
@@ -621,6 +632,16 @@ pub fn MobileShell(
         ApplicationLifecycle::Inactive => "inactive",
         ApplicationLifecycle::Background => "background",
     });
+    let camera_authorization = platform_snapshot
+        .as_ref()
+        .and_then(|snapshot| {
+            snapshot.permissions.iter().find(|permission| permission.kind == PermissionKind::Camera)
+        })
+        .map_or(AuthorizationState::Unavailable, |permission| permission.state);
+    let notification_authorization = platform_snapshot
+        .as_ref()
+        .map_or(AuthorizationState::Unavailable, |snapshot| snapshot.notification_authorization);
+    let bluetooth_authorization = ble_controls.permission;
     let keyboard_visible =
         platform_snapshot.as_ref().map(|snapshot| match snapshot.geometry.keyboard {
             KeyboardGeometry::WebViewManaged { visible } => visible.to_string(),
@@ -683,6 +704,7 @@ pub fn MobileShell(
                     role: "status",
                     "aria-live": "polite",
                     "aria-atomic": "true",
+                    "data-runtime": fixture.session.runtime.as_str(),
                     "data-phase": fixture.session.phase.as_str(),
                     "data-tone": StatusTone::for_session(fixture.session.phase).as_str(),
                     "aria-label": format!("Session {}", fixture.session.phase.as_str()),
@@ -713,6 +735,7 @@ pub fn MobileShell(
                     "Fixture data. Network actions are disabled."
                 }
             }
+            OperationalSummaryPanel { summary: operational_summary }
             section {
                 id: "mobile.messages",
                 class: "app-surface messages-section",
@@ -732,6 +755,26 @@ pub fn MobileShell(
                             span {
                                 class: "count-badge",
                                 {conversation_count.clone()}
+                            }
+                            button {
+                                id: "mobile.new-message",
+                                class: "secondary-action",
+                                r#type: "button",
+                                disabled: action_sink.is_none(),
+                                "aria-expanded": new_message_open().to_string(),
+                                "aria-controls": "mobile.new-message-form",
+                                onclick: move |_| new_message_open.set(true),
+                                "New Message"
+                            }
+                        }
+                        if new_message_open() {
+                            NewMessageForm {
+                                peers: fixture.peers.clone(),
+                                generation: fixture.generation,
+                                enabled: action_sink.is_some(),
+                                failure: fixture.session.failure.clone(),
+                                action_sink,
+                                on_cancel: move |()| new_message_open.set(false),
                             }
                         }
                         ConversationList {
@@ -794,6 +837,7 @@ pub fn MobileShell(
                         Composer {
                             conversation: selected_conversation,
                             enabled: composer_enabled,
+                            propagation: propagation.clone(),
                             generation: fixture.generation,
                             action_sink,
                         }
@@ -828,6 +872,7 @@ pub fn MobileShell(
                         let display_name = peer.display_name.clone().unwrap_or_else(|| {
                             format!("Peer {}", short_hash(&peer.destination_hash))
                         });
+                        let announce_label = if peer.announce_count == 1 { "announce" } else { "announces" };
                         if has_conversation {
                             let peer_hash = peer.destination_hash.clone();
                             rsx! {
@@ -859,25 +904,52 @@ pub fn MobileShell(
                                         class: "directory-copy",
                                         strong { {display_name} }
                                         span { class: "technical-value", {short_hash(&peer.destination_hash)} }
+                                        span {
+                                            class: "field-hint",
+                                            "{peer.aspect} · Canonical announce · observed {peer.age_secs}s ago · {peer.announce_count} {announce_label}"
+                                        }
                                     }
                                     span { class: "row-action", "Open conversation" }
                                 }
                             }
                         } else {
+                            let peer_hash = peer.destination_hash.clone();
                             rsx! {
-                                article {
+                                button {
                                     id: format!("mobile.peer.{}", peer.destination_hash),
                                     class: "peer-card",
+                                    r#type: "button",
                                     "data-aspect": peer.aspect.clone(),
                                     "data-source": "canonical_announce",
-                                    "data-action": "unavailable",
+                                    "data-action": "start-conversation",
+                                    disabled: action_sink.is_none(),
+                                    onclick: move |_| {
+                                        selected_peer.set(Some(peer_hash.clone()));
+                                        if let Some(action_sink) = action_sink {
+                                            action_sink.call(MobileAction::new(
+                                                fixture.generation,
+                                                MobileActionKind::StartConversation {
+                                                    peer_hash: peer_hash.clone(),
+                                                },
+                                            ));
+                                        }
+                                        if !compact_thread_is_open {
+                                            back_navigation.open_thread();
+                                        }
+                                        compact_thread_open.set(true);
+                                        destination.set(MobileDestination::Messages);
+                                    },
                                     span { class: "hash-glyph", {hash_glyph(&peer.destination_hash)} }
                                     span {
                                         class: "directory-copy",
                                         strong { {display_name} }
                                         span { class: "technical-value", {short_hash(&peer.destination_hash)} }
+                                        span {
+                                            class: "field-hint",
+                                            "{peer.aspect} · Canonical announce · observed {peer.age_secs}s ago · {peer.announce_count} {announce_label}"
+                                        }
                                     }
-                                    span { class: "row-action", "No conversation yet" }
+                                    span { class: "row-action", "Start conversation" }
                                 }
                             }
                         }
@@ -1030,8 +1102,7 @@ pub fn MobileShell(
                     }
                 }
                 PropagationPanel {
-                    propagation: propagation
-                        .unwrap_or_else(|| PropagationUpdate::from_fixture(&fixture)),
+                    propagation,
                     actions_enabled: live_actions_enabled,
                     action_sink,
                 }
@@ -1051,11 +1122,22 @@ pub fn MobileShell(
                 article {
                     class: "surface-card settings-card identity-card",
                     h3 { "Node identity" }
-                    p {
-                        id: "mobile.identity",
-                        class: "identity",
-                        "aria-label": format!("Local identity {}", fixture.session.identity_hash),
-                        {fixture.session.identity_hash.clone()}
+                    IdentityDisplayNameEditor {
+                        key: fixture.session.display_name.clone(),
+                        display_name: fixture.session.display_name.clone(),
+                        generation: fixture.generation,
+                        enabled: live_actions_enabled,
+                        failure: fixture.session.failure.clone(),
+                        action_sink,
+                    }
+                    dl {
+                        dt { "Public LXMF destination" }
+                        dd {
+                            id: "mobile.identity",
+                            class: "identity",
+                            "aria-label": format!("Public LXMF destination {}", fixture.session.identity_hash),
+                            {fixture.session.identity_hash.clone()}
+                        }
                     }
                     if let Some(custody) = &fixture.session.custody {
                         section {
@@ -1114,6 +1196,54 @@ pub fn MobileShell(
                     }
                 }
                 article {
+                    id: "mobile.permissions",
+                    class: "surface-card settings-card",
+                    "aria-labelledby": "mobile.permissions-heading",
+                    h3 { id: "mobile.permissions-heading", "Permissions and device access" }
+                    dl {
+                        dt { "Camera" }
+                        dd {
+                            id: "mobile.permission.camera",
+                            "data-state": authorization_state(camera_authorization),
+                            {authorization_state(camera_authorization)}
+                        }
+                        dt { "Bluetooth" }
+                        dd {
+                            id: "mobile.permission.bluetooth",
+                            "data-state": authorization_state(bluetooth_authorization),
+                            {authorization_state(bluetooth_authorization)}
+                        }
+                        dt { "Notifications" }
+                        dd {
+                            id: "mobile.permission.notifications",
+                            "data-state": authorization_state(notification_authorization),
+                            {authorization_state(notification_authorization)}
+                        }
+                        dt { "Secure identity storage" }
+                        dd {
+                            id: "mobile.permission.secure-storage",
+                            "data-state": fixture.session.custody.as_ref().map_or("unavailable", |custody| custody.availability.as_str()),
+                            {fixture.session.custody.as_ref().map_or("unavailable", |custody| custody.availability.as_str())}
+                        }
+                        dt { "Location" }
+                        dd {
+                            id: "mobile.permission.location",
+                            "data-state": "not-requested",
+                            "Not requested by Styrene"
+                        }
+                    }
+                    if [camera_authorization, bluetooth_authorization, notification_authorization]
+                        .iter()
+                        .any(|state| matches!(state, AuthorizationState::Denied | AuthorizationState::Restricted))
+                    {
+                        p {
+                            id: "mobile.permissions-recovery",
+                            class: "field-hint",
+                            "Denied or restricted access can be reviewed in this app's system Settings."
+                        }
+                    }
+                }
+                article {
                     class: "surface-card settings-card",
                     h3 { "About this build" }
                     p { "Styrene mobile application" }
@@ -1151,6 +1281,295 @@ pub fn MobileShell(
                         },
                         span { class: "destination-mark", "aria-hidden": "true", {item.mark()} }
                         span { {item.label()} }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn OperationalSummaryPanel(summary: OperationalSummary) -> Element {
+    let loaded_routes = summary.loaded_route_observed.saturating_add(summary.loaded_route_unknown);
+    rsx! {
+        details {
+            id: "mobile.operational-summary",
+            class: "surface-card operational-summary",
+            summary { "Operational summary" }
+            dl {
+                dt { "Runtime" }
+                dd {
+                    id: "mobile.summary.runtime",
+                    "data-runtime": summary.runtime.as_str(),
+                    "data-phase": summary.phase.as_str(),
+                    "{summary.runtime.as_str()} · {summary.phase.as_str()}"
+                }
+                dt { "Bearers" }
+                dd {
+                    id: "mobile.summary.bearers",
+                    "{summary.connected_bearers} of {summary.bearer_count} connected"
+                }
+                dt { "Peers" }
+                dd { id: "mobile.summary.peers", "{summary.peer_count} canonical observations" }
+                dt { "Unread" }
+                dd { id: "mobile.summary.unread", "{summary.unread_count}" }
+                dt { "Loaded route evidence" }
+                dd {
+                    id: "mobile.summary.routes",
+                    if loaded_routes == 0 {
+                        "Unknown; no loaded attempt evidence"
+                    } else {
+                        "{summary.loaded_route_observed} observed · {summary.loaded_route_unknown} unknown"
+                    }
+                }
+                dt { "Propagation" }
+                dd {
+                    id: "mobile.summary.propagation",
+                    "data-selected": summary.propagation_selected.to_string(),
+                    "data-ready": summary.propagation_ready.to_string(),
+                    if !summary.propagation_selected {
+                        "No node selected"
+                    } else if summary.propagation_ready {
+                        "Selected node ready · {summary.propagation_sync_state.as_str()}"
+                    } else {
+                        "Selected node not ready · {summary.propagation_sync_state.as_str()}"
+                    }
+                }
+            }
+            p {
+                class: "field-hint",
+                "Route counts describe loaded attempts only. No relay, path, mail, or reachability state is inferred."
+            }
+        }
+    }
+}
+
+const IDENTITY_DISPLAY_NAME_MAX_CHARS: usize = 64;
+
+#[component]
+fn IdentityDisplayNameEditor(
+    display_name: String,
+    generation: u64,
+    enabled: bool,
+    failure: Option<TypedFailure>,
+    action_sink: Option<EventHandler<MobileAction>>,
+) -> Element {
+    let configured_name = display_name.clone();
+    let mut name = use_signal(|| display_name);
+    let value = name.read().trim().to_owned();
+    let character_count = value.chars().count();
+    let editing_enabled = enabled && action_sink.is_some();
+    let can_save = editing_enabled
+        && !value.is_empty()
+        && character_count <= IDENTITY_DISPLAY_NAME_MAX_CHARS
+        && value != configured_name.trim();
+
+    rsx! {
+        form {
+            class: "identity-name-form",
+            onsubmit: move |_| {
+                if can_save && let Some(action_sink) = action_sink {
+                    action_sink.call(MobileAction::new(
+                        generation,
+                        MobileActionKind::SetIdentityDisplayName {
+                            display_name: name.read().trim().to_owned(),
+                        },
+                    ));
+                }
+            },
+            label { r#for: "mobile.identity-display-name", "Display name" }
+            input {
+                id: "mobile.identity-display-name",
+                name: "identity-display-name",
+                r#type: "text",
+                maxlength: (IDENTITY_DISPLAY_NAME_MAX_CHARS + 1).to_string(),
+                disabled: !editing_enabled,
+                "aria-invalid": (character_count > IDENTITY_DISPLAY_NAME_MAX_CHARS).to_string(),
+                "aria-describedby": "mobile.identity-display-name-status",
+                value: name,
+                oninput: move |event| {
+                    name.set(event.value().chars().take(IDENTITY_DISPLAY_NAME_MAX_CHARS + 1).collect());
+                },
+            }
+            p {
+                id: "mobile.identity-display-name-status",
+                class: if character_count > IDENTITY_DISPLAY_NAME_MAX_CHARS { "field-error" } else { "field-hint" },
+                role: "status",
+                if failure.as_ref().is_some_and(|failure| failure.code == "identity_display_name_failed") {
+                    "The backend rejected the display name. Check it and try again."
+                } else if !editing_enabled {
+                    "Display-name editing is unavailable in this view."
+                } else if value.is_empty() {
+                    "Enter a display name."
+                } else if character_count > IDENTITY_DISPLAY_NAME_MAX_CHARS {
+                    "The display name exceeds the 64-character limit."
+                } else if value == configured_name.trim() {
+                    "This is the current public display name."
+                } else {
+                    "The backend will validate and persist this public display name."
+                }
+            }
+            button {
+                id: "mobile.identity-display-name-save",
+                class: "primary-action",
+                r#type: "submit",
+                disabled: !can_save,
+                "Save display name"
+            }
+        }
+    }
+}
+
+#[component]
+pub fn NewMessageForm(
+    peers: Vec<Peer>,
+    generation: u64,
+    enabled: bool,
+    #[props(default)] initial_search: String,
+    #[props(default)] initial_destination: String,
+    #[props(default)] failure: Option<TypedFailure>,
+    #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
+    #[props(default)] on_cancel: Option<EventHandler<()>>,
+) -> Element {
+    let mut search = use_signal(|| bounded_peer_search_input(&initial_search));
+    let mut destination = use_signal(|| bounded_destination_input(&initial_destination));
+    let search_value = search.read().clone();
+    let destination_value = destination.read().clone();
+    let constraint = destination_entry_constraint(&destination_value);
+    let controls_enabled = enabled && action_sink.is_some();
+    let can_submit = controls_enabled && constraint.permits_submission();
+    let matching_peers = peers
+        .iter()
+        .filter(|peer| peer_matches_search(peer, &search_value))
+        .cloned()
+        .collect::<Vec<_>>();
+    let submitted_destination = destination_value.clone();
+    let validation_message = match constraint {
+        DestinationEntryConstraint::Empty => {
+            format!("Enter a {LXMF_DESTINATION_INPUT_MAX_BYTES}-character LXMF destination.")
+        }
+        DestinationEntryConstraint::Incomplete => format!(
+            "Destination must contain {LXMF_DESTINATION_INPUT_MAX_BYTES} characters before backend validation."
+        ),
+        DestinationEntryConstraint::Ready => {
+            "The backend will validate this destination before creating a conversation.".into()
+        }
+        DestinationEntryConstraint::Oversized => {
+            format!("Destination exceeds the {LXMF_DESTINATION_INPUT_MAX_BYTES}-byte input limit.")
+        }
+    };
+
+    rsx! {
+        section {
+            id: "mobile.new-message-form",
+            class: "new-message surface-card",
+            "aria-labelledby": "mobile.new-message-heading",
+            h3 { id: "mobile.new-message-heading", "New Message" }
+            label { r#for: "mobile.peer-search", "Search discovered peers" }
+            input {
+                id: "mobile.peer-search",
+                name: "peer-search",
+                r#type: "search",
+                maxlength: PEER_SEARCH_INPUT_MAX_BYTES.to_string(),
+                disabled: !controls_enabled,
+                value: search_value,
+                oninput: move |event| search.set(bounded_peer_search_input(&event.value())),
+            }
+            if matching_peers.is_empty() {
+                p { id: "mobile.peer-search-empty", class: "field-hint", "No discovered peers match this search." }
+            } else {
+                ul { class: "new-message-peer-list", "aria-label": "Matching discovered peers",
+                    for peer in matching_peers {
+                        {
+                            let peer_hash = peer.destination_hash.clone();
+                            let display_name = peer.display_name.clone().unwrap_or_else(|| {
+                                format!("Peer {}", short_hash(&peer.destination_hash))
+                            });
+                            rsx! {
+                                li {
+                                    button {
+                                        id: format!("mobile.new-message-peer.{}", peer.destination_hash),
+                                        class: "peer-card",
+                                        r#type: "button",
+                                        disabled: !controls_enabled,
+                                        onclick: move |_| {
+                                            if let Some(action_sink) = action_sink
+                                                && let Some(action) = start_conversation_action(generation, &peer_hash)
+                                            {
+                                                action_sink.call(action);
+                                            }
+                                        },
+                                        span { class: "hash-glyph", {hash_glyph(&peer.destination_hash)} }
+                                        span { class: "directory-copy",
+                                            strong { {display_name} }
+                                            span { class: "technical-value", {short_hash(&peer.destination_hash)} }
+                                        }
+                                        span { class: "row-action", "Choose" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            form {
+                class: "direct-destination-form",
+                onsubmit: move |_| {
+                    if can_submit
+                        && let Some(action_sink) = action_sink
+                        && let Some(action) = start_conversation_action(generation, &submitted_destination)
+                    {
+                        action_sink.call(action);
+                    }
+                },
+                label { r#for: "mobile.direct-destination", "LXMF destination" }
+                input {
+                    id: "mobile.direct-destination",
+                    name: "direct-destination",
+                    r#type: "text",
+                    inputmode: "text",
+                    autocomplete: "off",
+                    autocapitalize: "none",
+                    spellcheck: "false",
+                    maxlength: LXMF_DESTINATION_INPUT_MAX_BYTES.to_string(),
+                    disabled: !controls_enabled,
+                    "aria-invalid": matches!(constraint, DestinationEntryConstraint::Oversized).to_string(),
+                    "aria-describedby": "mobile.direct-destination-status",
+                    value: destination_value,
+                    oninput: move |event| {
+                        destination.set(bounded_destination_input(&event.value()));
+                    },
+                }
+                p {
+                    id: "mobile.direct-destination-status",
+                    class: if matches!(constraint, DestinationEntryConstraint::Oversized) { "field-error" } else { "field-hint" },
+                    role: "status",
+                    "aria-live": "polite",
+                    {validation_message}
+                }
+                if failure.as_ref().is_some_and(|failure| failure.code == "conversation_start_failed") {
+                    p {
+                        id: "mobile.new-message-failure",
+                        class: "field-error",
+                        role: "status",
+                        "The backend rejected the destination. Check it and try again."
+                    }
+                }
+                div { class: "new-message-actions",
+                    if let Some(on_cancel) = on_cancel {
+                        button {
+                            class: "secondary-action",
+                            r#type: "button",
+                            onclick: move |_| on_cancel.call(()),
+                            "Cancel"
+                        }
+                    }
+                    button {
+                        id: "mobile.start-conversation",
+                        class: "primary-action",
+                        r#type: "submit",
+                        disabled: !can_submit,
+                        "Start conversation"
                     }
                 }
             }
@@ -1307,16 +1726,21 @@ pub fn PropagationPanel(
                 "data-cooldown-secs": propagation.automatic_sync_cooldown_secs.to_string(),
                 "data-deadline-secs": propagation.sync_deadline_secs.to_string(),
                 if propagation.automatic_sync_enabled {
-                    "Automatic synchronization enabled"
+                    "Automatic synchronization is enabled for connection, reconnection, and allowed foreground opportunities. Background collection is best effort and follows system scheduling."
                 } else {
-                    "Automatic synchronization disabled"
+                    "Automatic synchronization is disabled. Use manual synchronization when a selected node is ready."
                 }
+            }
+            p {
+                id: "mobile.propagation-airtime-policy",
+                class: "field-hint",
+                "Manual synchronization contacts the selected propagation node and may consume network airtime."
             }
             button {
                 id: "mobile.propagation-sync",
                 class: "primary-action",
                 disabled: !sync_enabled,
-                "aria-describedby": "mobile.propagation-status",
+                "aria-describedby": "mobile.propagation-status mobile.propagation-airtime-policy",
                 onclick: move |_| {
                     if sync_enabled && let Some(action_sink) = action_sink {
                         action_sink.call(MobileAction::new(
@@ -1465,11 +1889,40 @@ pub fn MessageHistory(
             ol {
                 class: "message-list",
                 for message in messages {
+                    {
+                        let direction = if message.details.source_hash.is_empty()
+                            && message.details.destination_hash.is_empty()
+                        {
+                            "unknown"
+                        } else if message.details.is_outgoing {
+                            "outgoing"
+                        } else {
+                            "incoming"
+                        };
+                        let direction_label = match direction {
+                            "outgoing" => "Sent",
+                            "incoming" => "Received",
+                            _ => "Message",
+                        };
+                        rsx! {
                     li {
                         article {
                             id: format!("mobile.message.{}", message.id),
                             class: "message-card",
-                            "aria-label": format!("Message with {}", message.peer_hash),
+                            "data-direction": direction,
+                            "data-timestamp": message.details.timestamp.to_string(),
+                            "aria-label": format!("{direction_label} message with {}", message.peer_hash),
+                            header {
+                                class: "message-context",
+                                span { {direction_label} }
+                                if message.details.timestamp != 0 {
+                                    time {
+                                        class: "technical-value",
+                                        "data-unix-seconds": message.details.timestamp.to_string(),
+                                        "Unix {message.details.timestamp}"
+                                    }
+                                }
+                            }
                             p { {message.content.clone()} }
                             DeliveryDetail {
                                 message: message.clone(),
@@ -1477,6 +1930,8 @@ pub fn MessageHistory(
                                 generation,
                                 action_sink,
                             }
+                        }
+                    }
                         }
                     }
                 }
@@ -1492,7 +1947,11 @@ pub fn DeliveryDetail(
     generation: u64,
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
-    let retry_enabled = actions_enabled && action_sink.is_some();
+    let retry_eligible = message
+        .details
+        .retry_eligible
+        .or_else(|| message.failure.as_ref().map(|failure| failure.retryable));
+    let retry_enabled = actions_enabled && action_sink.is_some() && retry_eligible == Some(true);
     let state = if message.delivery == DeliveryEvidence::Delivered {
         "Delivered"
     } else if let Some(lifecycle) = message.lifecycle {
@@ -1522,7 +1981,92 @@ pub fn DeliveryDetail(
                 id: format!("mobile.message-state.{}", message.id),
                 {state}
             }
-            if message.failure.as_ref().is_some_and(|failure| failure.retryable) {
+            if let Some(method) = &message.details.requested_delivery_method {
+                p {
+                    class: "field-hint",
+                    "Requested method: {method}"
+                    if let Some(actual) = &message.details.actual_delivery_method {
+                        if actual != method {
+                            span { " · Actual method: {actual}" }
+                        }
+                    }
+                }
+            }
+            if let Some(reason) = &message.details.fallback_reason {
+                p { class: "field-hint", "Fallback: {reason}" }
+            }
+            if let Some(detail) = &message.details.terminal_detail {
+                p {
+                    id: format!("mobile.message-terminal.{}", message.id),
+                    class: "field-error",
+                    "Terminal outcome: {detail}"
+                }
+            }
+            if !message.details.attempts.is_empty() {
+                details {
+                    class: "message-evidence",
+                    summary { "Attempt and route evidence" }
+                    ol {
+                        for attempt in &message.details.attempts {
+                            li {
+                                "Attempt {attempt.number}: {attempt.state}"
+                                if let Some(bearer) = &attempt.bearer {
+                                    span { " · Bearer: {bearer}" }
+                                }
+                                if attempt.route.outcome == styrene_ui_state::MessageRouteOutcome::Observed {
+                                    span {
+                                        " · Route observed"
+                                        if let Some(hops) = attempt.route.hops {
+                                            span { " · {hops} hops" }
+                                        }
+                                        if attempt.route.stale {
+                                            span { " · stale" }
+                                        }
+                                    }
+                                } else {
+                                    span { " · Route unknown" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !message.details.propagation_correlations.is_empty() {
+                details {
+                    class: "message-evidence",
+                    summary { "Propagation evidence" }
+                    ul {
+                        for correlation in &message.details.propagation_correlations {
+                            li {
+                                "{correlation.relation}: {correlation.state}"
+                                if let Some(peer) = &correlation.peer_hash {
+                                    span { " · Node {short_hash(peer)}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !message.details.delivery_evidence.is_empty() {
+                details {
+                    class: "message-evidence",
+                    summary { "Recipient delivery evidence" }
+                    ul {
+                        for evidence in &message.details.delivery_evidence {
+                            li {
+                                {format!("{:?}: {:?}", evidence.kind, evidence.state)}
+                                if let Some(outcome) = &evidence.outcome {
+                                    span { " · {outcome}" }
+                                }
+                                if let Some(progress) = evidence.progress {
+                                    span { " · {progress}%" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if retry_eligible == Some(true) {
                 button {
                     id: format!("mobile.retry.{}", message.id),
                     disabled: !retry_enabled,
@@ -1542,6 +2086,8 @@ pub fn DeliveryDetail(
                     },
                     "Retry"
                 }
+            } else if retry_eligible == Some(false) {
+                p { class: "field-hint", "Retry unavailable for this terminal outcome." }
             }
         }
     }
@@ -1551,6 +2097,7 @@ pub fn DeliveryDetail(
 pub fn Composer(
     conversation: Option<Conversation>,
     enabled: bool,
+    propagation: PropagationUpdate,
     #[props(default)] generation: u64,
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
@@ -1572,17 +2119,34 @@ pub fn Composer(
     });
     let has_conversation = conversation.is_some();
     let editing_enabled = has_conversation && action_sink.is_some();
-    let send_enabled = enabled && editing_enabled && !draft.trim().is_empty();
     let delivery_method = peer_hash
         .as_ref()
         .and_then(|peer_hash| delivery_methods.read().get(peer_hash).copied())
         .unwrap_or(DeliveryMethod::Direct);
+    let propagated_ready = propagation.selected_destination.is_some() && propagation.ready;
+    let propagation_unavailable_reason = if propagation.selected_destination.is_none() {
+        Some("Select a propagation node in Network before using Propagated delivery.")
+    } else if !propagation.ready {
+        Some("The selected propagation node is not ready for Propagated delivery.")
+    } else {
+        None
+    };
+    let selected_method_ready = delivery_method != DeliveryMethod::Propagated || propagated_ready;
+    let send_enabled =
+        enabled && editing_enabled && selected_method_ready && !draft.trim().is_empty();
     rsx! {
         form {
             key: "{draft_id}",
             id: "mobile.composer",
             class: "composer",
             "data-peer": peer_hash.clone(),
+            "data-delivery-method": match delivery_method {
+                DeliveryMethod::Direct => "direct",
+                DeliveryMethod::Opportunistic => "opportunistic",
+                DeliveryMethod::Propagated => "propagated",
+                DeliveryMethod::Unknown => "unknown",
+            },
+            "data-selected-method-ready": selected_method_ready.to_string(),
             onsubmit: {
                 let peer_hash = peer_hash.clone();
                 let draft = draft.clone();
@@ -1654,6 +2218,7 @@ pub fn Composer(
                     id: "mobile.delivery-method",
                     name: "delivery-method",
                     disabled: !editing_enabled,
+                    "aria-describedby": "mobile.delivery-method-status mobile.composer-status",
                     value: match delivery_method {
                         DeliveryMethod::Direct => "direct",
                         DeliveryMethod::Opportunistic => "opportunistic",
@@ -1674,7 +2239,24 @@ pub fn Composer(
                         }
                     },
                     option { value: "direct", "Direct" }
-                    option { value: "propagated", "Propagated" }
+                    option {
+                        value: "propagated",
+                        disabled: !propagated_ready,
+                        "Propagated"
+                    }
+                }
+            }
+            if let Some(reason) = propagation_unavailable_reason {
+                p {
+                    id: "mobile.delivery-method-status",
+                    class: "field-hint",
+                    "Propagated unavailable: {reason}"
+                }
+            } else {
+                p {
+                    id: "mobile.delivery-method-status",
+                    class: "field-hint",
+                    "Propagated delivery is available through the selected node."
                 }
             }
             p {
@@ -1687,6 +2269,10 @@ pub fn Composer(
                     "Draft editing is unavailable in this view."
                 } else if !enabled {
                     "No bearer is connected. You can continue editing this saved draft."
+                } else if !selected_method_ready {
+                    {propagation_unavailable_reason.unwrap_or(
+                        "Propagated delivery is currently unavailable."
+                    )}
                 } else if draft.trim().is_empty() {
                     "Write a message to enable Send."
                 } else {

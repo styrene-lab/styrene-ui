@@ -367,6 +367,42 @@ label {
   border-block-end: var(--stroke) solid var(--line);
 }
 
+.conversation-pane > .section-heading .count-badge {
+  margin-inline-start: auto;
+}
+
+.new-message {
+  margin: 0.75rem;
+}
+
+.new-message-peer-list {
+  display: grid;
+  max-block-size: 14rem;
+  margin: 0.75rem 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.new-message-peer-list .peer-card {
+  margin: 0;
+  border-inline: 0;
+  border-block-start: var(--stroke) solid var(--line);
+  border-radius: 0;
+}
+
+.direct-destination-form {
+  padding-block-start: 0.25rem;
+  border-block-start: var(--stroke) solid var(--line);
+}
+
+.new-message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 0.5rem;
+}
+
 .conversation-list {
   display: grid;
 }
