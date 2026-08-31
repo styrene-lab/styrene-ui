@@ -27,6 +27,7 @@
 ## 4. Runtime Verification
 <!-- specs: desktop-network-workflows -->
 
+- [x] Add a versioned desktop use-case corpus and deterministic flow simulation
 - [ ] Run formatting, desktop tests, and warning-denied Clippy
 - [ ] Capture healthy, read-only, partially available, and active-operation fixtures
 - [ ] Run Live-failure and Embedded smoke checks without changing daemon fallback behavior
