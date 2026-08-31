@@ -569,6 +569,12 @@ label {
   padding-block: 0.4rem;
 }
 
+.composer-status-stack {
+  display: grid;
+  gap: 0.35rem;
+  margin-block-start: 0.35rem;
+}
+
 .directory-surface,
 .network-surface,
 .more-surface {
@@ -776,6 +782,7 @@ label {
 
 .mobile-shell[data-keyboard-visible="true"] .composer {
   inset-block-end: 0;
+  position: sticky;
 }
 
 .mobile-shell[data-keyboard-visible="true"] .destination-bar {
@@ -813,6 +820,20 @@ label {
   overflow-wrap: anywhere;
   line-height: 1.1;
   text-align: center;
+}
+
+@media (max-width: 30rem) {
+  .composer-row,
+  .delivery-method-row {
+    grid-template-columns: minmax(0, 1fr);
+    justify-content: stretch;
+  }
+
+  .composer button,
+  .delivery-method-row select,
+  .new-message-actions > button {
+    inline-size: 100%;
+  }
 }
 
 .visually-hidden {

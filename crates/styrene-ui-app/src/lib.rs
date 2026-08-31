@@ -1444,6 +1444,21 @@ pub fn NewMessageForm(
         .cloned()
         .collect::<Vec<_>>();
     let submitted_destination = destination_value.clone();
+    let destination_error_id = "mobile.direct-destination-error";
+    let destination_status_id = "mobile.direct-destination-status";
+    let destination_failure_id = "mobile.new-message-failure";
+    let has_validation_error = matches!(constraint, DestinationEntryConstraint::Oversized);
+    let has_start_failure =
+        failure.as_ref().is_some_and(|failure| failure.code == "conversation_start_failed");
+    let destination_described_by = if has_validation_error && has_start_failure {
+        format!("{destination_status_id} {destination_error_id} {destination_failure_id}")
+    } else if has_validation_error {
+        format!("{destination_status_id} {destination_error_id}")
+    } else if has_start_failure {
+        format!("{destination_status_id} {destination_failure_id}")
+    } else {
+        destination_status_id.to_owned()
+    };
     let validation_message = match constraint {
         DestinationEntryConstraint::Empty => {
             format!("Enter a {LXMF_DESTINATION_INPUT_MAX_BYTES}-character LXMF destination.")
@@ -1533,25 +1548,44 @@ pub fn NewMessageForm(
                     spellcheck: "false",
                     maxlength: LXMF_DESTINATION_INPUT_MAX_BYTES.to_string(),
                     disabled: !controls_enabled,
-                    "aria-invalid": matches!(constraint, DestinationEntryConstraint::Oversized).to_string(),
-                    "aria-describedby": "mobile.direct-destination-status",
+                    autofocus: has_validation_error || has_start_failure,
+                    "aria-invalid": (has_validation_error || has_start_failure).to_string(),
+                    "aria-describedby": destination_described_by,
+                    "aria-errormessage": if has_validation_error {
+                        Some(destination_error_id)
+                    } else if has_start_failure {
+                        Some(destination_failure_id)
+                    } else {
+                        None
+                    },
                     value: destination_value,
                     oninput: move |event| {
                         destination.set(bounded_destination_input(&event.value()));
                     },
                 }
                 p {
-                    id: "mobile.direct-destination-status",
-                    class: if matches!(constraint, DestinationEntryConstraint::Oversized) { "field-error" } else { "field-hint" },
+                    id: destination_status_id,
+                    class: "field-hint",
                     role: "status",
                     "aria-live": "polite",
                     {validation_message}
                 }
-                if failure.as_ref().is_some_and(|failure| failure.code == "conversation_start_failed") {
+                if has_validation_error {
                     p {
-                        id: "mobile.new-message-failure",
+                        id: destination_error_id,
                         class: "field-error",
-                        role: "status",
+                        role: "alert",
+                        format!(
+                            "Destination exceeds the {}-byte input limit.",
+                            LXMF_DESTINATION_INPUT_MAX_BYTES
+                        )
+                    }
+                }
+                if has_start_failure {
+                    p {
+                        id: destination_failure_id,
+                        class: "field-error",
+                        role: "alert",
                         "The backend rejected the destination. Check it and try again."
                     }
                 }
@@ -1660,6 +1694,19 @@ pub fn PropagationPanel(
         SyncState::Complete => "Sync again",
         SyncState::Failed => "Retry sync",
     };
+    let sync_disabled_reason = if !controls_enabled {
+        Some("Propagation actions are unavailable in this view.")
+    } else if propagation.selected_destination.is_none() {
+        Some("Select an active propagation node to synchronize.")
+    } else if !propagation.ready {
+        Some("The selected propagation node is not ready.")
+    } else if sync_in_progress {
+        Some("Synchronization is already in progress.")
+    } else if !retry_allowed {
+        Some("The last synchronization failure cannot be retried from this action.")
+    } else {
+        None
+    };
     rsx! {
         section {
             id: "mobile.propagation",
@@ -1740,7 +1787,12 @@ pub fn PropagationPanel(
                 id: "mobile.propagation-sync",
                 class: "primary-action",
                 disabled: !sync_enabled,
-                "aria-describedby": "mobile.propagation-status mobile.propagation-airtime-policy",
+                autofocus: propagation.sync_state == SyncState::Failed,
+                "aria-describedby": if sync_disabled_reason.is_some() {
+                    "mobile.propagation-status mobile.propagation-airtime-policy mobile.propagation-sync-disabled"
+                } else {
+                    "mobile.propagation-status mobile.propagation-airtime-policy"
+                },
                 onclick: move |_| {
                     if sync_enabled && let Some(action_sink) = action_sink {
                         action_sink.call(MobileAction::new(
@@ -1750,6 +1802,13 @@ pub fn PropagationPanel(
                     }
                 },
                 {sync_label}
+            }
+            if let Some(reason) = sync_disabled_reason {
+                p {
+                    id: "mobile.propagation-sync-disabled",
+                    class: "field-hint",
+                    {reason}
+                }
             }
             div {
                 id: "mobile.propagation-status",
@@ -2134,6 +2193,19 @@ pub fn Composer(
     let selected_method_ready = delivery_method != DeliveryMethod::Propagated || propagated_ready;
     let send_enabled =
         enabled && editing_enabled && selected_method_ready && !draft.trim().is_empty();
+    let send_disabled_reason = if !has_conversation {
+        Some("Choose a conversation before sending a message.")
+    } else if !editing_enabled {
+        Some("Draft editing is unavailable in this view.")
+    } else if !enabled {
+        Some("No bearer is connected. You can continue editing this saved draft.")
+    } else if !selected_method_ready {
+        propagation_unavailable_reason
+    } else if draft.trim().is_empty() {
+        Some("Write a message to enable Send.")
+    } else {
+        None
+    };
     rsx! {
         form {
             key: "{draft_id}",
@@ -2208,6 +2280,11 @@ pub fn Composer(
                     r#type: "submit",
                     "data-enabled": send_enabled.to_string(),
                     disabled: !send_enabled,
+                    "aria-describedby": if send_disabled_reason.is_some() {
+                        "mobile.composer-status mobile.send-disabled-reason"
+                    } else {
+                        "mobile.composer-status"
+                    },
                     "Send"
                 }
             }
@@ -2259,24 +2336,34 @@ pub fn Composer(
                     "Propagated delivery is available through the selected node."
                 }
             }
-            p {
-                id: "mobile.composer-status",
-                class: "field-hint",
-                role: "status",
-                if !has_conversation {
-                    "Choose a conversation before writing a message."
-                } else if !editing_enabled {
-                    "Draft editing is unavailable in this view."
-                } else if !enabled {
-                    "No bearer is connected. You can continue editing this saved draft."
-                } else if !selected_method_ready {
-                    {propagation_unavailable_reason.unwrap_or(
-                        "Propagated delivery is currently unavailable."
-                    )}
-                } else if draft.trim().is_empty() {
-                    "Write a message to enable Send."
-                } else {
-                    "Ready to send."
+            div {
+                class: "composer-status-stack",
+                p {
+                    id: "mobile.composer-status",
+                    class: "field-hint",
+                    role: "status",
+                    if !has_conversation {
+                        "Choose a conversation before writing a message."
+                    } else if !editing_enabled {
+                        "Draft editing is unavailable in this view."
+                    } else if !enabled {
+                        "No bearer is connected. You can continue editing this saved draft."
+                    } else if !selected_method_ready {
+                        {propagation_unavailable_reason.unwrap_or(
+                            "Propagated delivery is currently unavailable."
+                        )}
+                    } else if draft.trim().is_empty() {
+                        "Write a message to enable Send."
+                    } else {
+                        "Ready to send."
+                    }
+                }
+                if let Some(reason) = send_disabled_reason {
+                    p {
+                        id: "mobile.send-disabled-reason",
+                        class: "field-hint",
+                        {reason}
+                    }
                 }
             }
         }

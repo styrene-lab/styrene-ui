@@ -585,8 +585,52 @@ fn new_message_rejects_incomplete_and_oversized_input_before_dispatch() {
         opening_tag_with_id(&oversized, "mobile.direct-destination")
             .contains("aria-invalid=\"true\"")
     );
+    assert!(
+        opening_tag_with_id(&oversized, "mobile.direct-destination")
+            .contains("autofocus")
+    );
+    assert!(
+        opening_tag_with_id(&oversized, "mobile.direct-destination")
+            .contains("aria-errormessage=\"mobile.direct-destination-error\"")
+    );
+    assert!(
+        opening_tag_with_id(&oversized, "mobile.direct-destination")
+            .contains(
+                "aria-describedby=\"mobile.direct-destination-status mobile.direct-destination-error\""
+            )
+    );
+    assert!(oversized.contains("id=\"mobile.direct-destination-error\""));
     assert!(oversized.contains("exceeds the 32-byte input limit"));
     assert!(!oversized.contains(&"a".repeat(34)));
+}
+
+#[test]
+fn new_message_backend_failure_associates_and_focuses_the_destination_error() {
+    let state = fixture("canonical-peer-discovery");
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageForm {
+            peers: state.peers,
+            generation: state.generation,
+            enabled: true,
+            initial_search: String::new(),
+            initial_destination: "e01b09b22ccc4e2755d29eead962677b".into(),
+            failure: Some(TypedFailure {
+                code: "conversation_start_failed".into(),
+                retryable: true,
+            }),
+            action_sink: move |_action| {},
+        }
+    });
+
+    let destination = opening_tag_with_id(&markup, "mobile.direct-destination");
+    assert!(destination.contains("autofocus"));
+    assert!(destination.contains("aria-invalid=\"true\""));
+    assert!(destination.contains("aria-errormessage=\"mobile.new-message-failure\""));
+    assert!(destination.contains(
+        "aria-describedby=\"mobile.direct-destination-status mobile.new-message-failure\""
+    ));
+    assert!(markup.contains("id=\"mobile.new-message-failure\""));
+    assert!(markup.contains("The backend rejected the destination. Check it and try again."));
 }
 
 #[test]
@@ -726,6 +770,7 @@ fn composer_disables_only_propagated_delivery_without_a_ready_node() {
     assert!(propagated.split('>').next().unwrap().contains("disabled"));
     assert!(markup.contains("Select a propagation node in Network"));
     assert!(opening_tag_with_id(&markup, "mobile.send").contains("data-enabled=\"true\""));
+    assert!(!markup.contains("id=\"mobile.send-disabled-reason\""));
     assert!(markup.contains("Ready to send."));
 }
 
@@ -786,6 +831,8 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
         "flex-wrap: wrap",
         "overflow-wrap: anywhere",
         "@media (max-width: 30rem)",
+        ".composer button,",
+        ".new-message-actions > button",
         "@media (min-width: 52rem)",
         "@media (prefers-color-scheme: dark)",
         "@media (prefers-contrast: more)",
@@ -1232,6 +1279,8 @@ fn stale_propagation_metadata_disables_manual_sync_without_losing_selection() {
     assert!(markup.contains("780e7aa7b2f175c88f28c7ba8ab1b714"));
     assert!(markup.contains("data-ready=\"false\""));
     assert!(opening_tag_with_id(&markup, "mobile.propagation-sync").contains("disabled"));
+    assert!(markup.contains("id=\"mobile.propagation-sync-disabled\""));
+    assert!(markup.contains("The selected propagation node is not ready."));
     assert!(markup.contains("Selected node is currently unavailable"));
 }
 
@@ -1260,6 +1309,7 @@ fn propagation_component_renders_progress_repeat_sync_and_recoverable_failure() 
     let mut failed = PropagationUpdate::from_fixture(&failed_fixture);
     failed.failure = Some(TypedFailure { code: "transport_unavailable".into(), retryable: true });
     let failure_markup = render_propagation(failed);
+    assert!(opening_tag_with_id(&failure_markup, "mobile.propagation-sync").contains("autofocus"));
     assert!(failure_markup.contains("id=\"mobile.propagation-failure\""));
     assert!(failure_markup.contains("data-code=\"transport_unavailable\""));
     assert!(failure_markup.contains("data-retryable=\"true\""));
@@ -1283,4 +1333,21 @@ fn composer_projects_backend_draft_revision_and_retryability() {
     assert!(opening_tag_with_id(&markup, "mobile.send").contains("type=\"submit\""));
     assert!(markup.contains("id=\"mobile.retry.message-direct-1\""));
     assert!(opening_tag_with_id(&markup, "mobile.retry.message-direct-1").contains("disabled"));
+}
+
+#[test]
+fn composer_exposes_disabled_send_reason_when_completion_is_blocked() {
+    let state = fixture("live-empty-connected");
+    let markup = dioxus_ssr::render_element(rsx! {
+        Composer {
+            conversation: None,
+            enabled: true,
+            propagation: PropagationUpdate::from_fixture(&state),
+        }
+    });
+
+    let send = opening_tag_with_id(&markup, "mobile.send");
+    assert!(send.contains("aria-describedby=\"mobile.composer-status mobile.send-disabled-reason\""));
+    assert!(markup.contains("id=\"mobile.send-disabled-reason\""));
+    assert!(markup.contains("Choose a conversation before sending a message."));
 }
