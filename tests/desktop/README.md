@@ -11,6 +11,9 @@ Run all standard journeys with:
 ./tests/desktop/test-desktop-flows.sh
 ```
 
+The simulations are ignored by default and do not run in the standard desktop
+test or CI commands.
+
 The suite covers empty, healthy, degraded, active-propagation, and explicit
 failure sessions. It also covers network inventory, direct messaging, and page
 browsing.
