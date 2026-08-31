@@ -1,10 +1,26 @@
+use std::future::Future;
+use std::pin::pin;
+use std::task::{Context, Poll, Waker};
+
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
-    AuthorizationState, Contrast, EdgeInsets, KeyboardGeometry, MotionPreference, PermissionKind,
-    PermissionStatus, PlatformApplyResult, PlatformChange, PlatformEvent, PlatformGeometry,
-    PlatformInsets, PlatformSnapshot, PlatformState, TextScale, TextScaleCategory, WindowClass,
-    WindowMetrics,
+    AuthorizationState, ClipboardTextReader, Contrast, EdgeInsets, KeyboardGeometry,
+    MAX_CANDIDATE_PAYLOAD_BYTES, MockClipboardTextReader, MockQrDestinationScanner,
+    MockTextAcquisitionResponse, MotionPreference, PermissionKind, PermissionStatus,
+    PlatformApplyResult, PlatformChange, PlatformEvent, PlatformGeometry, PlatformInsets,
+    PlatformSnapshot, PlatformState, QrDestinationScanner, TextAcquisitionFailure,
+    TextAcquisitionGeneration, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
 };
+
+fn ready<T>(future: impl Future<Output = T>) -> T {
+    let mut future = pin!(future);
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(value) => value,
+        Poll::Pending => panic!("deterministic platform mock unexpectedly returned pending"),
+    }
+}
 
 fn snapshot(generation: u64, sequence: u64) -> PlatformSnapshot {
     PlatformSnapshot {
@@ -164,4 +180,71 @@ fn authoritative_resync_accepts_native_changes_at_equal_web_sequence() {
     );
     assert_eq!(state.snapshot(), &native_update);
     assert_eq!(state.replace_resynced_snapshot(snapshot(4, 8)), PlatformApplyResult::IgnoredStale);
+}
+
+#[test]
+fn clipboard_mock_types_boundary_failures_and_preserves_generation() {
+    let oversized = vec![b'x'; MAX_CANDIDATE_PAYLOAD_BYTES + 1];
+    let reader = MockClipboardTextReader::new([
+        MockTextAcquisitionResponse::Denied,
+        MockTextAcquisitionResponse::Restricted,
+        MockTextAcquisitionResponse::Unavailable,
+        MockTextAcquisitionResponse::ServiceBytes(oversized),
+        MockTextAcquisitionResponse::ServiceBytes(vec![0xff]),
+        MockTextAcquisitionResponse::ServiceBytes(b"not-validated-by-platform".to_vec()),
+    ]);
+
+    let expected = [
+        Err(TextAcquisitionFailure::Denied),
+        Err(TextAcquisitionFailure::Restricted),
+        Err(TextAcquisitionFailure::Unavailable),
+        Err(TextAcquisitionFailure::Oversized),
+        Err(TextAcquisitionFailure::Malformed),
+    ];
+    for (value, expected) in expected.into_iter().enumerate() {
+        let generation = TextAcquisitionGeneration::new(value as u64 + 10);
+        let completion = ready(reader.read_clipboard_text(generation));
+        assert_eq!(completion.generation, generation);
+        assert_eq!(completion.result, expected);
+    }
+
+    let completion = ready(reader.read_clipboard_text(TextAcquisitionGeneration::new(15)));
+    assert_eq!(completion.result.unwrap().as_str(), "not-validated-by-platform");
+}
+
+#[test]
+fn qr_mock_reports_cancellation_and_success_without_destination_validation() {
+    let oversized = vec![b'x'; MAX_CANDIDATE_PAYLOAD_BYTES + 1];
+    let scanner = MockQrDestinationScanner::new([
+        MockTextAcquisitionResponse::Denied,
+        MockTextAcquisitionResponse::Restricted,
+        MockTextAcquisitionResponse::Unavailable,
+        MockTextAcquisitionResponse::ServiceBytes(oversized),
+        MockTextAcquisitionResponse::ServiceBytes(vec![0xff]),
+        MockTextAcquisitionResponse::Cancelled,
+        MockTextAcquisitionResponse::ServiceBytes(Vec::new()),
+    ]);
+
+    let expected = [
+        TextAcquisitionFailure::Denied,
+        TextAcquisitionFailure::Restricted,
+        TextAcquisitionFailure::Unavailable,
+        TextAcquisitionFailure::Oversized,
+        TextAcquisitionFailure::Malformed,
+    ];
+    for (value, expected) in expected.into_iter().enumerate() {
+        let completion =
+            ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(value as u64 + 21)));
+        assert_eq!(completion.result, Err(expected));
+    }
+
+    let cancelled = ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(26)));
+    assert_eq!(cancelled.generation.value(), 26);
+    assert_eq!(cancelled.result, Err(TextAcquisitionFailure::Cancelled));
+
+    let candidate = ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(27)));
+    assert_eq!(candidate.result.unwrap().as_str(), "");
+
+    let exhausted = ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(28)));
+    assert_eq!(exhausted.result, Err(TextAcquisitionFailure::Unavailable));
 }

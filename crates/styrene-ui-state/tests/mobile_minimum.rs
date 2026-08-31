@@ -47,6 +47,58 @@ fn shared_mobile_minimum_fixture_deserializes_strictly() {
 }
 
 #[test]
+fn runtime_and_extended_session_phase_round_trip_without_collapsing() {
+    let mut fixture = fixture("live-empty-connected");
+    fixture.session.runtime = styrene_ui_state::SessionRuntime::Failed;
+    fixture.session.phase = SessionPhase::Degraded;
+
+    let encoded = serde_json::to_vec(&fixture).expect("session state must serialize");
+    let restored: MobileFixture =
+        serde_json::from_slice(&encoded).expect("session state must deserialize");
+
+    assert_eq!(restored.session.runtime, styrene_ui_state::SessionRuntime::Failed);
+    assert_eq!(restored.session.phase, SessionPhase::Degraded);
+    assert_eq!(restored.session.runtime.as_str(), "failed");
+    assert_eq!(restored.session.phase.as_str(), "degraded");
+}
+
+#[test]
+fn authoritative_message_details_round_trip_without_optional_value_collapse() {
+    let mut fixture = fixture("direct-message-queued");
+    let message = &mut fixture.messages[0];
+    message.details.projection_complete = true;
+    message.details.source_hash = "source".into();
+    message.details.destination_hash = "destination".into();
+    message.details.lxmf_timestamp = Some(42.25);
+    message.details.correlation_id = None;
+    message.details.requested_delivery_method = Some("future-method".into());
+    message.details.retry_eligible = None;
+    message.details.attempts.push(styrene_ui_state::MessageAttempt {
+        message_id: message.id.clone(),
+        number: 1,
+        bearer: Some("tcp".into()),
+        route: styrene_ui_state::MessageRouteObservation {
+            outcome: styrene_ui_state::MessageRouteOutcome::Observed,
+            connection_generation: Some(fixture.generation),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+
+    let encoded = serde_json::to_vec(&fixture).expect("message details must serialize");
+    let restored: MobileFixture =
+        serde_json::from_slice(&encoded).expect("message details must deserialize");
+    let details = &restored.messages[0].details;
+
+    assert!(details.projection_complete);
+    assert_eq!(details.lxmf_timestamp, Some(42.25));
+    assert_eq!(details.correlation_id, None);
+    assert_eq!(details.requested_delivery_method.as_deref(), Some("future-method"));
+    assert_eq!(details.retry_eligible, None);
+    assert_eq!(details.attempts[0].route.outcome, styrene_ui_state::MessageRouteOutcome::Observed);
+}
+
+#[test]
 fn custody_projection_round_trips_in_renderer_neutral_state() {
     let mut fixture = fixture("live-empty-connected");
     fixture.session.custody = Some(IdentityCustody {
@@ -88,6 +140,87 @@ fn mobile_actions_preserve_originating_generation_and_command_facts() {
             draft_revision: 7,
         }
     );
+}
+
+#[test]
+fn start_conversation_action_preserves_generation_and_canonical_destination() {
+    let action = MobileAction::new(
+        11,
+        MobileActionKind::StartConversation {
+            peer_hash: "e01b09b22ccc4e2755d29eead962677b".into(),
+        },
+    );
+
+    assert_eq!(action.generation, 11);
+    assert_eq!(
+        action.kind,
+        MobileActionKind::StartConversation {
+            peer_hash: "e01b09b22ccc4e2755d29eead962677b".into(),
+        }
+    );
+}
+
+#[test]
+fn identity_display_name_action_preserves_generation_and_public_value() {
+    let action = MobileAction::new(
+        12,
+        MobileActionKind::SetIdentityDisplayName { display_name: "Field Node".into() },
+    );
+
+    assert_eq!(action.generation, 12);
+    assert_eq!(
+        action.kind,
+        MobileActionKind::SetIdentityDisplayName { display_name: "Field Node".into() }
+    );
+}
+
+#[test]
+fn new_message_entry_admits_only_bounded_backend_candidates() {
+    use styrene_ui_state::{
+        DestinationEntryConstraint, LXMF_DESTINATION_INPUT_MAX_BYTES, bounded_destination_input,
+        destination_entry_constraint, start_conversation_action,
+    };
+
+    assert_eq!(destination_entry_constraint("  "), DestinationEntryConstraint::Empty);
+    assert_eq!(destination_entry_constraint("abc"), DestinationEntryConstraint::Incomplete);
+    assert!(start_conversation_action(4, "abc").is_none());
+
+    let canonical = "e01b09b22ccc4e2755d29eead962677b";
+    assert_eq!(canonical.len(), LXMF_DESTINATION_INPUT_MAX_BYTES);
+    assert_eq!(destination_entry_constraint(canonical), DestinationEntryConstraint::Ready);
+    assert_eq!(
+        start_conversation_action(4, canonical),
+        Some(MobileAction::new(
+            4,
+            MobileActionKind::StartConversation { peer_hash: canonical.into() },
+        ))
+    );
+
+    let malformed_but_bounded = "z".repeat(LXMF_DESTINATION_INPUT_MAX_BYTES);
+    assert!(start_conversation_action(4, &malformed_but_bounded).is_some());
+
+    let oversized = "a".repeat(LXMF_DESTINATION_INPUT_MAX_BYTES + 10_000);
+    let retained = bounded_destination_input(&oversized);
+    assert_eq!(retained.len(), LXMF_DESTINATION_INPUT_MAX_BYTES + 1);
+    assert_eq!(destination_entry_constraint(&retained), DestinationEntryConstraint::Oversized);
+    assert!(start_conversation_action(4, &retained).is_none());
+}
+
+#[test]
+fn new_message_peer_search_is_empty_safe_case_insensitive_and_bounded() {
+    use styrene_ui_state::{
+        PEER_SEARCH_INPUT_MAX_BYTES, bounded_peer_search_input, peer_matches_search,
+    };
+
+    let peer = fixture("canonical-peer-discovery").peers.remove(0);
+    assert!(peer_matches_search(&peer, ""));
+    assert!(peer_matches_search(&peer, "skywave"));
+    assert!(peer_matches_search(&peer, "E01B09"));
+    assert!(peer_matches_search(&peer, "LXMF.DELIVERY"));
+    assert!(!peer_matches_search(&peer, "missing"));
+
+    let oversized = "q".repeat(PEER_SEARCH_INPUT_MAX_BYTES + 1024);
+    assert_eq!(bounded_peer_search_input(&oversized).len(), PEER_SEARCH_INPUT_MAX_BYTES + 1);
 }
 
 #[test]
@@ -293,6 +426,75 @@ fn tcp_enables_messaging_when_rnode_is_unavailable() {
         BearerState::Unavailable
     );
     assert!(store.messaging_available());
+}
+
+#[test]
+fn operational_summary_uses_only_authoritative_loaded_facts() {
+    let mut state = fixture("direct-message-queued");
+    state.conversations[0].unread_count = u32::MAX;
+    state.conversations.push(styrene_ui_state::Conversation {
+        peer_hash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".into(),
+        unread_count: 7,
+        draft: String::new(),
+        draft_revision: 0,
+    });
+    state.messages[0].details.attempts.extend([
+        styrene_ui_state::MessageAttempt {
+            route: styrene_ui_state::MessageRouteObservation {
+                outcome: styrene_ui_state::MessageRouteOutcome::Observed,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        styrene_ui_state::MessageAttempt::default(),
+    ]);
+    let summary = MobileStore::new(state).operational_summary();
+
+    assert_eq!(summary.runtime, styrene_ui_state::SessionRuntime::Ready);
+    assert_eq!(summary.phase, SessionPhase::Connected);
+    assert_eq!(summary.connected_bearers, 1);
+    assert_eq!(summary.bearer_count, 3);
+    assert_eq!(summary.peer_count, 0);
+    assert_eq!(summary.unread_count, u32::MAX);
+    assert_eq!(summary.loaded_route_observed, 1);
+    assert_eq!(summary.loaded_route_unknown, 1);
+    assert!(!summary.propagation_selected);
+    assert!(!summary.propagation_ready);
+    assert_eq!(summary.propagation_sync_state, SyncState::Idle);
+}
+
+#[test]
+fn operational_summary_preserves_empty_ready_reconnecting_degraded_failed_and_unknown_states() {
+    let empty = MobileStore::new(fixture("live-empty-connected")).operational_summary();
+    assert_eq!(empty.peer_count, 0);
+    assert_eq!(empty.unread_count, 0);
+    assert_eq!(empty.loaded_route_observed, 0);
+    assert_eq!(empty.loaded_route_unknown, 0);
+
+    let ready = MobileStore::new(fixture("canonical-peer-discovery")).operational_summary();
+    assert_eq!(ready.phase, SessionPhase::Connected);
+    assert_eq!(ready.peer_count, 1);
+    assert!(ready.propagation_selected);
+    assert!(ready.propagation_ready);
+
+    let reconnecting =
+        MobileStore::new(fixture("tcp-reconnecting-rnode-unavailable")).operational_summary();
+    assert_eq!(reconnecting.phase, SessionPhase::Reconnecting);
+    assert_eq!(reconnecting.connected_bearers, 0);
+    assert_eq!(reconnecting.bearer_count, 3);
+
+    let mut degraded_state = fixture("live-empty-connected");
+    degraded_state.session.phase = SessionPhase::Degraded;
+    let degraded = MobileStore::new(degraded_state).operational_summary();
+    assert_eq!(degraded.phase, SessionPhase::Degraded);
+
+    let failed = MobileStore::new(fixture("recoverable-session-failure")).operational_summary();
+    assert_eq!(failed.phase, SessionPhase::Failed);
+    assert!(!failed.propagation_ready);
+
+    let unknown_route = MobileStore::new(fixture("direct-message-queued")).operational_summary();
+    assert_eq!(unknown_route.loaded_route_observed, 0);
+    assert_eq!(unknown_route.loaded_route_unknown, 0);
 }
 
 #[test]
