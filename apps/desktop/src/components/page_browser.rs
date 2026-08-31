@@ -202,7 +202,7 @@ pub fn PageBrowser(
                         request.action = PageNavigationAction::Back;
                         on_navigate.call(request);
                     },
-                    "<"
+                    "Back"
                 }
                 button {
                     class: "page-nav-btn",
@@ -214,7 +214,7 @@ pub fn PageBrowser(
                         request.action = PageNavigationAction::Forward;
                         on_navigate.call(request);
                     },
-                    ">"
+                    "Forward"
                 }
                 button {
                     class: "page-nav-btn",
