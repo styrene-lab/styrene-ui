@@ -126,6 +126,104 @@ final class StyreneMobileUITests: XCTestCase {
         add(screenshot)
     }
 
+    func testSkywaveParitySmokeCapture() throws {
+        try requireSkywaveCapture()
+
+        let app = XCUIApplication(bundleIdentifier: "co.horsfalldesign.skywave")
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+
+        retainSkywaveSnapshot(app, name: "launch")
+
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+    }
+
+    func testSkywaveParityReadOnlyInventoryCapture() throws {
+        try requireSkywaveCapture()
+
+        let app = XCUIApplication(bundleIdentifier: "co.horsfalldesign.skywave")
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+
+        let developerNotice = app.buttons["Continue"]
+        if developerNotice.waitForExistence(timeout: 3) {
+            developerNotice.tap()
+        }
+        XCTAssertTrue(app.buttons["Overview"].waitForExistence(timeout: 10))
+        retainSkywaveSnapshot(app, name: "overview")
+
+        for tabName in ["Messages", "Calls", "Map", "Mesh"] {
+            let tab = app.buttons[tabName]
+            XCTAssertTrue(tab.waitForExistence(timeout: 5), "Missing \(tabName) tab")
+            XCTAssertTrue(tab.isHittable, "\(tabName) tab is not hittable")
+            tab.tap()
+            retainSkywaveSnapshot(app, name: tabName.lowercased())
+        }
+
+        app.buttons["Overview"].tap()
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        retainSkywaveSnapshot(app, name: "settings")
+    }
+
+    func testSkywaveParityReadOnlyWorkflowCapture() throws {
+        try requireSkywaveCapture()
+
+        let app = XCUIApplication(bundleIdentifier: "co.horsfalldesign.skywave")
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+        dismissSkywaveDeveloperNotice(in: app)
+
+        let settingsPages = [
+            (button: "Identity", title: "Identity"),
+            (button: "Interfaces", title: "Interfaces"),
+            (button: "Propagation Sync", title: "Mail Sync"),
+        ]
+        for page in settingsPages {
+            app.buttons["Overview"].tap()
+            app.buttons["Settings"].tap()
+            XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+
+            let pageButton = app.buttons[page.button]
+            if !pageButton.isHittable {
+                app.swipeUp()
+            }
+            XCTAssertTrue(
+                pageButton.waitForExistence(timeout: 5),
+                "Missing \(page.button) settings page"
+            )
+            XCTAssertTrue(pageButton.isHittable, "\(page.button) settings page is not hittable")
+            pageButton.tap()
+            XCTAssertTrue(
+                app.navigationBars[page.title].waitForExistence(timeout: 5),
+                "Missing \(page.title) destination"
+            )
+            retainSkywaveSnapshot(
+                app,
+                name: "settings-\(page.button.lowercased().replacingOccurrences(of: " ", with: "-"))"
+            )
+
+            let close = app.navigationBars.buttons["Close"]
+            XCTAssertTrue(close.waitForExistence(timeout: 5), "Missing Settings close button")
+            close.tap()
+        }
+
+        app.buttons["Messages"].tap()
+        let newMessage = app.buttons["New message"]
+        XCTAssertTrue(newMessage.waitForExistence(timeout: 5))
+        newMessage.tap()
+        retainSkywaveSnapshot(app, name: "new-message-entry")
+
+        let cancel = app.buttons["Cancel"]
+        if cancel.waitForExistence(timeout: 3) {
+            cancel.tap()
+        }
+    }
+
     func testPhysicalBluetoothRNodeApprovalAndReadback() throws {
         guard ProcessInfo.processInfo.environment["STYRENE_BLE_ACCEPTANCE"] == "1" else {
             throw XCTSkip("Requires a physical NUS RNode in its pairing window.")
@@ -224,6 +322,31 @@ final class StyreneMobileUITests: XCTestCase {
         app.descendants(matching: .any)
             .matching(NSPredicate(format: "label ==[c] 'Bluetooth RNode bearer connected'"))
             .firstMatch
+    }
+
+    private func requireSkywaveCapture() throws {
+        guard ProcessInfo.processInfo.environment["SKYWAVE_PARITY_CAPTURE"] == "1" else {
+            throw XCTSkip("Requires the installed Skywave beta on a physical iPhone.")
+        }
+    }
+
+    private func dismissSkywaveDeveloperNotice(in app: XCUIApplication) {
+        let developerNotice = app.buttons["Continue"]
+        if developerNotice.waitForExistence(timeout: 2) {
+            developerNotice.tap()
+        }
+    }
+
+    private func retainSkywaveSnapshot(_ app: XCUIApplication, name: String) {
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "skywave-\(name)"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        let semanticSnapshot = XCTAttachment(string: app.debugDescription)
+        semanticSnapshot.name = "skywave-\(name)-semantic-snapshot"
+        semanticSnapshot.lifetime = .keepAlways
+        add(semanticSnapshot)
     }
 
     private func launchFixture() -> XCUIApplication {

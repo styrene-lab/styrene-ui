@@ -3,9 +3,13 @@
 `corpus.json` is copied from `styrene-rs` at
 `tests/fixtures/mobile-application-parity-v1/corpus.json`.
 
-Source revision: `899da81302c5f4e92f60a2fdaf396c26e813ba76`
+Source baseline revision: `a6e4380117b9bdf509a944efd7fadb8ac6ccd225`
 
-File SHA-256: `a43b5e749202e25df1cd4bfbfc90e4d996b59d7e0375beff008ffb85617cbea4`
+File SHA-256: `2e6ea065cc414cb4d5e35669eb690736f12561dd837dd139c56ee920938b81cd`
+
+The file includes the uncommitted Skywave `1.0` build `9` capture candidate.
+Replace the baseline revision with the backend commit that admits this exact
+file before using the UI copy as revision-locked release evidence.
 
 The backend owns the schema, application provenance, evidence classifications,
 and parity decisions. The UI copy supplies journey inputs and revision
