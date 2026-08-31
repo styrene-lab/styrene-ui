@@ -4,13 +4,13 @@
 
 use crate::state::PageView;
 use dioxus::prelude::*;
+#[cfg(test)]
+use styrene_ipc::PageAddress;
 use styrene_ipc::types::{
     FileDownloadInfo, FileDownloadRequest, FileDownloadState, PageBrowseStage, PageBrowseStageKind,
     PageBrowseStageState, PageFormFieldKind, PageFormSubmission, PageNavigationAction,
     PageNavigationRequest,
 };
-#[cfg(test)]
-use styrene_ipc::PageAddress;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PageMode {
@@ -175,10 +175,10 @@ pub fn PageBrowser(
         page.as_ref().and_then(|page| page.authoritative.as_ref()).map(|page| &page.navigation);
     let can_back = navigation.is_some_and(|state| state.can_back);
     let can_forward = navigation.is_some_and(|state| state.can_forward);
-    if let Some(state) = navigation {
-        if *page_session.read() != state.session_id {
-            page_session.set(state.session_id.clone());
-        }
+    if let Some(state) = navigation
+        && *page_session.read() != state.session_id
+    {
+        page_session.set(state.session_id.clone());
     }
     let is_loading = page.as_ref().map(|p| p.loading).unwrap_or(false);
 
@@ -202,7 +202,7 @@ pub fn PageBrowser(
                         request.action = PageNavigationAction::Back;
                         on_navigate.call(request);
                     },
-                    "<"
+                    "Back"
                 }
                 button {
                     class: "page-nav-btn",
@@ -214,7 +214,7 @@ pub fn PageBrowser(
                         request.action = PageNavigationAction::Forward;
                         on_navigate.call(request);
                     },
-                    ">"
+                    "Forward"
                 }
                 button {
                     class: "page-nav-btn",
@@ -621,14 +621,16 @@ mod tests {
         first.correlation_id = "load-1".into();
         first.navigation.address = "/page/index.mu".into();
         first.fields.push(password.clone());
-        let (correlation, mut values) = authoritative_field_reset("", &first).unwrap();
+        let (correlation, mut values) =
+            authoritative_field_reset("", &first).expect("initialize first page field state");
         values.insert("password".into(), vec!["secret".into()]);
 
         let mut reloaded = styrene_ipc::types::PageContent::default();
         reloaded.correlation_id = "load-2".into();
         reloaded.navigation.address = first.navigation.address.clone();
         reloaded.fields.push(password);
-        let (_, values) = authoritative_field_reset(&correlation, &reloaded).unwrap();
+        let (_, values) = authoritative_field_reset(&correlation, &reloaded)
+            .expect("reset field state for reloaded page");
 
         assert_eq!(values["password"], [""]);
     }

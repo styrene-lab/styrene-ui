@@ -449,7 +449,7 @@ impl DomainStores {
         let Some(expected) = self.runtime.server_generation else {
             return;
         };
-        if paths.iter().any(|path| path.observation.connection_generation != Some(expected)) {
+        if paths.iter().any(|path| path.observation.ipc_generation() != Some(expected)) {
             return;
         }
         self.network.paths = paths
@@ -479,7 +479,7 @@ impl DomainStores {
         };
         if interfaces
             .iter()
-            .any(|interface| interface.observation.connection_generation != Some(expected))
+            .any(|interface| interface.observation.ipc_generation() != Some(expected))
         {
             return;
         }
@@ -499,9 +499,9 @@ impl DomainStores {
     ) {
         if self.accepts(generation)
             && self.runtime.server_generation.is_some()
-            && operations.iter().all(|value| {
-                value.observation.connection_generation == self.runtime.server_generation
-            })
+            && operations
+                .iter()
+                .all(|value| value.observation.ipc_generation() == self.runtime.server_generation)
         {
             for operation in &mut operations {
                 if operation.detail.is_some() {
@@ -527,7 +527,7 @@ impl DomainStores {
             .active
             .iter()
             .chain(&snapshot.history)
-            .any(|value| value.observation.connection_generation != self.runtime.server_generation)
+            .any(|value| value.observation.ipc_generation() != self.runtime.server_generation)
         {
             return;
         }
@@ -543,9 +543,9 @@ impl DomainStores {
     ) {
         if self.accepts(generation)
             && self.runtime.server_generation.is_some()
-            && requests.iter().all(|value| {
-                value.observation.connection_generation == self.runtime.server_generation
-            })
+            && requests
+                .iter()
+                .all(|value| value.observation.ipc_generation() == self.runtime.server_generation)
         {
             for request in &mut requests {
                 request.response = None;
@@ -561,9 +561,9 @@ impl DomainStores {
     ) {
         if self.accepts(generation)
             && self.runtime.server_generation.is_some()
-            && resources.iter().all(|value| {
-                value.observation.connection_generation == self.runtime.server_generation
-            })
+            && resources
+                .iter()
+                .all(|value| value.observation.ipc_generation() == self.runtime.server_generation)
         {
             self.network.resources = resources;
         }
@@ -937,14 +937,12 @@ impl DomainStores {
         if !self.accepts(generation) {
             return;
         }
-        if append {
-            if let Some(current) = &self.propagation.snapshot {
-                let mut queue = current.queue.clone();
-                queue.extend(snapshot.queue);
-                queue.sort_by(|left, right| left.id.cmp(&right.id));
-                queue.dedup_by(|left, right| left.id == right.id);
-                snapshot.queue = queue;
-            }
+        if append && let Some(current) = &self.propagation.snapshot {
+            let mut queue = current.queue.clone();
+            queue.extend(snapshot.queue);
+            queue.sort_by(|left, right| left.id.cmp(&right.id));
+            queue.dedup_by(|left, right| left.id == right.id);
+            snapshot.queue = queue;
         }
         self.propagation.enabled = snapshot.enabled;
         self.propagation.state = if snapshot.enabled { DataState::Ready } else { DataState::Empty };
@@ -1276,7 +1274,7 @@ impl DomainStores {
         &self,
         observation: &styrene_ipc::types::ObservationMetadata,
     ) -> bool {
-        observation.connection_generation.is_some_and(|actual| {
+        observation.ipc_generation().is_some_and(|actual| {
             self.runtime.server_generation == Some(actual)
                 || self.runtime.event_server_generation == Some(actual)
         })
@@ -1521,10 +1519,10 @@ fn redact_endpoint(value: String) -> String {
     if ["token=", "password=", "secret="].iter().any(|marker| lowered.contains(marker)) {
         return "[REDACTED]".into();
     }
-    if let Some((scheme, remainder)) = without_query.split_once("://") {
-        if let Some((_, host)) = remainder.rsplit_once('@') {
-            return format!("{scheme}://[REDACTED]@{host}");
-        }
+    if let Some((scheme, remainder)) = without_query.split_once("://")
+        && let Some((_, host)) = remainder.rsplit_once('@')
+    {
+        return format!("{scheme}://[REDACTED]@{host}");
     }
     without_query.into()
 }
@@ -1694,9 +1692,9 @@ mod tests {
         stores.apply_daemon_event(ConnectionGeneration(2), DaemonEvent::RouteLifecycle(event));
 
         assert_eq!(stores.network.paths.len(), 1, "events do not replace active snapshots");
-        assert_eq!(stores.activity.entries.last().unwrap().kind, "route");
+        assert_eq!(stores.activity.entries.last().expect("route activity entry").kind, "route");
         assert_eq!(
-            stores.activity.entries.last().unwrap().correlation_id.as_deref(),
+            stores.activity.entries.last().expect("route activity entry").correlation_id.as_deref(),
             Some("path-request-1")
         );
     }
@@ -2183,7 +2181,13 @@ mod tests {
 
         assert_eq!(stores.messages.messages.len(), 3);
         assert_eq!(
-            stores.messages.messages.iter().find(|message| message.id == "known").unwrap().status,
+            stores
+                .messages
+                .messages
+                .iter()
+                .find(|message| message.id == "known")
+                .expect("known message after reconciliation")
+                .status,
             "delivered"
         );
         assert_eq!(
@@ -2192,7 +2196,7 @@ mod tests {
                 .messages
                 .iter()
                 .find(|message| message.id == "concurrent")
-                .unwrap()
+                .expect("concurrent message after reconciliation")
                 .content,
             "arrived during reload"
         );
@@ -2275,9 +2279,9 @@ mod tests {
                     "peer".into(),
                     FleetOperation::Execute { command: "false".into(), args: Vec::new() },
                 )
-                .unwrap();
+                .expect("fleet job should start");
             stores.finish_fleet_job(ConnectionGeneration(2), &id, Err(error.into()));
-            assert_eq!(stores.fleet.jobs.last().unwrap().state, expected);
+            assert_eq!(stores.fleet.jobs.last().expect("finished fleet job").state, expected);
         }
     }
 
@@ -2292,7 +2296,10 @@ mod tests {
         snapshot.sync_state_supported = false;
         stores.set_propagation_snapshot(ConnectionGeneration(2), snapshot, false);
         assert!(stores.propagation.enabled);
-        assert_eq!(stores.propagation.snapshot.as_ref().unwrap().queue_count, 1);
+        assert_eq!(
+            stores.propagation.snapshot.as_ref().expect("propagation snapshot").queue_count,
+            1
+        );
         assert!(matches!(stores.propagation.state, DataState::Ready));
     }
 
@@ -2316,7 +2323,10 @@ mod tests {
         }]);
         stores.set_propagation_snapshot(ConnectionGeneration(2), second, true);
 
-        assert_eq!(stores.propagation.snapshot.as_ref().unwrap().queue.len(), 2);
+        assert_eq!(
+            stores.propagation.snapshot.as_ref().expect("merged propagation snapshot").queue.len(),
+            2
+        );
     }
 
     #[test]
@@ -2385,7 +2395,12 @@ mod tests {
     #[test]
     fn mutation_capabilities_fail_closed_and_are_generation_scoped() {
         let mut stores = stores();
-        assert!(stores.mutation_availability("network.probe").unwrap_err().contains("unknown"));
+        assert!(
+            stores
+                .mutation_availability("network.probe")
+                .expect_err("capabilities should be unknown")
+                .contains("unknown")
+        );
 
         let mut active = styrene_ipc::types::ActiveCapabilitiesInfo::default();
         active.version = styrene_ipc::types::ACTIVE_CAPABILITIES_VERSION;
@@ -2395,25 +2410,34 @@ mod tests {
         status.active_capabilities = Some(active);
         stores.apply_daemon_event(ConnectionGeneration(2), DaemonEvent::Status(status));
         assert!(stores.mutation_availability("network.announce").is_ok());
-        assert!(stores.mutation_availability("network.probe").unwrap_err().contains("denied"));
+        assert!(
+            stores
+                .mutation_availability("network.probe")
+                .expect_err("network probe should be denied")
+                .contains("denied")
+        );
 
         let mut degraded = styrene_ipc::types::DegradedCapabilityInfo::default();
         degraded.id = "network.announce".into();
         degraded.reason = "transport worker unavailable".into();
-        stores.runtime.capabilities.as_mut().unwrap().degraded.push(degraded);
-        assert!(stores
-            .mutation_availability("network.announce")
-            .unwrap_err()
-            .contains("transport worker unavailable"));
+        stores.runtime.capabilities.as_mut().expect("active capabilities").degraded.push(degraded);
+        assert!(
+            stores
+                .mutation_availability("network.announce")
+                .expect_err("degraded announcement should be unavailable")
+                .contains("transport worker unavailable")
+        );
 
         stores.apply_daemon_event(
             ConnectionGeneration(2),
             DaemonEvent::Disconnected("closed".into()),
         );
-        assert!(stores
-            .mutation_availability("network.announce")
-            .unwrap_err()
-            .contains("disconnected"));
+        assert!(
+            stores
+                .mutation_availability("network.announce")
+                .expect_err("announcement should fail while disconnected")
+                .contains("disconnected")
+        );
         stores.begin_session("new", ConnectionGeneration(3));
         assert!(stores.runtime.capabilities.is_none());
     }
@@ -2421,7 +2445,7 @@ mod tests {
     #[test]
     fn operator_fixture_catalog_exercises_each_universal_execution_gate() {
         use styrene_ipc::operator_fixtures::{
-            operator_fixture_evidence, OperatorFixtureState, OPERATOR_FIXTURE_OPERATIONS,
+            OPERATOR_FIXTURE_OPERATIONS, OperatorFixtureState, operator_fixture_evidence,
         };
 
         for operation in OPERATOR_FIXTURE_OPERATIONS {
@@ -2429,7 +2453,7 @@ mod tests {
             assert!(
                 disconnected
                     .mutation_availability(operation.capability)
-                    .unwrap_err()
+                    .expect_err("disconnected fixture should be unavailable")
                     .contains("disconnected"),
                 "{} disconnected fixture",
                 operation.id
@@ -2446,17 +2470,23 @@ mod tests {
             assert!(
                 current
                     .mutation_availability_at(ConnectionGeneration(1), operation.capability)
-                    .unwrap_err()
+                    .expect_err("stale fixture generation should be rejected")
                     .contains("stale"),
                 "{} stale fixture",
                 operation.id
             );
 
-            current.runtime.capabilities.as_mut().unwrap().authorized_operations.clear();
+            current
+                .runtime
+                .capabilities
+                .as_mut()
+                .expect("active fixture capabilities")
+                .authorized_operations
+                .clear();
             assert!(
                 current
                     .mutation_availability(operation.capability)
-                    .unwrap_err()
+                    .expect_err("unauthorized fixture should be denied")
                     .contains("permission denied"),
                 "{} denied fixture",
                 operation.id
@@ -2466,17 +2496,23 @@ mod tests {
                 .runtime
                 .capabilities
                 .as_mut()
-                .unwrap()
+                .expect("active fixture capabilities")
                 .authorized_operations
                 .push(operation.capability.into());
             let mut degraded = styrene_ipc::types::DegradedCapabilityInfo::default();
             degraded.id = operation.capability.into();
             degraded.reason = "fixture: operation unsupported".into();
-            current.runtime.capabilities.as_mut().unwrap().degraded.push(degraded);
+            current
+                .runtime
+                .capabilities
+                .as_mut()
+                .expect("active fixture capabilities")
+                .degraded
+                .push(degraded);
             assert!(
                 current
                     .mutation_availability(operation.capability)
-                    .unwrap_err()
+                    .expect_err("unsupported fixture should be unavailable")
                     .contains("operation unsupported"),
                 "{} unsupported fixture",
                 operation.id
@@ -2512,14 +2548,18 @@ mod tests {
         stores.apply_daemon_event(ConnectionGeneration(2), DaemonEvent::Status(status));
 
         assert!(stores.mutation_availability_at(ConnectionGeneration(2), "page.browse").is_ok());
-        assert!(stores
-            .mutation_availability_at(ConnectionGeneration(1), "page.browse")
-            .unwrap_err()
-            .contains("stale"));
-        assert!(stores
-            .mutation_availability_at(ConnectionGeneration(2), "rpc.status")
-            .unwrap_err()
-            .contains("denied"));
+        assert!(
+            stores
+                .mutation_availability_at(ConnectionGeneration(1), "page.browse")
+                .expect_err("stale page browse generation should be rejected")
+                .contains("stale")
+        );
+        assert!(
+            stores
+                .mutation_availability_at(ConnectionGeneration(2), "rpc.status")
+                .expect_err("unauthorized RPC status should be denied")
+                .contains("denied")
+        );
     }
 
     #[test]
@@ -2641,6 +2681,9 @@ mod tests {
         status.connection_generation = Some(9);
         status.active_capabilities = Some(Default::default());
         assert!(stores.apply_daemon_event(ConnectionGeneration(2), DaemonEvent::Status(status)));
+        stores.network.operations.push(Default::default());
+        stores.network.requests.push(Default::default());
+        stores.network.resources.push(Default::default());
 
         let mut mismatched = styrene_ipc::types::DaemonStatusInfo::default();
         mismatched.connection_generation = Some(10);
@@ -2650,6 +2693,9 @@ mod tests {
         );
         assert!(stores.runtime.server_generation.is_none());
         assert!(stores.runtime.capabilities.is_none());
+        assert!(stores.network.operations.is_empty());
+        assert!(stores.network.requests.is_empty());
+        assert!(stores.network.resources.is_empty());
 
         assert!(
             stores.apply_daemon_event(ConnectionGeneration(2), DaemonEvent::EventGeneration(11))
@@ -2670,8 +2716,12 @@ mod tests {
         let mut operation = styrene_ipc::types::NetworkOperationInfo::default();
         operation.operation_id = "operation".into();
 
-        assert!(!stores
-            .apply_daemon_event(ConnectionGeneration(2), DaemonEvent::NetworkOperation(operation)));
+        assert!(
+            !stores.apply_daemon_event(
+                ConnectionGeneration(2),
+                DaemonEvent::NetworkOperation(operation)
+            )
+        );
         assert!(stores.network.operations.is_empty());
     }
 
@@ -2692,7 +2742,7 @@ mod tests {
             "compose".into(),
             outcome,
         ));
-        let export = stores.messages.paper_export.as_ref().unwrap();
+        let export = stores.messages.paper_export.as_ref().expect("paper export state");
         assert_eq!(export.uri, "lxm://exact-dx-paper");
         assert_eq!(stores.messages.accepted_compose, Some(("peer".into(), "compose".into())));
         assert!(!format!("{export:?}").contains("exact-dx-paper"));

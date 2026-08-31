@@ -13,6 +13,8 @@ use futures_util::StreamExt;
 mod backend;
 mod components;
 mod daemon_bridge;
+#[cfg(test)]
+mod flow_simulation;
 mod safety;
 mod scenario;
 mod scenario_process;
@@ -304,25 +306,23 @@ fn App() -> Element {
         .and_then(|peer| view.messages.drafts.get(peer))
         .map(|draft| (draft.peer_hash.clone(), draft.content.clone(), draft.updated_at));
     use_effect(move || {
-        if let Some((peer, content, _)) = &selected_draft {
-            if selected_peer.read().as_deref() == Some(peer.as_str())
-                && chat_input.read().is_empty()
-            {
-                chat_input.set(content.clone());
-            }
+        if let Some((peer, content, _)) = &selected_draft
+            && selected_peer.read().as_deref() == Some(peer.as_str())
+            && chat_input.read().is_empty()
+        {
+            chat_input.set(content.clone());
         }
     });
     let accepted_compose = view.messages.accepted_compose.clone();
     use_effect(move || {
-        if let Some((peer, content)) = &accepted_compose {
-            if selected_peer.read().as_deref() == Some(peer.as_str())
-                && chat_input.read().as_str() == content
-            {
-                chat_input.set(String::new());
-                chat_title.set(String::new());
-                chat_attachments.set(Vec::new());
-                stores.write().messages.accepted_compose = None;
-            }
+        if let Some((peer, content)) = &accepted_compose
+            && selected_peer.read().as_deref() == Some(peer.as_str())
+            && chat_input.read().as_str() == content
+        {
+            chat_input.set(String::new());
+            chat_title.set(String::new());
+            chat_attachments.set(Vec::new());
+            stores.write().messages.accepted_compose = None;
         }
     });
     let chat_unavailable = view.delivery_method_availability(&chat_method.read()).err();
@@ -337,13 +337,15 @@ fn App() -> Element {
         }
     });
     let page_unavailable = view.mutation_availability("page.browse").err();
+    let activity_context =
+        selected_peer.read().clone().unwrap_or_else(|| "No entity selected".to_string());
 
     // Helper to send commands to the daemon
     let send_cmd = move |cmd: daemon_bridge::DaemonCommand| {
-        if let Some(ref tx) = *cmd_tx.read() {
-            if tx.try_send(cmd).is_err() {
-                tracing::warn!(target: "dx::command", "UI command queue is full");
-            }
+        if let Some(ref tx) = *cmd_tx.read()
+            && tx.try_send(cmd).is_err()
+        {
+            tracing::warn!(target: "dx::command", "UI command queue is full");
         }
     };
 
@@ -357,7 +359,11 @@ fn App() -> Element {
                 span { class: "identity", "{id_display}" }
                 span {
                     class: if view.runtime.connected { "badge connected" } else { "badge disconnected" },
-                    "{profile_label}: {view.runtime.connection_mode}"
+                    if matches!(&*selected_profile.read(), backend::RuntimeProfile::Fixture { .. }) {
+                        "Fixture: {fixture_id}"
+                    } else {
+                        "{profile_label}: {view.runtime.connection_mode}"
+                    }
                 }
                 div { class: "profile-config", aria_label: "Runtime profile configuration",
                     select {
@@ -417,7 +423,7 @@ fn App() -> Element {
                 button {
                     class: "activity-toggle",
                     onclick: move |_| activity_open.toggle(),
-                    "Activity {view.activity.entries.len()}"
+                    "Activity ({view.activity.entries.len()})"
                 }
             }
 
@@ -554,8 +560,9 @@ fn App() -> Element {
                     },
 
                     state::AppRoute::Messages => rsx! {
+                        div { class: "messages-layout",
                         // Sidebar — active conversations only
-                        div { class: "sidebar",
+                        div { class: "sidebar messages-sidebar",
                             div { class: "sidebar-header", "Conversations" }
                             if view.messages.conversations.is_empty() {
                                 div { class: "sidebar-empty",
@@ -568,8 +575,8 @@ fn App() -> Element {
                                     let is_selected = selected_peer.read().as_deref() == Some(&hash);
                                     let name = convo.peer_name.clone()
                                         .unwrap_or_else(|| hash[..8.min(hash.len())].to_string());
-                                    let preview = convo.last_message.clone()
-                                        .map(|m| if m.len() > 40 { format!("{}...", &m[..40]) } else { m })
+                                    let preview = convo.last_message.as_deref()
+                                        .map(|message| truncate_preview(message, 40))
                                         .unwrap_or_default();
                                     let time = convo.last_timestamp.map(format_timestamp).unwrap_or_default();
                                     let unread = convo.unread_count;
@@ -581,14 +588,13 @@ fn App() -> Element {
                                             class: if is_selected { "convo-item selected" } else { "convo-item" },
                                             aria_current: is_selected.then_some("page"),
                                             onclick: move |_| {
-                                                if let Some(previous) = selected_peer.read().clone() {
-                                                    if previous != hash && !chat_input.read().is_empty() {
+                                                if let Some(previous) = selected_peer.read().clone()
+                                                    && previous != hash && !chat_input.read().is_empty() {
                                                         send_cmd(daemon_bridge::DaemonCommand::SaveDraft {
                                                             peer_hash: previous,
                                                             content: chat_input.read().clone(),
                                                         });
                                                     }
-                                                }
                                                 selected_peer.set(Some(hash.clone()));
                                                 chat_input.set(draft_content.clone().unwrap_or_default());
                                                 send_cmd(daemon_bridge::DaemonCommand::LoadDraft {
@@ -722,10 +728,11 @@ fn App() -> Element {
                                                     oninput: move |evt| chat_input.set(evt.value()),
                                                     onkeypress: {
                                                         let ph2 = ph.clone();
+                                                        let send_disabled = chat_send_reason.is_some();
                                                         move |evt: KeyboardEvent| {
                                                             if evt.key() == Key::Enter {
                                                                 let content = chat_input.read().clone();
-                                                                if !content.trim().is_empty() {
+                                                                if !send_disabled && !content.trim().is_empty() {
                                                                     send_cmd(daemon_bridge::DaemonCommand::SendChat {
                                                                         peer_hash: ph2.clone(),
                                                                         content,
@@ -815,6 +822,7 @@ fn App() -> Element {
                                 }
                             }
                         }
+                        }
                     },
 
                     state::AppRoute::Fleet => rsx! {
@@ -840,14 +848,15 @@ fn App() -> Element {
                         }
                     },
                     state::AppRoute::Content => rsx! {
+                        div { class: "content-layout",
                         // Page host sidebar
-                        div { class: "sidebar",
+                        div { class: "sidebar page-host-sidebar",
                             div { class: "sidebar-header", "Page Hosts" }
                             if let Some(reason) = &page_unavailable {
                                 p { id: "page-host-controls-disabled", class: "control-disabled-reason", "Page host controls disabled: {reason}" }
                             }
                             button {
-                                class: "peer-item",
+                                class: "peer-item page-host-item",
                                 disabled: !capabilities.content,
                                 aria_describedby: (!capabilities.content).then_some("page-host-controls-disabled"),
                                 onclick: move |_| {
@@ -871,7 +880,7 @@ fn App() -> Element {
                                     );
                                     rsx! {
                                         button {
-                                            class: "peer-item",
+                                            class: "peer-item page-host-item",
                                             disabled: !capabilities.content || !is_page || !active,
                                             onclick: move |_| {
                                                 if let Ok(address) = state::PageAddress::parse(&path) {
@@ -891,7 +900,7 @@ fn App() -> Element {
                                     let name = peer.name.clone().unwrap_or_else(|| hash[..8.min(hash.len())].to_string());
                                     rsx! {
                                         button {
-                                            class: "peer-item",
+                                            class: "peer-item page-host-item",
                                             disabled: !capabilities.content,
                                             aria_describedby: (!capabilities.content).then_some("page-host-controls-disabled"),
                                             onclick: move |_| {
@@ -922,6 +931,7 @@ fn App() -> Element {
                             on_refresh_download: move |download_id| send_cmd(daemon_bridge::DaemonCommand::QueryFileDownload { download_id }),
                             on_cancel_download: move |download_id| send_cmd(daemon_bridge::DaemonCommand::CancelFileDownload { download_id }),
                             on_save_download: move |(download_id, destination)| send_cmd(daemon_bridge::DaemonCommand::SaveFileDownload { download_id, destination }),
+                        }
                         }
                     },
                     state::AppRoute::Lab => rsx! {
@@ -1020,7 +1030,7 @@ fn App() -> Element {
                     div { class: "context-summary",
                         span { "Context" }
                         strong {
-                            {selected_peer.read().as_deref().unwrap_or("No entity selected")}
+                            {activity_context}
                         }
                     }
                     if view.activity.entries.is_empty() {
@@ -1148,11 +1158,11 @@ async fn handle_ui_command(
     stores: &mut Signal<stores::DomainStores>,
     generation: backend::ConnectionGeneration,
 ) {
-    if let Some(capability) = cmd.required_capability() {
-        if let Err(error) = stores.read().mutation_availability_at(generation, capability) {
-            tracing::warn!(target: "dx::command", %error, %capability, "backend action blocked");
-            return;
-        }
+    if let Some(capability) = cmd.required_capability()
+        && let Err(error) = stores.read().mutation_availability_at(generation, capability)
+    {
+        tracing::warn!(target: "dx::command", %error, %capability, "backend action blocked");
+        return;
     }
     match cmd {
         daemon_bridge::DaemonCommand::SendChat {
@@ -1691,8 +1701,16 @@ fn format_timestamp(ts: i64) -> String {
     format!("{hours:02}:{mins:02}")
 }
 
+fn truncate_preview(value: &str, max_chars: usize) -> String {
+    let mut characters = value.chars();
+    let preview = characters.by_ref().take(max_chars).collect::<String>();
+    if characters.next().is_some() { format!("{preview}...") } else { preview }
+}
+
 #[cfg(test)]
 mod accessibility_tests {
+    use super::truncate_preview;
+
     fn relative_luminance(rgb: [u8; 3]) -> f64 {
         let channel = |value: u8| {
             let normalized = f64::from(value) / 255.0;
@@ -1764,5 +1782,27 @@ mod accessibility_tests {
         for label in ["Back", "Forward", "Page address", "Save destination"] {
             assert!(page.contains(&format!("aria_label: \"{label}\"")));
         }
+    }
+
+    #[test]
+    fn conversation_previews_truncate_unicode_at_character_boundaries() {
+        let value = "a".repeat(39) + "éé";
+        assert_eq!(truncate_preview(&value, 40), format!("{}é...", "a".repeat(39)));
+        assert_eq!(truncate_preview("short", 40), "short");
+    }
+
+    #[test]
+    fn content_controls_have_matching_responsive_styles() {
+        let app = include_str!("main.rs");
+        let page = include_str!("components/page_browser.rs");
+        let css = include_str!("assets/style.css");
+        assert!(app.contains("class: \"content-layout\""));
+        assert!(app.contains("class: \"messages-layout\""));
+        assert!(app.contains("class: \"peer-item page-host-item\""));
+        assert!(page.contains("class: \"page-nav-bar\""));
+        assert!(css.contains(".page-nav-bar {"));
+        assert!(!css.contains(".page-url-bar {"));
+        assert!(css.contains("white-space: pre-wrap;"));
+        assert!(css.contains("grid-template-columns: repeat(auto-fit"));
     }
 }

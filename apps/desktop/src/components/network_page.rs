@@ -60,6 +60,21 @@ struct NetworkConfirmation {
     token: ConfirmationToken,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NetworkAvailability {
+    Available,
+    PartiallyAvailable,
+    ReadOnly,
+}
+
+const DISPLAYED_NETWORK_OPERATIONS: [(NetworkOperationKind, &str); 5] = [
+    (NetworkOperationKind::Announce, "Announce"),
+    (NetworkOperationKind::PathRequest, "Request path"),
+    (NetworkOperationKind::Probe, "Probe"),
+    (NetworkOperationKind::LinkOpen, "Open link"),
+    (NetworkOperationKind::LinkClose, "Close link"),
+];
+
 #[component]
 pub fn NetworkPage(
     peers: Vec<PeerEntry>,
@@ -85,11 +100,79 @@ pub fn NetworkPage(
     let mut peer_status = use_signal(StatusFilter::default);
     let mut freshness = use_signal(FreshnessFilter::default);
     let mut target = use_signal(String::new);
-    let mut link_id = use_signal(String::new);
+    let mut link_control_id = use_signal(String::new);
+    let mut request_link_id = use_signal(String::new);
     let mut request_path = use_signal(|| "/status".to_string());
     let mut request_data = use_signal(String::new);
     let mut confirmation = use_signal(|| None::<NetworkConfirmation>);
-    let capability_reason = safety_policy.read().operate_session_availability().err();
+    use_effect(move || {
+        let _generation = safety_policy.read().generation_key();
+        target.set(String::new());
+        link_control_id.set(String::new());
+        request_link_id.set(String::new());
+        request_path.set("/status".into());
+        request_data.set(String::new());
+        confirmation.set(None);
+    });
+    let network_availability = {
+        let safety = safety_policy.read();
+        let mut authorized = DISPLAYED_NETWORK_OPERATIONS
+            .iter()
+            .map(|(kind, _)| {
+                safety
+                    .authorization(
+                        ControlPlane::Operate,
+                        &SafetyAction::operate(
+                            network_operation_capability(*kind),
+                            *kind == NetworkOperationKind::LinkClose,
+                        ),
+                    )
+                    .is_ok()
+            })
+            .collect::<Vec<_>>();
+        authorized.push(
+            safety
+                .authorization(
+                    ControlPlane::Operate,
+                    &SafetyAction::operate("network.request", false),
+                )
+                .is_ok(),
+        );
+        authorized.extend(
+            operations
+                .iter()
+                .filter(|operation| operation.cancellable && operation.outcome.is_none())
+                .map(|_| {
+                    safety
+                        .authorization(ControlPlane::Operate, &SafetyAction::operate_session(true))
+                        .is_ok()
+                }),
+        );
+        authorized.extend(requests.iter().filter(|request| !request.state.is_terminal()).map(
+            |_| {
+                safety
+                    .authorization(
+                        ControlPlane::Operate,
+                        &SafetyAction::operate("network.request_cancel", true),
+                    )
+                    .is_ok()
+            },
+        ));
+        authorized.extend(
+            resources
+                .iter()
+                .filter(|resource| resource.cancellable && !resource.state.is_terminal())
+                .map(|_| {
+                    safety
+                        .authorization(
+                            ControlPlane::Operate,
+                            &SafetyAction::operate("network.resource_cancel", true),
+                        )
+                        .is_ok()
+                }),
+        );
+        aggregate_availability(authorized)
+    };
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -137,160 +220,172 @@ pub fn NetworkPage(
             section { class: "network-operations",
                 div { class: "network-operation-heading",
                     div {
-                        h2 { "Operator Workflows" }
-                        p { "Commands submit typed daemon operations. Progress and outcomes below are daemon observations." }
+                        span { class: "network-operation-kicker", "Network control" }
+                        h2 { "Network operations" }
+                        p { "Start a bounded daemon operation. Results remain separate from submitted commands." }
                     }
-                    if let Some(reason) = &capability_reason {
-                        span { id: "network-operation-disabled", class: "network-operation-disabled", "Mutations disabled: {reason}" }
-                    } else {
-                        span { class: "network-operation-ready", "Operate controls negotiated" }
+                    match network_availability {
+                        NetworkAvailability::Available => rsx! {
+                            span { class: "network-operation-status available", "Available" }
+                        },
+                        NetworkAvailability::PartiallyAvailable => rsx! {
+                            span { class: "network-operation-status partial", "Partially available" }
+                        },
+                        NetworkAvailability::ReadOnly => rsx! {
+                            span { id: "network-operation-disabled", class: "network-operation-status unavailable", "Read-only" }
+                        },
                     }
                 }
                 div { class: "network-operation-inputs",
-                    input {
-                        aria_label: "Destination hash",
-                        placeholder: "Destination hash",
-                        value: "{target}",
-                        oninput: move |event| target.set(event.value()),
+                    label { class: "network-operation-field",
+                        span { "Destination hash" }
+                        input {
+                            placeholder: "Enter a destination hash",
+                            value: "{target}",
+                            oninput: move |event| target.set(event.value()),
+                        }
                     }
-                    input {
-                        aria_label: "Link ID",
-                        placeholder: "Link ID (close/request)",
-                        value: "{link_id}",
-                        oninput: move |event| link_id.set(event.value()),
+                    label { class: "network-operation-field",
+                        span { "Link control ID" }
+                        input {
+                            placeholder: "Link to probe or close",
+                            value: "{link_control_id}",
+                            oninput: move |event| link_control_id.set(event.value()),
+                        }
                     }
-                    input {
-                        aria_label: "Request path",
-                        placeholder: "/request/path",
-                        value: "{request_path}",
-                        oninput: move |event| request_path.set(event.value()),
+                    label { class: "network-operation-field",
+                        span { "Request link ID" }
+                        input {
+                            placeholder: "Link for native request",
+                            value: "{request_link_id}",
+                            oninput: move |event| request_link_id.set(event.value()),
+                        }
                     }
-                    input {
-                        aria_label: "Request data",
-                        placeholder: "Request data",
-                        value: "{request_data}",
-                        oninput: move |event| request_data.set(event.value()),
+                    label { class: "network-operation-field",
+                        span { "Request path" }
+                        input {
+                            placeholder: "/request/path",
+                            value: "{request_path}",
+                            oninput: move |event| request_path.set(event.value()),
+                        }
+                    }
+                    label { class: "network-operation-field",
+                        span { "Request data" }
+                        input {
+                            placeholder: "Optional request payload",
+                            value: "{request_data}",
+                            oninput: move |event| request_data.set(event.value()),
+                        }
                     }
                 }
                 div { class: "network-operation-actions",
-                    for (kind, label) in [
-                        (NetworkOperationKind::Announce, "Announce"),
-                        (NetworkOperationKind::PathRequest, "Request path"),
-                        (NetworkOperationKind::Probe, "Probe"),
-                        (NetworkOperationKind::LinkOpen, "Open link"),
-                        (NetworkOperationKind::LinkClose, "Close link"),
-                    ] {
+                    for (kind, label) in DISPLAYED_NETWORK_OPERATIONS {
                         {
-                            let operation_capability = format!("network.{}", kind.as_str());
                             let destructive = kind == NetworkOperationKind::LinkClose;
-                            let action = SafetyAction::operate(operation_capability.clone(), destructive);
+                            let action = SafetyAction::operate(network_operation_capability(kind), destructive);
                             let destination = target.read().trim().to_string();
-                            let selected_link = link_id.read().trim().to_string();
-                            let input_missing = (matches!(kind, NetworkOperationKind::PathRequest | NetworkOperationKind::LinkOpen) && destination.is_empty())
-                                || (matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) && selected_link.is_empty());
-                            let disabled_reason = if let Err(reason) = safety_policy.read().authorize(ControlPlane::Operate, &action) {
-                                Some(reason)
-                            } else if input_missing {
-                                Some(if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) { "Enter a link ID".into() } else { "Enter a destination hash".into() })
-                            } else {
-                                None
-                            };
-                            let reason_id = format!("network-{}-disabled", kind.as_str());
+                            let selected_link = link_control_id.read().trim().to_string();
+                            let input_missing = operation_input_missing(kind, &destination, &selected_link);
+                            let authorization = safety_policy.read().authorization(ControlPlane::Operate, &action);
+                            let disabled = authorization.is_err() || input_missing;
+                            let input_hint = if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) { "Requires an active link ID" } else if kind == NetworkOperationKind::Announce { "No destination required" } else { "Requires a destination hash" };
+                            let guidance = authorization.as_ref().err().map_or(input_hint, |denial| denial.operator_message());
                             rsx! {
-                                button {
-                                    disabled: disabled_reason.is_some(),
-                                    title: disabled_reason.clone().unwrap_or_else(|| "Submit typed daemon operation".into()),
-                                    aria_describedby: disabled_reason.as_ref().map(|_| reason_id.as_str()),
-                                    aria_label: format!("{label} using {}", if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) { selected_link.as_str() } else { destination.as_str() }),
-                                    onclick: move |_| {
-                                        let mut request = StartNetworkOperationInfo::default();
-                                        request.kind = kind;
-                                        request.timeout_ms = 15_000;
-                                        if matches!(kind, NetworkOperationKind::PathRequest | NetworkOperationKind::LinkOpen) && !destination.is_empty() {
-                                            request.destination_hash = Some(destination.clone());
-                                        }
-                                        if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) && !selected_link.is_empty() {
-                                            request.link_id = Some(selected_link.clone());
-                                        }
-                                        let command = DaemonCommand::StartNetworkOperation(request);
-                                        if action.is_destructive() {
-                                            if let Some(pending) = network_confirmation(
-                                                &safety_policy.read(),
-                                                label,
-                                                if selected_link.is_empty() { destination.clone() } else { selected_link.clone() },
-                                                "timeout=15000 ms",
-                                                "Closes the active link and interrupts traffic using it.",
-                                                action.clone(),
-                                                command,
-                                            ) {
-                                                confirmation.set(Some(pending));
+                                div { class: "network-action-tile",
+                                    button {
+                                        class: if destructive { "network-operation-button danger" } else { "network-operation-button" },
+                                        disabled,
+                                        title: if input_missing { input_hint } else if let Err(denial) = &authorization { denial.operator_message() } else { "Submit typed daemon operation" },
+                                        aria_describedby: disabled.then_some("network-action-guidance"),
+                                        aria_label: format!("{label} using {}", if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) { selected_link.as_str() } else { destination.as_str() }),
+                                        onclick: move |_| {
+                                            let mut request = StartNetworkOperationInfo::default();
+                                            request.kind = kind;
+                                            request.timeout_ms = 15_000;
+                                            if matches!(kind, NetworkOperationKind::PathRequest | NetworkOperationKind::LinkOpen) && !destination.is_empty() {
+                                                request.destination_hash = Some(destination.clone());
                                             }
-                                        } else {
-                                            on_network_command.call(command);
-                                        }
-                                    },
-                                    "{label}"
-                                }
-                                if let Some(reason) = &disabled_reason {
-                                    small { id: "{reason_id}", class: "control-disabled-reason", "{label} disabled: {reason}" }
+                                            if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) && !selected_link.is_empty() {
+                                                request.link_id = Some(selected_link.clone());
+                                            }
+                                            let command = DaemonCommand::StartNetworkOperation(request);
+                                            if action.is_destructive() {
+                                                if let Some(pending) = network_confirmation(
+                                                    &safety_policy.read(),
+                                                    label,
+                                                    if selected_link.is_empty() { destination.clone() } else { selected_link.clone() },
+                                                    "timeout=15000 ms",
+                                                    "Closes the active link and interrupts traffic using it.",
+                                                    action.clone(),
+                                                    command,
+                                                ) {
+                                                    confirmation.set(Some(pending));
+                                                }
+                                            } else {
+                                                on_network_command.call(command);
+                                            }
+                                        },
+                                        "{label}"
+                                    }
+                                    small { "{guidance}" }
                                 }
                             }
                         }
                     }
                     {
                         let request_action = SafetyAction::operate("network.request", false);
-                        let request_reason = if let Err(reason) = safety_policy.read().authorize(ControlPlane::Operate, &request_action) {
-                            Some(reason)
-                        } else if link_id.read().trim().is_empty() {
-                            Some("Enter a link ID".into())
-                        } else if request_path.read().trim().is_empty() {
-                            Some("Enter a request path".into())
-                        } else {
-                            None
-                        };
+                        let request_authorization = safety_policy.read().authorization(ControlPlane::Operate, &request_action);
+                        let request_input_missing = request_input_missing(&request_link_id.read(), &request_path.read());
+                        let request_disabled = request_authorization.is_err() || request_input_missing;
+                        let request_guidance = request_authorization.as_ref().err().map_or("Requires a link ID and request path", |denial| denial.operator_message());
                         rsx! {
-                    button {
-                        disabled: request_reason.is_some(),
-                        title: request_reason.clone().unwrap_or_else(|| "Send native request".into()),
-                        aria_describedby: request_reason.as_ref().map(|_| "network-request-disabled"),
-                        onclick: move |_| {
-                            let mut request = StartRequestInfo::default();
-                            request.link_id = link_id.read().trim().to_string();
-                            request.path = request_path.read().trim().to_string();
-                            request.data = request_data.read().as_bytes().to_vec();
-                            request.timeout_ms = 15_000;
-                            request.max_response_size = 4 * 1024 * 1024;
-                            on_network_command.call(DaemonCommand::StartRequest(request));
-                        },
-                        "Send request"
-                    }
-                    if let Some(reason) = &request_reason {
-                        small { id: "network-request-disabled", class: "control-disabled-reason", "Send request disabled: {reason}" }
-                    }
+                            div { class: "network-action-tile",
+                                button {
+                                    class: "network-operation-button",
+                                    disabled: request_disabled,
+                                    title: if request_link_id.read().trim().is_empty() { "Requires a request link ID" } else if request_path.read().trim().is_empty() { "Requires a request path" } else if let Err(denial) = &request_authorization { denial.operator_message() } else { "Send native request" },
+                                    aria_describedby: request_disabled.then_some("network-action-guidance"),
+                                    onclick: move |_| {
+                                        let mut request = StartRequestInfo::default();
+                                        request.link_id = request_link_id.read().trim().to_string();
+                                        request.path = request_path.read().trim().to_string();
+                                        request.data = request_data.read().as_bytes().to_vec();
+                                        request.timeout_ms = 15_000;
+                                        request.max_response_size = 4 * 1024 * 1024;
+                                        on_network_command.call(DaemonCommand::StartRequest(request));
+                                    },
+                                    "Send request"
+                                }
+                                small { "{request_guidance}" }
+                            }
                         }
                     }
                 }
+                p { id: "network-action-guidance", class: "network-action-guidance", "Unavailable actions need required input or permission from the active session." }
                 div { class: "network-observation-grid",
-                    div {
+                    div { class: "network-observation-panel",
                         h3 { "Operation observations" }
-                        if operations.is_empty() { p { "No operation observations." } }
+                        if operations.is_empty() { p { class: "network-observation-empty", "None recorded in this session." } }
                         for operation in operations.iter().rev() {
                             article { class: "network-observation",
                                 strong { "{operation.kind.as_str()}" }
                                 code { "{operation.operation_id}" }
                                 span { {operation.outcome.map(|value| value.as_str()).unwrap_or(operation.progress.as_str())} }
+                                p { class: "network-observation-relations",
+                                    span { {relationship_label("Link", operation.link_id.as_deref())} }
+                                    span { {relationship_label("Correlation", operation.observation.correlation_id.as_deref())} }
+                                }
                                 if let Some(detail) = &operation.detail { p { "{detail}" } }
                                 if operation.cancellable && operation.outcome.is_none() {
                                     button {
-                                        disabled: safety_policy.read().authorize(ControlPlane::Operate, &SafetyAction::operate(format!("network.{}", operation.kind.as_str()), true)).is_err(),
-                                        title: safety_policy.read().authorize(ControlPlane::Operate, &SafetyAction::operate(format!("network.{}", operation.kind.as_str()), true)).err().unwrap_or_else(|| "Confirm cancellation".into()),
-                                        aria_describedby: capability_reason.as_ref().map(|_| "network-operation-disabled"),
+                                        disabled: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate_session(true)).is_err(),
+                                        title: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate_session(true)).err().map_or("Confirm cancellation", |denial| denial.operator_message()),
+                                        aria_describedby: "network-action-guidance",
                                         onclick: {
                                             let id = operation.operation_id.clone();
-                                            let capability = format!("network.{}", operation.kind.as_str());
                                             let target = operation.operation_id.clone();
                                             move |_| {
-                                                let action = SafetyAction::operate(capability.clone(), true);
+                                                let action = SafetyAction::operate_session(true);
                                                 if let Some(pending) = network_confirmation(
                                                     &safety_policy.read(),
                                                     "Cancel operation",
@@ -311,20 +406,25 @@ pub fn NetworkPage(
                             }
                         }
                     }
-                    div {
-                        h3 { "Request and resource observations" }
-                        if requests.is_empty() { p { "No native request observations." } }
+                    div { class: "network-observation-panel",
+                        h3 { "Native requests" }
+                        if requests.is_empty() { p { class: "network-observation-empty", "None recorded in this session." } }
                         for request in requests.iter().rev() {
                             article { class: "network-observation",
                                 strong { "{request.path_hash}" }
                                 code { "{request.request_id}" }
                                 span { {format!("{:?} · {:.0}%", request.state, request.progress * 100.0)} }
-                                if let Some(resource) = &request.resource_hash { span { "resource {resource}" } }
+                                p { class: "network-observation-relations",
+                                    span { {relationship_label("Link", nonempty(&request.link_id))} }
+                                    span { {relationship_label("Request resource", request.request_resource_hash.as_deref())} }
+                                    span { {relationship_label("Response resource", request.resource_hash.as_deref())} }
+                                    span { {relationship_label("Correlation", request.observation.correlation_id.as_deref())} }
+                                }
                                 if !request.state.is_terminal() {
                                     button {
-                                        disabled: safety_policy.read().authorize(ControlPlane::Operate, &SafetyAction::operate("network.request_cancel", true)).is_err(),
-                                        title: safety_policy.read().authorize(ControlPlane::Operate, &SafetyAction::operate("network.request_cancel", true)).err().unwrap_or_else(|| "Confirm request cancellation".into()),
-                                        aria_describedby: "network-operation-disabled",
+                                        disabled: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate("network.request_cancel", true)).is_err(),
+                                        title: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate("network.request_cancel", true)).err().map_or("Confirm request cancellation", |denial| denial.operator_message()),
+                                        aria_describedby: "network-action-guidance",
                                         onclick: {
                                             let id = request.request_id.clone();
                                             let target = request.request_id.clone();
@@ -350,19 +450,24 @@ pub fn NetworkPage(
                             }
                         }
                     }
-                    div {
-                        h3 { "General resource transfers" }
-                        if resources.is_empty() { p { "No resource transfer observations." } }
+                    div { class: "network-observation-panel",
+                        h3 { "Resource transfers" }
+                        if resources.is_empty() { p { class: "network-observation-empty", "None recorded in this session." } }
                         for resource in resources.iter().rev() {
                             article { class: "network-observation",
                                 strong { {format!("{:?}", resource.direction)} }
                                 code { "{resource.resource_hash}" }
                                 span { {format!("{:?} · {:.0}%", resource.state, resource.progress * 100.0)} }
                                 span { "{resource.received_bytes}/{resource.total_bytes} bytes" }
+                                p { class: "network-observation-relations",
+                                    span { {relationship_label("Link", nonempty(&resource.link_id))} }
+                                    span { {relationship_label("Correlation", resource.observation.correlation_id.as_deref())} }
+                                }
                                 if resource.cancellable && !resource.state.is_terminal() {
                                     button {
-                                        disabled: safety_policy.read().authorize(ControlPlane::Operate, &SafetyAction::operate("network.resource_cancel", true)).is_err(),
-                                        title: safety_policy.read().authorize(ControlPlane::Operate, &SafetyAction::operate("network.resource_cancel", true)).err().unwrap_or_else(|| "Confirm resource cancellation".into()),
+                                        disabled: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate("network.resource_cancel", true)).is_err(),
+                                        title: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate("network.resource_cancel", true)).err().map_or("Confirm resource cancellation", |denial| denial.operator_message()),
+                                        aria_describedby: "network-action-guidance",
                                         onclick: {
                                             let hash = resource.resource_hash.clone();
                                             let target = resource.resource_hash.clone();
@@ -453,7 +558,12 @@ pub fn NetworkPage(
                     RoutesView { paths: filtered_paths, peers: peers.clone() }
                 },
                 NetworkMode::Links => rsx! {
-                    LinksView { links: filtered_links, peers: peers.clone() }
+                    LinksView {
+                        links: filtered_links,
+                        peers: peers.clone(),
+                        on_use_for_control: move |id| link_control_id.set(id),
+                        on_use_for_request: move |id| request_link_id.set(id),
+                    }
                 },
                 NetworkMode::Interfaces => rsx! {
                     InterfacesView { interfaces: interfaces.clone() }
@@ -486,14 +596,11 @@ pub fn NetworkPage(
                         p { "Target: {pending.target}" }
                         p { "Parameters: {pending.parameters}" }
                         p { "Consequence: {pending.consequence}" }
-                        if let Some(capability) = pending.action.required_capability() {
-                            p { "Required capability: {capability}" }
-                        }
                         div { class: "confirmation-actions",
                             button { autofocus: true, onclick: move |_| confirmation.set(None), "Cancel" }
                             button {
                                 class: "danger",
-                                disabled: safety_policy.read().confirm(ControlPlane::Operate, &pending.action, pending.token).is_err(),
+                                disabled: safety_policy.read().confirm_authorization(ControlPlane::Operate, &pending.action, pending.token).is_err(),
                                 onclick: move |_| {
                                     match safety_policy.read().confirm(ControlPlane::Operate, &pending.action, pending.token) {
                                         Ok(()) => on_network_command.call(pending.command.clone()),
@@ -504,8 +611,8 @@ pub fn NetworkPage(
                                 "Confirm"
                             }
                         }
-                        if let Err(reason) = safety_policy.read().confirm(ControlPlane::Operate, &pending.action, pending.token) {
-                            p { class: "control-disabled-reason", "Confirmation unavailable: {reason}" }
+                        if let Err(denial) = safety_policy.read().confirm_authorization(ControlPlane::Operate, &pending.action, pending.token) {
+                            p { class: "control-disabled-reason", "Confirmation unavailable: {denial.operator_message()}" }
                         }
                     }
                 }
@@ -538,6 +645,52 @@ fn network_confirmation(
             None
         }
     }
+}
+
+fn network_operation_capability(kind: NetworkOperationKind) -> &'static str {
+    match kind {
+        NetworkOperationKind::Announce => "network.announce",
+        NetworkOperationKind::PathRequest => "network.path_request",
+        NetworkOperationKind::Probe => "network.probe",
+        NetworkOperationKind::LinkOpen => "network.link_open",
+        NetworkOperationKind::LinkClose => "network.link_close",
+        _ => "network.unknown",
+    }
+}
+
+fn aggregate_availability(authorization: impl IntoIterator<Item = bool>) -> NetworkAvailability {
+    let mut total = 0_usize;
+    let mut available = 0_usize;
+    for authorized in authorization {
+        total += 1;
+        available += usize::from(authorized);
+    }
+    if total > 0 && available == total {
+        NetworkAvailability::Available
+    } else if available > 0 {
+        NetworkAvailability::PartiallyAvailable
+    } else {
+        NetworkAvailability::ReadOnly
+    }
+}
+
+fn operation_input_missing(kind: NetworkOperationKind, destination: &str, link_id: &str) -> bool {
+    (matches!(kind, NetworkOperationKind::PathRequest | NetworkOperationKind::LinkOpen)
+        && destination.trim().is_empty())
+        || (matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose)
+            && link_id.trim().is_empty())
+}
+
+fn request_input_missing(link_id: &str, path: &str) -> bool {
+    link_id.trim().is_empty() || path.trim().is_empty()
+}
+
+fn nonempty(value: &str) -> Option<&str> {
+    (!value.trim().is_empty()).then_some(value)
+}
+
+fn relationship_label(label: &str, value: Option<&str>) -> String {
+    format!("{label}: {}", value.filter(|value| !value.trim().is_empty()).unwrap_or("unknown"))
 }
 
 #[component]
@@ -595,7 +748,12 @@ fn RoutesView(paths: Vec<PathEntry>, peers: Vec<PeerEntry>) -> Element {
 }
 
 #[component]
-fn LinksView(links: Vec<LinkInfo>, peers: Vec<PeerEntry>) -> Element {
+fn LinksView(
+    links: Vec<LinkInfo>,
+    peers: Vec<PeerEntry>,
+    on_use_for_control: EventHandler<String>,
+    on_use_for_request: EventHandler<String>,
+) -> Element {
     rsx! {
         div { class: "network-mode-content",
             h2 { "Link Lifecycle" }
@@ -615,6 +773,23 @@ fn LinksView(links: Vec<LinkInfo>, peers: Vec<PeerEntry>) -> Element {
                             code { "{link.link_id}" }
                             span { {link.rtt_ms.map(|value| format!("{value:.0} ms")).unwrap_or_else(|| "RTT unknown".into())} }
                             span { {if link.observation.stale { "stale".to_string() } else { format_epoch(link.timestamp) }} }
+                            span { {relationship_label("Correlation", link.observation.correlation_id.as_deref())} }
+                            div { class: "network-record-actions",
+                                button {
+                                    onclick: {
+                                        let id = link.link_id.clone();
+                                        move |_| on_use_for_control.call(id.clone())
+                                    },
+                                    "Use for controls"
+                                }
+                                button {
+                                    onclick: {
+                                        let id = link.link_id.clone();
+                                        move |_| on_use_for_request.call(id.clone())
+                                    },
+                                    "Use for request"
+                                }
+                            }
                         }
                     }
                 }
@@ -739,11 +914,7 @@ fn peer_label(peers: &[PeerEntry], hash: &str) -> String {
 }
 
 fn format_epoch(timestamp: i64) -> String {
-    if timestamp <= 0 {
-        "unknown".into()
-    } else {
-        format!("epoch {timestamp}")
-    }
+    if timestamp <= 0 { "unknown".into() } else { format!("epoch {timestamp}") }
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -788,5 +959,55 @@ mod tests {
         let value = peer(PeerRole::Rns, "offline", None);
         assert!(freshness_matches(&value, FreshnessFilter::Unknown, 10_000));
         assert!(!freshness_matches(&value, FreshnessFilter::Recent, 10_000));
+    }
+
+    #[test]
+    fn aggregate_availability_uses_authorization_only() {
+        assert_eq!(aggregate_availability([true, true, true]), NetworkAvailability::Available);
+        assert_eq!(
+            aggregate_availability([true, false, false]),
+            NetworkAvailability::PartiallyAvailable
+        );
+        assert_eq!(aggregate_availability([false, false]), NetworkAvailability::ReadOnly);
+        assert_eq!(aggregate_availability([]), NetworkAvailability::ReadOnly);
+    }
+
+    #[test]
+    fn network_operation_capabilities_are_explicit() {
+        assert_eq!(
+            network_operation_capability(NetworkOperationKind::Announce),
+            "network.announce"
+        );
+        assert_eq!(
+            network_operation_capability(NetworkOperationKind::PathRequest),
+            "network.path_request"
+        );
+        assert_eq!(
+            network_operation_capability(NetworkOperationKind::LinkClose),
+            "network.link_close"
+        );
+    }
+
+    #[test]
+    fn operation_validation_uses_only_its_required_input() {
+        assert!(!operation_input_missing(NetworkOperationKind::Announce, "", ""));
+        assert!(!operation_input_missing(NetworkOperationKind::LinkOpen, "peer", ""));
+        assert!(operation_input_missing(NetworkOperationKind::LinkOpen, "", "link"));
+        assert!(!operation_input_missing(NetworkOperationKind::Probe, "", "link"));
+        assert!(operation_input_missing(NetworkOperationKind::Probe, "peer", ""));
+    }
+
+    #[test]
+    fn request_validation_requires_its_own_link_and_path() {
+        assert!(request_input_missing("", "/status"));
+        assert!(request_input_missing("request-link", ""));
+        assert!(!request_input_missing("request-link", "/status"));
+    }
+
+    #[test]
+    fn relationships_distinguish_authoritative_values_from_unknown() {
+        assert_eq!(relationship_label("Link", Some("link-7")), "Link: link-7");
+        assert_eq!(relationship_label("Link", None), "Link: unknown");
+        assert_eq!(relationship_label("Link", Some("  ")), "Link: unknown");
     }
 }

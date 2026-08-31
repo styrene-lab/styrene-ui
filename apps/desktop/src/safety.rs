@@ -1,5 +1,5 @@
 use crate::backend::RuntimeProfile;
-use styrene_ipc::types::{ActiveCapabilitiesInfo, ACTIVE_CAPABILITIES_VERSION};
+use styrene_ipc::types::{ACTIVE_CAPABILITIES_VERSION, ActiveCapabilitiesInfo};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ControlPlane {
@@ -21,6 +21,16 @@ impl SafetyAction {
         Self {
             plane: ControlPlane::Operate,
             required_capability: Some(capability.into()),
+            requires_daemon_session: true,
+            external_network: false,
+            destructive,
+        }
+    }
+
+    pub fn operate_session(destructive: bool) -> Self {
+        Self {
+            plane: ControlPlane::Operate,
+            required_capability: None,
             requires_daemon_session: true,
             external_network: false,
             destructive,
@@ -60,9 +70,87 @@ impl SafetyAction {
     pub fn is_destructive(&self) -> bool {
         self.destructive
     }
+}
 
-    pub fn required_capability(&self) -> Option<&str> {
-        self.required_capability.as_deref()
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SafetyDenialKind {
+    WrongControlPlane,
+    InvalidRuntime,
+    ExternalNetworkBlocked,
+    Disconnected,
+    GenerationUnknown,
+    CapabilitiesUnknown,
+    CapabilitiesStale,
+    Degraded,
+    Unauthorized,
+    GenerationChanged,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SafetyDenial {
+    pub kind: SafetyDenialKind,
+    capability: Option<String>,
+    detail: Option<String>,
+}
+
+impl SafetyDenial {
+    fn new(kind: SafetyDenialKind, capability: Option<&str>, detail: Option<String>) -> Self {
+        Self { kind, capability: capability.map(str::to_string), detail }
+    }
+
+    pub const fn operator_message(&self) -> &'static str {
+        match self.kind {
+            SafetyDenialKind::WrongControlPlane => {
+                "This action is unavailable from this control surface."
+            }
+            SafetyDenialKind::InvalidRuntime => "No valid runtime profile is active.",
+            SafetyDenialKind::ExternalNetworkBlocked => {
+                "Fixture sessions cannot open external network interfaces."
+            }
+            SafetyDenialKind::Disconnected => "Connect to the daemon to use this action.",
+            SafetyDenialKind::GenerationUnknown | SafetyDenialKind::CapabilitiesUnknown => {
+                "Waiting for permissions from the active session."
+            }
+            SafetyDenialKind::CapabilitiesStale => {
+                "Refresh session permissions before using this action."
+            }
+            SafetyDenialKind::Degraded => {
+                "This action is temporarily unavailable in the active session."
+            }
+            SafetyDenialKind::Unauthorized => "The active session does not permit this action.",
+            SafetyDenialKind::GenerationChanged => {
+                "The session changed. Review the action before confirming it."
+            }
+        }
+    }
+
+    pub fn diagnostic_message(&self) -> String {
+        let subject = self.capability.as_deref().unwrap_or("action");
+        match self.kind {
+            SafetyDenialKind::WrongControlPlane => {
+                format!("{subject} is unavailable from the requested control plane")
+            }
+            SafetyDenialKind::InvalidRuntime => "runtime profile is invalid".into(),
+            SafetyDenialKind::ExternalNetworkBlocked => {
+                "Fixture profile cannot open external network interfaces".into()
+            }
+            SafetyDenialKind::Disconnected => "daemon is disconnected".into(),
+            SafetyDenialKind::GenerationUnknown => "daemon generation is unknown".into(),
+            SafetyDenialKind::CapabilitiesUnknown => "capabilities are unknown".into(),
+            SafetyDenialKind::CapabilitiesStale => {
+                format!("capabilities are stale ({})", self.detail.as_deref().unwrap_or("unknown"))
+            }
+            SafetyDenialKind::Degraded => format!(
+                "{subject} unavailable: {}",
+                self.detail.as_deref().unwrap_or("daemon reported degraded")
+            ),
+            SafetyDenialKind::Unauthorized => {
+                format!("current daemon session does not authorize {subject}")
+            }
+            SafetyDenialKind::GenerationChanged => {
+                "confirmation expired because the runtime generation changed".into()
+            }
+        }
     }
 }
 
@@ -135,36 +223,83 @@ impl SafetyContext {
         }
     }
 
+    pub const fn generation_key(&self) -> (u64, Option<u64>) {
+        (self.client_generation, self.server_generation)
+    }
+
     pub fn authorize(&self, plane: ControlPlane, action: &SafetyAction) -> Result<(), String> {
+        self.authorization(plane, action).map_err(|error| error.diagnostic_message())
+    }
+
+    pub fn authorization(
+        &self,
+        plane: ControlPlane,
+        action: &SafetyAction,
+    ) -> Result<(), SafetyDenial> {
         if action.plane != plane {
-            return Err(format!(
-                "{:?} action is unavailable from the {:?} control plane",
-                action.plane, plane
+            return Err(SafetyDenial::new(
+                SafetyDenialKind::WrongControlPlane,
+                action.required_capability.as_deref(),
+                None,
             ));
         }
-        let runtime = self.runtime.ok_or_else(|| "runtime profile is invalid".to_string())?;
+        let runtime = self.runtime.ok_or_else(|| {
+            SafetyDenial::new(
+                SafetyDenialKind::InvalidRuntime,
+                action.required_capability.as_deref(),
+                None,
+            )
+        })?;
         if action.external_network && runtime == RuntimeKind::Fixture {
-            return Err("Fixture profile cannot open external network interfaces".into());
+            return Err(SafetyDenial::new(
+                SafetyDenialKind::ExternalNetworkBlocked,
+                action.required_capability.as_deref(),
+                None,
+            ));
         }
         if !action.requires_daemon_session {
             return Ok(());
         }
         if !self.connected {
-            return Err("daemon is disconnected".into());
+            return Err(SafetyDenial::new(
+                SafetyDenialKind::Disconnected,
+                action.required_capability.as_deref(),
+                None,
+            ));
         }
         if self.server_generation.is_none() {
-            return Err("daemon generation is unknown".into());
+            return Err(SafetyDenial::new(
+                SafetyDenialKind::GenerationUnknown,
+                action.required_capability.as_deref(),
+                None,
+            ));
         }
         match self.capability_version {
             Some(ACTIVE_CAPABILITIES_VERSION) => {}
-            Some(version) => return Err(format!("capabilities are stale (version {version})")),
-            None => return Err("capabilities are unknown".into()),
+            Some(version) => {
+                return Err(SafetyDenial::new(
+                    SafetyDenialKind::CapabilitiesStale,
+                    action.required_capability.as_deref(),
+                    Some(format!("version {version}")),
+                ));
+            }
+            None => {
+                return Err(SafetyDenial::new(
+                    SafetyDenialKind::CapabilitiesUnknown,
+                    action.required_capability.as_deref(),
+                    None,
+                ));
+            }
         }
         let Some(capability) = action.required_capability.as_deref() else {
             return Ok(());
         };
         if let Some((_, reason)) = self.degraded.iter().find(|(id, _)| id == capability) {
-            return Err(format!("{capability} unavailable: {reason}"));
+            return Err(SafetyDenial::new(
+                SafetyDenialKind::Degraded,
+                Some(capability),
+                Some(reason.clone()),
+            ));
         }
         let authorized = match action.plane {
             ControlPlane::Operate => &self.authorized_operations,
@@ -173,21 +308,8 @@ impl SafetyContext {
         if authorized.iter().any(|item| item == capability) {
             Ok(())
         } else {
-            Err(format!("current daemon session does not authorize {capability}"))
+            Err(SafetyDenial::new(SafetyDenialKind::Unauthorized, Some(capability), None))
         }
-    }
-
-    pub fn operate_session_availability(&self) -> Result<(), String> {
-        self.authorize(
-            ControlPlane::Operate,
-            &SafetyAction {
-                plane: ControlPlane::Operate,
-                required_capability: None,
-                requires_daemon_session: true,
-                external_network: false,
-                destructive: false,
-            },
-        )
     }
 
     pub fn begin_confirmation(
@@ -211,12 +333,25 @@ impl SafetyContext {
         action: &SafetyAction,
         token: ConfirmationToken,
     ) -> Result<(), String> {
+        self.confirm_authorization(plane, action, token).map_err(|error| error.diagnostic_message())
+    }
+
+    pub fn confirm_authorization(
+        &self,
+        plane: ControlPlane,
+        action: &SafetyAction,
+        token: ConfirmationToken,
+    ) -> Result<(), SafetyDenial> {
         if token.client_generation != self.client_generation
             || token.server_generation != self.server_generation
         {
-            return Err("confirmation expired because the runtime generation changed".into());
+            return Err(SafetyDenial::new(
+                SafetyDenialKind::GenerationChanged,
+                action.required_capability.as_deref(),
+                None,
+            ));
         }
-        self.authorize(plane, action)
+        self.authorization(plane, action)
     }
 }
 
@@ -245,21 +380,69 @@ mod tests {
     #[test]
     fn control_planes_reject_cross_plane_actions() {
         let context = live_context(7);
-        assert!(context
-            .authorize(ControlPlane::Lab, &SafetyAction::operate("rpc.reboot", true))
-            .is_err());
+        assert!(
+            context
+                .authorize(ControlPlane::Lab, &SafetyAction::operate("rpc.reboot", true))
+                .is_err()
+        );
         assert!(context.authorize(ControlPlane::Operate, &SafetyAction::live_scenario()).is_err());
     }
 
     #[test]
     fn operate_actions_require_current_capability() {
         let context = live_context(7);
-        assert!(context
-            .authorize(ControlPlane::Operate, &SafetyAction::operate("rpc.reboot", true))
-            .is_ok());
-        assert!(context
-            .authorize(ControlPlane::Operate, &SafetyAction::operate("policy.update", true))
-            .is_err());
+        assert!(
+            context
+                .authorize(ControlPlane::Operate, &SafetyAction::operate("rpc.reboot", true))
+                .is_ok()
+        );
+        assert!(
+            context
+                .authorize(ControlPlane::Operate, &SafetyAction::operate("policy.update", true))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn operator_denials_are_typed_and_hide_capability_identifiers() {
+        let denial = live_context(7)
+            .authorization(
+                ControlPlane::Operate,
+                &SafetyAction::operate("network.link_close", true),
+            )
+            .expect_err("capability set must deny link close");
+        assert_eq!(denial.kind, SafetyDenialKind::Unauthorized);
+        assert!(!denial.operator_message().contains("network.link_close"));
+        assert!(denial.diagnostic_message().contains("network.link_close"));
+    }
+
+    #[test]
+    fn stale_permission_text_is_operator_safe() {
+        let mut stale = capabilities(&["network.announce"], &[]);
+        stale.version = ACTIVE_CAPABILITIES_VERSION.saturating_add(1);
+        let context = SafetyContext::new(
+            Some(&RuntimeProfile::Live { socket_path: "/tmp/styrene.sock".into() }),
+            true,
+            7,
+            Some(7),
+            Some(&stale),
+        );
+        let denial = context
+            .authorization(ControlPlane::Operate, &SafetyAction::operate("network.announce", false))
+            .expect_err("stale permissions must fail closed");
+        assert_eq!(denial.kind, SafetyDenialKind::CapabilitiesStale);
+        assert!(!denial.operator_message().contains("network.announce"));
+        assert!(!denial.operator_message().contains('2'));
+    }
+
+    #[test]
+    fn session_scoped_operation_requires_current_session_without_capability() {
+        let context = live_context(7);
+        assert!(
+            context
+                .authorization(ControlPlane::Operate, &SafetyAction::operate_session(true))
+                .is_ok()
+        );
     }
 
     #[test]

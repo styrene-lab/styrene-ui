@@ -1,16 +1,15 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use styrene_ipc::types::{
-    ActiveCapabilitiesInfo, ConfigApplyResult, DaemonStatusInfo, DeviceInfo, ExecResult,
-    IdentityInfo, MessageInfo, NetworkOperationInfo, PropagationQueueEntry, PropagationSnapshot,
-    RebootResult, RemoteStatusInfo, RequestObservationInfo, ResourceTransferInfo,
-    StandardPropagationSnapshot, StartNetworkOperationInfo, StartRequestInfo,
-    ACTIVE_CAPABILITIES_VERSION,
+    ACTIVE_CAPABILITIES_VERSION, ActiveCapabilitiesInfo, ConfigApplyResult, DaemonStatusInfo,
+    DeviceInfo, ExecResult, IdentityInfo, MessageInfo, NetworkOperationInfo, PropagationQueueEntry,
+    PropagationSnapshot, RebootResult, RemoteStatusInfo, RequestObservationInfo,
+    ResourceTransferInfo, StandardPropagationSnapshot, StartNetworkOperationInfo, StartRequestInfo,
 };
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 use crate::daemon_bridge::{self, DaemonEvent, InterfaceStats, PathTableEntry};
 
@@ -1086,13 +1085,13 @@ mod tests {
             ConnectionGeneration(1),
         )
         .await
-        .unwrap();
+        .expect("open first high-cardinality fixture session");
         let second = open_session(
             RuntimeProfile::Fixture { fixture: FixtureId::HighCardinality },
             ConnectionGeneration(2),
         )
         .await
-        .unwrap();
+        .expect("open second high-cardinality fixture session");
 
         let normalize = |mut paths: Vec<PathTableEntry>| {
             for path in &mut paths {
@@ -1101,8 +1100,8 @@ mod tests {
             paths
         };
         assert_eq!(
-            normalize(first.backend.path_table().await.unwrap()),
-            normalize(second.backend.path_table().await.unwrap())
+            normalize(first.backend.path_table().await.expect("load first fixture path table")),
+            normalize(second.backend.path_table().await.expect("load second fixture path table"))
         );
         assert_eq!(first.backend.profile().label(), "Fixture");
         assert_eq!(first.generation, ConnectionGeneration(1));

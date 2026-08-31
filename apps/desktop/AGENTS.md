@@ -1,8 +1,10 @@
 # styrene-dx
 
-**Status: Desktop operator console. Not in default workspace members. `publish = false`.**
+**Status: Desktop operator console and candidate authority. `publish = false`.**
 
-Dioxus 0.7 desktop operator console for Live, Embedded, and Fixture sessions. It uses typed daemon and interoperability-runner contracts without owning protocol behavior.
+Dioxus desktop operator console for Live, Embedded, and Fixture sessions. It
+uses the workspace-pinned Dioxus version and typed daemon and
+interoperability-runner contracts without owning protocol behavior.
 
 ## Structure
 
@@ -25,11 +27,12 @@ cargo build -p styrene-dx          # desktop
 dx serve                           # dev server (requires dioxus-cli)
 ```
 
-Not included in default members. `just test` runs its deterministic Fixture and component coverage explicitly.
+Included in the workspace. CI runs its deterministic Fixture and component
+coverage separately because Linux builds require GTK and WebKit system packages.
 
 ## Dependencies
 
-- `dioxus 0.7` (desktop + web features)
+- Workspace-pinned `dioxus` with the desktop renderer
 - `styrene-ipc` and `styrene-ipc-server` for typed local daemon sessions
 - `styrene-interop-runner` for bounded Protocol Lab execution
 
