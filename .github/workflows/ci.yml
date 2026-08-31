@@ -20,8 +20,8 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo test --workspace --exclude styrene-dx
-      - run: cargo clippy --workspace --all-targets --exclude styrene-dx --no-deps -- -D warnings
+      - run: cargo test --workspace --exclude styrene-dx --exclude styrene-mobile-android --exclude styrene-mobile-ios
+      - run: cargo clippy --workspace --all-targets --exclude styrene-dx --exclude styrene-mobile-android --exclude styrene-mobile-ios --no-deps -- -D warnings
 
   desktop-linux:
     name: Desktop (Linux)
