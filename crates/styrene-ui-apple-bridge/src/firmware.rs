@@ -1,12 +1,16 @@
 use styrene_ui_platform::BleWriteLimit;
 
-use crate::{CoreBluetoothGeneration, CoreBluetoothNusShutdown};
+use crate::{CoreBluetoothGeneration, CoreBluetoothNusShutdown, RAK4631_PACKET_BYTES};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CoreBluetoothDfuCharacteristics {
     pub control_point_present: bool,
     pub packet_present: bool,
+    pub version_present: bool,
+    pub version_readable: bool,
+    pub control_write_with_response: bool,
     pub notifications_supported: bool,
+    pub packet_write_without_response: bool,
     pub maximum_write_value_length: usize,
 }
 
@@ -16,6 +20,7 @@ pub enum CoreBluetoothDfuPhase {
     Ready,
     Writing,
     TransferComplete,
+    Activating,
     Closed,
 }
 
@@ -26,7 +31,11 @@ pub enum CoreBluetoothDfuFailure {
     DfuServiceMissing,
     ControlPointMissing,
     PacketCharacteristicMissing,
+    VersionCharacteristicMissing,
+    VersionReadUnsupported,
+    ControlWriteUnsupported,
     NotificationsUnsupported,
+    PacketWriteUnsupported,
     InvalidWriteLimit,
     InvalidProgress,
     ProgressRegressed,
@@ -36,7 +45,8 @@ pub enum CoreBluetoothDfuFailure {
 pub enum CoreBluetoothDfuDisconnect {
     BeforeWrite,
     DuringWrite,
-    AfterReportedTransfer,
+    AfterTransferBeforeActivation,
+    AfterActivation,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,6 +102,11 @@ impl CoreBluetoothDfuBoundary {
         self.phase
     }
 
+    #[cfg(target_os = "ios")]
+    pub(crate) const fn generation(&self) -> CoreBluetoothGeneration {
+        self.generation
+    }
+
     #[must_use]
     pub const fn initial_effect(&self) -> CoreBluetoothDfuEffect {
         CoreBluetoothDfuEffect::DiscoverDfuService
@@ -120,8 +135,16 @@ impl CoreBluetoothDfuBoundary {
             Some(CoreBluetoothDfuFailure::ControlPointMissing)
         } else if !characteristics.packet_present {
             Some(CoreBluetoothDfuFailure::PacketCharacteristicMissing)
+        } else if !characteristics.version_present {
+            Some(CoreBluetoothDfuFailure::VersionCharacteristicMissing)
+        } else if !characteristics.version_readable {
+            Some(CoreBluetoothDfuFailure::VersionReadUnsupported)
+        } else if !characteristics.control_write_with_response {
+            Some(CoreBluetoothDfuFailure::ControlWriteUnsupported)
         } else if !characteristics.notifications_supported {
             Some(CoreBluetoothDfuFailure::NotificationsUnsupported)
+        } else if !characteristics.packet_write_without_response {
+            Some(CoreBluetoothDfuFailure::PacketWriteUnsupported)
         } else {
             None
         };
@@ -134,6 +157,10 @@ impl CoreBluetoothDfuBoundary {
                 self.phase = CoreBluetoothDfuPhase::Closed;
                 CoreBluetoothDfuFailure::InvalidWriteLimit
             })?;
+        if write_limit.bytes() < RAK4631_PACKET_BYTES {
+            self.phase = CoreBluetoothDfuPhase::Closed;
+            return Err(CoreBluetoothDfuFailure::InvalidWriteLimit);
+        }
         self.phase = CoreBluetoothDfuPhase::Ready;
         Ok(CoreBluetoothDfuApply::Applied(Some(CoreBluetoothDfuEffect::Ready(write_limit))))
     }
@@ -207,6 +234,25 @@ impl CoreBluetoothDfuBoundary {
         Ok(CoreBluetoothDfuApply::Applied(Some(CoreBluetoothDfuEffect::TransferComplete)))
     }
 
+    /// Record issuance of the validated image's Activate and Reset command.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless remote transfer and validation completed first.
+    pub fn activation_started(
+        &mut self,
+        generation: CoreBluetoothGeneration,
+    ) -> Result<CoreBluetoothDfuApply, CoreBluetoothDfuFailure> {
+        if generation != self.generation {
+            return Ok(CoreBluetoothDfuApply::IgnoredStale);
+        }
+        if self.phase != CoreBluetoothDfuPhase::TransferComplete {
+            return Err(CoreBluetoothDfuFailure::InvalidPhase);
+        }
+        self.phase = CoreBluetoothDfuPhase::Activating;
+        Ok(CoreBluetoothDfuApply::Applied(None))
+    }
+
     pub fn disconnected(&mut self, generation: CoreBluetoothGeneration) -> CoreBluetoothDfuApply {
         if generation != self.generation {
             return CoreBluetoothDfuApply::IgnoredStale;
@@ -220,8 +266,9 @@ impl CoreBluetoothDfuBoundary {
             }
             CoreBluetoothDfuPhase::Writing => CoreBluetoothDfuDisconnect::DuringWrite,
             CoreBluetoothDfuPhase::TransferComplete => {
-                CoreBluetoothDfuDisconnect::AfterReportedTransfer
+                CoreBluetoothDfuDisconnect::AfterTransferBeforeActivation
             }
+            CoreBluetoothDfuPhase::Activating => CoreBluetoothDfuDisconnect::AfterActivation,
             CoreBluetoothDfuPhase::Closed => unreachable!(),
         };
         self.phase = CoreBluetoothDfuPhase::Closed;
@@ -244,7 +291,11 @@ mod tests {
         CoreBluetoothDfuCharacteristics {
             control_point_present: true,
             packet_present: true,
+            version_present: true,
+            version_readable: true,
+            control_write_with_response: true,
             notifications_supported: true,
+            packet_write_without_response: true,
             maximum_write_value_length: 185,
         }
     }
@@ -304,6 +355,21 @@ mod tests {
                 CoreBluetoothDfuFailure::PacketCharacteristicMissing,
             ),
             (
+                CoreBluetoothDfuCharacteristics { version_present: false, ..characteristics() },
+                CoreBluetoothDfuFailure::VersionCharacteristicMissing,
+            ),
+            (
+                CoreBluetoothDfuCharacteristics { version_readable: false, ..characteristics() },
+                CoreBluetoothDfuFailure::VersionReadUnsupported,
+            ),
+            (
+                CoreBluetoothDfuCharacteristics {
+                    control_write_with_response: false,
+                    ..characteristics()
+                },
+                CoreBluetoothDfuFailure::ControlWriteUnsupported,
+            ),
+            (
                 CoreBluetoothDfuCharacteristics {
                     notifications_supported: false,
                     ..characteristics()
@@ -312,7 +378,14 @@ mod tests {
             ),
             (
                 CoreBluetoothDfuCharacteristics {
-                    maximum_write_value_length: 0,
+                    packet_write_without_response: false,
+                    ..characteristics()
+                },
+                CoreBluetoothDfuFailure::PacketWriteUnsupported,
+            ),
+            (
+                CoreBluetoothDfuCharacteristics {
+                    maximum_write_value_length: RAK4631_PACKET_BYTES - 1,
                     ..characteristics()
                 },
                 CoreBluetoothDfuFailure::InvalidWriteLimit,
@@ -349,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn disconnect_preserves_the_phase_of_the_native_observation() {
+    fn disconnect_requires_activation_after_remote_transfer_validation() {
         let mut before_write = ready_boundary();
         assert_eq!(
             before_write.disconnected(CURRENT),
@@ -374,7 +447,19 @@ mod tests {
         assert_eq!(
             after_transfer.disconnected(CURRENT),
             CoreBluetoothDfuApply::Applied(Some(CoreBluetoothDfuEffect::Disconnected(
-                CoreBluetoothDfuDisconnect::AfterReportedTransfer
+                CoreBluetoothDfuDisconnect::AfterTransferBeforeActivation
+            )))
+        );
+
+        let mut after_activation = ready_boundary();
+        after_activation.write_started(CURRENT).unwrap();
+        after_activation.progress_changed(CURRENT, 10).unwrap();
+        after_activation.write_completed(CURRENT).unwrap();
+        after_activation.activation_started(CURRENT).unwrap();
+        assert_eq!(
+            after_activation.disconnected(CURRENT),
+            CoreBluetoothDfuApply::Applied(Some(CoreBluetoothDfuEffect::Disconnected(
+                CoreBluetoothDfuDisconnect::AfterActivation
             )))
         );
     }

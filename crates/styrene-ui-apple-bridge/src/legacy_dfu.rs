@@ -16,7 +16,6 @@ const START_DFU: u8 = 0x01;
 const INITIALIZE_DFU: u8 = 0x02;
 const RECEIVE_FIRMWARE: u8 = 0x03;
 const VALIDATE_FIRMWARE: u8 = 0x04;
-const ACTIVATE_AND_RESET: u8 = 0x05;
 const SET_PRN: u8 = 0x08;
 const RESPONSE: u8 = 0x10;
 const PACKET_RECEIPT: u8 = 0x11;
@@ -83,8 +82,10 @@ impl Rak4631LegacyDfuPlan {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LegacyDfuAction {
     WriteControl(Vec<u8>),
+    ActivateAndReset,
     WritePacket(Vec<u8>),
     AwaitNotification,
+    TransferComplete,
     AwaitDisconnect,
     Complete,
 }
@@ -125,6 +126,7 @@ enum Phase {
     FirmwareNotification,
     Validate,
     ValidateResponse,
+    ReportComplete,
     Activate,
     Disconnect,
     Complete,
@@ -190,6 +192,10 @@ impl Rak4631LegacyDfuSession {
             | Phase::InitResponse
             | Phase::FirmwareNotification
             | Phase::ValidateResponse => Ok(LegacyDfuAction::AwaitNotification),
+            Phase::ReportComplete => {
+                self.phase = Phase::Activate;
+                Ok(LegacyDfuAction::TransferComplete)
+            }
             Phase::InitStart => {
                 self.phase = Phase::InitPackets;
                 Ok(LegacyDfuAction::WriteControl(vec![INITIALIZE_DFU, 0x00]))
@@ -243,7 +249,7 @@ impl Rak4631LegacyDfuSession {
             }
             Phase::Activate => {
                 self.phase = Phase::Disconnect;
-                Ok(LegacyDfuAction::WriteControl(vec![ACTIVATE_AND_RESET]))
+                Ok(LegacyDfuAction::ActivateAndReset)
             }
             Phase::Disconnect => Ok(LegacyDfuAction::AwaitDisconnect),
             Phase::Complete => Ok(LegacyDfuAction::Complete),
@@ -301,7 +307,7 @@ impl Rak4631LegacyDfuSession {
             }
             Phase::ValidateResponse => {
                 expect_response(bytes, VALIDATE_FIRMWARE)?;
-                self.phase = Phase::Activate;
+                self.phase = Phase::ReportComplete;
                 Ok(None)
             }
             _ => Err(LegacyDfuFailure::InvalidPhase),
@@ -465,7 +471,8 @@ mod tests {
         assert_eq!(session.next_action().unwrap(), LegacyDfuAction::WriteControl(vec![0x04]));
         assert_eq!(session.next_action().unwrap(), LegacyDfuAction::AwaitNotification);
         session.notification(&[0x10, 0x04, 0x01]).unwrap();
-        assert_eq!(session.next_action().unwrap(), LegacyDfuAction::WriteControl(vec![0x05]));
+        assert_eq!(session.next_action().unwrap(), LegacyDfuAction::TransferComplete);
+        assert_eq!(session.next_action().unwrap(), LegacyDfuAction::ActivateAndReset);
         assert_eq!(session.next_action().unwrap(), LegacyDfuAction::AwaitDisconnect);
         session.disconnected().unwrap();
         assert_eq!(session.next_action().unwrap(), LegacyDfuAction::Complete);
