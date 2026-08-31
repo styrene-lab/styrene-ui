@@ -131,6 +131,9 @@ impl CoreBluetoothAttemptBoundary {
         if generation != self.generation {
             return Ok(CoreBluetoothApply::IgnoredStale);
         }
+        if self.phase == CoreBluetoothPhase::Closed {
+            return Err(CoreBluetoothFailure::InvalidPhase);
+        }
         if state != CoreBluetoothManagerState::PoweredOn {
             self.phase = CoreBluetoothPhase::WaitingForManager;
             self.write_limit = None;
@@ -467,5 +470,9 @@ mod tests {
         );
         assert_eq!(boundary.disconnected(CURRENT), CoreBluetoothApply::Applied(Vec::new()));
         assert_eq!(boundary.phase(), CoreBluetoothPhase::Closed);
+        assert_eq!(
+            boundary.manager_changed(CURRENT, CoreBluetoothManagerState::PoweredOn),
+            Err(CoreBluetoothFailure::InvalidPhase)
+        );
     }
 }
