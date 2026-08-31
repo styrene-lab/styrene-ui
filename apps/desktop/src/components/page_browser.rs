@@ -621,14 +621,16 @@ mod tests {
         first.correlation_id = "load-1".into();
         first.navigation.address = "/page/index.mu".into();
         first.fields.push(password.clone());
-        let (correlation, mut values) = authoritative_field_reset("", &first).unwrap();
+        let (correlation, mut values) =
+            authoritative_field_reset("", &first).expect("initialize first page field state");
         values.insert("password".into(), vec!["secret".into()]);
 
         let mut reloaded = styrene_ipc::types::PageContent::default();
         reloaded.correlation_id = "load-2".into();
         reloaded.navigation.address = first.navigation.address.clone();
         reloaded.fields.push(password);
-        let (_, values) = authoritative_field_reset(&correlation, &reloaded).unwrap();
+        let (_, values) = authoritative_field_reset(&correlation, &reloaded)
+            .expect("reset field state for reloaded page");
 
         assert_eq!(values["password"], [""]);
     }

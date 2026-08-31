@@ -2224,7 +2224,7 @@ mod tests {
         assert!(validate_response(frame(MessageType::Result, request_id), request_id).is_ok());
         assert!(
             validate_response(frame(MessageType::Result, [8; REQUEST_ID_SIZE]), request_id)
-                .unwrap_err()
+                .expect_err("mismatched request ID should fail")
                 .to_string()
                 .contains("request ID mismatch")
         );
@@ -2239,7 +2239,12 @@ mod tests {
         );
         let mut error = frame(MessageType::Error, request_id);
         error.payload.insert("error".into(), MpValue::from("denied"));
-        assert_eq!(validate_response(error, request_id).unwrap_err().to_string(), "denied");
+        assert_eq!(
+            validate_response(error, request_id)
+                .expect_err("daemon error response should fail validation")
+                .to_string(),
+            "denied"
+        );
     }
 
     #[test]
@@ -2250,14 +2255,16 @@ mod tests {
         typed.payload.insert("message".into(), MpValue::from("conflict: cursor_stale"));
         typed.payload.insert("kind".into(), MpValue::from("conflict"));
         typed.payload.insert("code".into(), MpValue::from("cursor_stale"));
-        let error = validate_response(typed, request_id).unwrap_err();
+        let error = validate_response(typed, request_id)
+            .expect_err("typed cursor-stale response should fail validation");
         assert!(error.cursor_stale());
         assert_eq!(error.to_string(), "conflict: cursor_stale");
 
         let mut legacy = frame(MessageType::Error, request_id);
         legacy.payload.insert("error".into(), MpValue::from("old daemon error"));
         assert_eq!(
-            validate_response(legacy, request_id).unwrap_err(),
+            validate_response(legacy, request_id)
+                .expect_err("legacy daemon error should fail validation"),
             BridgeError::Internal("old daemon error".into())
         );
     }
@@ -2503,7 +2510,7 @@ mod tests {
     }
 
     fn broker_pair(capacity: usize) -> (RequestBroker, UnixStream) {
-        let (client, server) = UnixStream::pair().unwrap();
+        let (client, server) = UnixStream::pair().expect("create broker socket pair");
         (
             RequestBroker::spawn_with_capacity(
                 client,
@@ -2517,7 +2524,9 @@ mod tests {
     async fn reply(server: &mut UnixStream, request_id: &[u8; REQUEST_ID_SIZE], value: &str) {
         let mut payload = HashMap::new();
         payload.insert("value".into(), MpValue::from(value));
-        wire::write_frame_async(server, MessageType::Result, request_id, &payload).await.unwrap();
+        wire::write_frame_async(server, MessageType::Result, request_id, &payload)
+            .await
+            .expect("write broker reply");
     }
 
     #[tokio::test]
@@ -2533,17 +2542,28 @@ mod tests {
                 broker.rpc(MessageType::QueryStatus, HashMap::new(), Duration::from_secs(1)).await
             }
         });
-        let request_a = wire::read_frame_async(&mut server).await.unwrap();
-        let request_b = wire::read_frame_async(&mut server).await.unwrap();
+        let request_a =
+            wire::read_frame_async(&mut server).await.expect("read first broker request");
+        let request_b =
+            wire::read_frame_async(&mut server).await.expect("read second broker request");
         assert_ne!(request_a.request_id, request_b.request_id);
-        assert_eq!(u64::from_le_bytes(request_a.request_id[..8].try_into().unwrap()), 7);
+        assert_eq!(
+            u64::from_le_bytes(
+                request_a.request_id[..8]
+                    .try_into()
+                    .expect("request ID generation prefix has eight bytes"),
+            ),
+            7
+        );
 
         let value_a = if request_a.msg_type == MessageType::Ping { "ping" } else { "status" };
         let value_b = if request_b.msg_type == MessageType::Ping { "ping" } else { "status" };
         reply(&mut server, &request_b.request_id, value_b).await;
         reply(&mut server, &request_a.request_id, value_a).await;
-        let result_a = first.await.unwrap().unwrap();
-        let result_b = second.await.unwrap().unwrap();
+        let result_a =
+            first.await.expect("first broker task completed").expect("first RPC succeeded");
+        let result_b =
+            second.await.expect("second broker task completed").expect("second RPC succeeded");
         assert_eq!(mp_str(&result_a.payload, "value"), "ping");
         assert_eq!(mp_str(&result_b.payload, "value"), "status");
         assert_eq!(broker.diagnostics().completed, 2);
@@ -2557,13 +2577,14 @@ mod tests {
             let broker = broker.clone();
             async move { broker.query_conversation_page(None).await }
         });
-        let request = wire::read_frame_async(&mut server).await.unwrap();
+        let request = wire::read_frame_async(&mut server).await.expect("read conversation query");
         let payload = HashMap::from([("conversations".into(), MpValue::Array(Vec::new()))]);
         wire::write_frame_async(&mut server, MessageType::Result, &request.request_id, &payload)
             .await
-            .unwrap();
+            .expect("write legacy conversation response");
 
-        let page = query.await.unwrap().unwrap();
+        let page =
+            query.await.expect("conversation query task completed").expect("query succeeded");
         assert!(!page.pagination_supported);
         assert!(page.next_cursor.is_none());
     }
@@ -2575,7 +2596,8 @@ mod tests {
             let broker = broker.clone();
             async move { broker.query_message_page("2222222222222222", Some("stale")).await }
         });
-        let stale_request = wire::read_frame_async(&mut server).await.unwrap();
+        let stale_request =
+            wire::read_frame_async(&mut server).await.expect("read stale-cursor query");
         assert_eq!(stale_request.payload["cursor"].as_str(), Some("stale"));
         let stale = HashMap::from([
             ("error".into(), MpValue::from("conflict: cursor_stale")),
@@ -2585,9 +2607,9 @@ mod tests {
         ]);
         wire::write_frame_async(&mut server, MessageType::Error, &stale_request.request_id, &stale)
             .await
-            .unwrap();
+            .expect("write cursor-stale response");
 
-        let restarted = wire::read_frame_async(&mut server).await.unwrap();
+        let restarted = wire::read_frame_async(&mut server).await.expect("read restarted query");
         assert!(!restarted.payload.contains_key("cursor"));
         let page_payload = HashMap::from([
             ("messages".into(), MpValue::Array(Vec::new())),
@@ -2600,9 +2622,9 @@ mod tests {
             &page_payload,
         )
         .await
-        .unwrap();
+        .expect("write restarted query response");
 
-        let page = query.await.unwrap().unwrap();
+        let page = query.await.expect("message query task completed").expect("query succeeded");
         assert!(page.pagination_supported);
         assert!(page.next_cursor.is_none());
     }
@@ -2614,11 +2636,11 @@ mod tests {
             let broker = broker.clone();
             async move { broker.rpc(MessageType::Ping, HashMap::new(), Duration::from_secs(1)).await }
         });
-        let _request = wire::read_frame_async(&mut server).await.unwrap();
+        let _request = wire::read_frame_async(&mut server).await.expect("read pending request");
         let overloaded = broker
             .rpc(MessageType::QueryStatus, HashMap::new(), Duration::from_millis(20))
             .await
-            .unwrap_err();
+            .expect_err("request above broker capacity should fail");
         assert!(overloaded.contains("overloaded"));
         pending.abort();
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -2626,7 +2648,7 @@ mod tests {
         let timed_out = broker
             .rpc(MessageType::QueryStatus, HashMap::new(), Duration::from_millis(20))
             .await
-            .unwrap_err();
+            .expect_err("unanswered request should time out");
         assert!(timed_out.contains("timed out"));
         let diagnostics = broker.diagnostics();
         assert_eq!(diagnostics.overloaded, 1);
@@ -2641,9 +2663,15 @@ mod tests {
             let broker = broker.clone();
             async move { broker.rpc(MessageType::Ping, HashMap::new(), Duration::from_secs(1)).await }
         });
-        let _request = wire::read_frame_async(&mut server).await.unwrap();
+        let _request = wire::read_frame_async(&mut server).await.expect("read in-flight request");
         drop(server);
-        assert!(request.await.unwrap().unwrap_err().contains("read failed"));
+        assert!(
+            request
+                .await
+                .expect("in-flight request task completed")
+                .expect_err("disconnected request should fail")
+                .contains("read failed")
+        );
         assert_eq!(broker.diagnostics().disconnected, 1);
     }
 
@@ -2654,19 +2682,30 @@ mod tests {
             let broker = broker.clone();
             async move { broker.rpc(MessageType::Ping, HashMap::new(), Duration::from_secs(1)).await }
         });
-        let frame = wire::read_frame_async(&mut server).await.unwrap();
+        let frame =
+            wire::read_frame_async(&mut server).await.expect("read generation-tagged request");
         let mut stale_id = frame.request_id;
         stale_id[..8].copy_from_slice(&8_u64.to_le_bytes());
         reply(&mut server, &stale_id, "stale").await;
         reply(&mut server, &frame.request_id, "current").await;
 
-        assert_eq!(mp_str(&request.await.unwrap().unwrap().payload, "value"), "current");
+        assert_eq!(
+            mp_str(
+                &request
+                    .await
+                    .expect("generation request task completed")
+                    .expect("current-generation response succeeded")
+                    .payload,
+                "value",
+            ),
+            "current"
+        );
         assert_eq!(broker.diagnostics().stale_responses, 1);
     }
 
     #[tokio::test]
     async fn event_reader_fans_out_events_without_broker_requests() {
-        let (client, mut server) = UnixStream::pair().unwrap();
+        let (client, mut server) = UnixStream::pair().expect("create event-reader socket pair");
         let (tx, mut events) = mpsc::channel(2);
         tokio::spawn(event_reader(client, tx, Arc::new(BrokerMetrics::default()), 7));
         let mut payload = HashMap::new();
@@ -2679,7 +2718,7 @@ mod tests {
             &payload,
         )
         .await
-        .unwrap();
+        .expect("write device event");
 
         assert!(matches!(events.recv().await, Some(DaemonEvent::PeerDiscovered(_))));
     }
@@ -2687,7 +2726,7 @@ mod tests {
     #[test]
     fn full_event_channel_records_dropped_update() {
         let (tx, _events) = mpsc::channel(1);
-        tx.try_send(DaemonEvent::Connected).unwrap();
+        tx.try_send(DaemonEvent::Connected).expect("seed event channel");
         let metrics = BrokerMetrics::default();
         send_polled_event(&tx, DaemonEvent::Connected, &metrics);
         assert_eq!(metrics.dropped_updates.load(Ordering::Relaxed), 1);
