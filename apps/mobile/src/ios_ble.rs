@@ -269,6 +269,9 @@ impl IosBleHost {
                             self.publish(state.clone());
                         }
                         IosBleEvent::Failed { failure, .. } => {
+                            if let Some(adapter) = adapter.as_mut() {
+                                adapter.close();
+                            }
                             deadline = None;
                             state.phase = BleControlPhase::Idle;
                             state.failure = Some(control_failure(failure));
