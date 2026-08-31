@@ -52,16 +52,20 @@ impl IosBleEventStream {
 struct DelegateState {
     scan_generation: Option<CoreBluetoothGeneration>,
     scanning: bool,
+    attempt_started: bool,
     active_generation: Option<CoreBluetoothGeneration>,
     active_id: Option<String>,
+    active_object: Option<usize>,
     boundary: Option<CoreBluetoothAttemptBoundary>,
     pending_write: Option<CoreBluetoothWriteToken>,
 }
 
+type WriteCompletion = (CoreBluetoothWriteToken, Result<(), PlatformFailure>);
+
 struct BleDelegateIvars {
     events: Sender<IosBleEvent>,
     reads: Sender<Result<Vec<u8>, PlatformFailure>>,
-    writes: Sender<Result<(), PlatformFailure>>,
+    writes: Sender<WriteCompletion>,
     state: Mutex<DelegateState>,
 }
 
@@ -141,8 +145,8 @@ define_class!(
             peripheral: &CBPeripheral,
             error: Option<&NSError>,
         ) {
-            let generation = self.take_active(peripheral);
-            if let Some(generation) = generation {
+            let active = self.take_active(peripheral);
+            if let Some((generation, pending_write)) = active {
                 let diagnostic_code = ns_error_code("ios_ble_disconnected", error);
                 self.send_event(IosBleEvent::Disconnected {
                     generation,
@@ -151,6 +155,10 @@ define_class!(
                 let _ = self
                     .reads()
                     .try_send(Err(PlatformFailure { code: diagnostic_code, retryable: true }));
+                if let Some(token) = pending_write {
+                    let _ =
+                        self.writes().try_send((token, Err(failure("ios_ble_disconnected", true))));
+                }
             }
         }
     }
@@ -163,7 +171,10 @@ define_class!(
             peripheral: &CBPeripheral,
             error: Option<&NSError>,
         ) {
-            if error.is_some() || !self.is_active(peripheral) {
+            if !self.is_active(peripheral) {
+                return;
+            }
+            if error.is_some() {
                 self.fail_active(CoreBluetoothFailure::NusServiceMissing);
                 return;
             }
@@ -196,7 +207,10 @@ define_class!(
             service: &CBService,
             error: Option<&NSError>,
         ) {
-            if error.is_some() || !self.is_active(peripheral) {
+            if !self.is_active(peripheral) {
+                return;
+            }
+            if error.is_some() {
                 self.fail_active(CoreBluetoothFailure::NotifyCharacteristicMissing);
                 return;
             }
@@ -286,8 +300,9 @@ define_class!(
             {
                 return;
             }
-            let result = self.apply_write_completion(error.is_none());
-            let _ = self.writes().try_send(result);
+            if let Some(completion) = self.apply_write_completion(error.is_none()) {
+                let _ = self.writes().try_send(completion);
+            }
         }
     }
 );
@@ -296,7 +311,7 @@ impl BleDelegate {
     fn new(
         events: Sender<IosBleEvent>,
         reads: Sender<Result<Vec<u8>, PlatformFailure>>,
-        writes: Sender<Result<(), PlatformFailure>>,
+        writes: Sender<WriteCompletion>,
     ) -> Retained<Self> {
         let this = Self::alloc().set_ivars(BleDelegateIvars {
             events,
@@ -305,8 +320,10 @@ impl BleDelegate {
             state: Mutex::new(DelegateState {
                 scan_generation: None,
                 scanning: false,
+                attempt_started: false,
                 active_generation: None,
                 active_id: None,
+                active_object: None,
                 boundary: None,
                 pending_write: None,
             }),
@@ -319,7 +336,7 @@ impl BleDelegate {
         &self.ivars().reads
     }
 
-    fn writes(&self) -> &Sender<Result<(), PlatformFailure>> {
+    fn writes(&self) -> &Sender<WriteCompletion> {
         &self.ivars().writes
     }
 
@@ -329,10 +346,12 @@ impl BleDelegate {
 
     fn is_active(&self, peripheral: &CBPeripheral) -> bool {
         let id = peripheral_id_string(peripheral);
-        self.ivars()
-            .state
-            .lock()
-            .is_ok_and(|state| state.active_generation.is_some() && state.active_id == id)
+        let object = std::ptr::from_ref(peripheral).addr();
+        self.ivars().state.lock().is_ok_and(|state| {
+            state.active_generation.is_some()
+                && state.active_id == id
+                && state.active_object == Some(object)
+        })
     }
 
     fn apply_services(&self, present: bool) -> bool {
@@ -394,37 +413,53 @@ impl BleDelegate {
     }
 
     fn finish_connection(&self, peripheral: &CBPeripheral, failure: CoreBluetoothFailure) {
-        if let Some(generation) = self.take_active(peripheral) {
+        if let Some((generation, _)) = self.take_active(peripheral) {
             self.send_event(IosBleEvent::Failed { generation, failure });
         }
     }
 
-    fn take_active(&self, peripheral: &CBPeripheral) -> Option<CoreBluetoothGeneration> {
+    fn take_active(
+        &self,
+        peripheral: &CBPeripheral,
+    ) -> Option<(CoreBluetoothGeneration, Option<CoreBluetoothWriteToken>)> {
         let id = peripheral_id_string(peripheral);
+        let object = std::ptr::from_ref(peripheral).addr();
         let mut state = self.ivars().state.lock().ok()?;
-        if state.active_id != id {
+        if state.active_id != id || state.active_object != Some(object) {
             return None;
         }
         let generation = state.active_generation.take()?;
         state.active_id = None;
+        state.active_object = None;
         state.boundary = None;
-        state.pending_write = None;
-        Some(generation)
+        let pending_write = state.pending_write.take();
+        Some((generation, pending_write))
     }
 
-    fn apply_write_completion(&self, succeeded: bool) -> Result<(), PlatformFailure> {
+    fn apply_write_completion(&self, succeeded: bool) -> Option<WriteCompletion> {
         let result = self.ivars().state.lock().ok().and_then(|mut state| {
             let generation = state.active_generation?;
-            let token = state.pending_write.take()?;
+            let token = state.pending_write?;
             let boundary = state.boundary.as_mut()?;
-            Some(boundary.write_completed(generation, token, succeeded))
+            Some((token, boundary.write_completed(generation, token, succeeded)))
         });
         match result {
-            Some(Ok(CoreBluetoothApply::Applied(_))) => Ok(()),
-            Some(Err(CoreBluetoothFailure::WriteFailed)) => {
-                Err(failure("ios_ble_write_failed", true))
+            Some((token, Ok(CoreBluetoothApply::Applied(_)))) => Some((token, Ok(()))),
+            Some((token, Err(CoreBluetoothFailure::WriteFailed))) => {
+                Some((token, Err(failure("ios_ble_write_failed", true))))
             }
-            _ => Err(failure("ios_ble_write_callback_mismatch", false)),
+            Some((token, _)) => {
+                Some((token, Err(failure("ios_ble_write_callback_mismatch", false))))
+            }
+            None => None,
+        }
+    }
+
+    fn finish_write_wait(&self, token: CoreBluetoothWriteToken) {
+        if let Ok(mut state) = self.ivars().state.lock()
+            && state.pending_write == Some(token)
+        {
+            state.pending_write = None;
         }
     }
 }
@@ -435,7 +470,7 @@ pub struct IosBleAdapter {
     active: RefCell<Option<Retained<CBPeripheral>>>,
     events: Option<Receiver<IosBleEvent>>,
     reads: Receiver<Result<Vec<u8>, PlatformFailure>>,
-    writes: Receiver<Result<(), PlatformFailure>>,
+    writes: Receiver<WriteCompletion>,
 }
 
 impl IosBleAdapter {
@@ -525,15 +560,17 @@ impl IosBleAdapter {
                 .state
                 .lock()
                 .map_err(|_| failure("ios_ble_state_unavailable", false))?;
-            if state.active_generation.is_some() {
-                return Err(failure("ios_ble_attempt_active", true));
+            if state.attempt_started {
+                return Err(failure("ios_ble_attempt_closed", true));
             }
             let mut boundary = CoreBluetoothAttemptBoundary::new(generation);
             boundary
                 .manager_changed(generation, CoreBluetoothManagerState::PoweredOn)
                 .map_err(core_failure)?;
+            state.attempt_started = true;
             state.active_generation = Some(generation);
             state.active_id = Some(id.as_str().to_owned());
+            state.active_object = Some(std::ptr::from_ref::<CBPeripheral>(&peripheral).addr());
             state.boundary = Some(boundary);
             state.pending_write = None;
         }
@@ -614,6 +651,9 @@ impl BleRNodeByteAttempt for IosBleAdapter {
                     .state
                     .lock()
                     .map_err(|_| failure("ios_ble_state_unavailable", false))?;
+                if state.pending_write.is_some() {
+                    return Err(failure("ios_ble_write_in_progress", true));
+                }
                 let boundary = state
                     .boundary
                     .as_mut()
@@ -622,9 +662,11 @@ impl BleRNodeByteAttempt for IosBleAdapter {
                 state.pending_write = Some(request.token);
                 request
             };
-            let (peripheral, characteristic) = self
-                .write_characteristic()
-                .ok_or_else(|| failure("ios_ble_write_characteristic_unavailable", false))?;
+            let Some((peripheral, characteristic)) = self.write_characteristic() else {
+                let _ = self.delegate.apply_write_completion(false);
+                self.delegate.finish_write_wait(request.token);
+                return Err(failure("ios_ble_write_characteristic_unavailable", false));
+            };
             let data = NSData::from_vec(request.bytes);
             unsafe {
                 peripheral.writeValue_forCharacteristic_type(
@@ -633,20 +675,36 @@ impl BleRNodeByteAttempt for IosBleAdapter {
                     CBCharacteristicWriteType::WithResponse,
                 );
             }
-            self.writes.recv().await.map_err(|_| failure("ios_ble_write_callback_closed", true))?
+            loop {
+                let (token, result) = self
+                    .writes
+                    .recv()
+                    .await
+                    .map_err(|_| failure("ios_ble_write_callback_closed", true))?;
+                if token == request.token {
+                    self.delegate.finish_write_wait(token);
+                    return result;
+                }
+            }
         })
     }
 
     fn close(&mut self) {
         self.stop_scan();
-        if let Some(peripheral) = self.active.borrow().as_ref() {
+        if let Some(peripheral) = self.active.borrow_mut().take() {
             unsafe { peripheral.setDelegate(None) };
-            unsafe { self.manager.cancelPeripheralConnection(peripheral) };
+            unsafe { self.manager.cancelPeripheralConnection(&peripheral) };
         }
-        if let Ok(mut state) = self.delegate.ivars().state.lock()
-            && let Some(boundary) = state.boundary.as_mut()
-        {
-            boundary.close();
+        if let Ok(mut state) = self.delegate.ivars().state.lock() {
+            if let Some(boundary) = state.boundary.as_mut() {
+                boundary.close();
+            }
+            state.scan_generation = None;
+            state.scanning = false;
+            state.active_generation = None;
+            state.active_id = None;
+            state.active_object = None;
+            state.boundary = None;
             state.pending_write = None;
         }
     }
