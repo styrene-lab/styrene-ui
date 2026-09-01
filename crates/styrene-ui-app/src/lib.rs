@@ -1575,10 +1575,9 @@ pub fn NewMessageForm(
                         id: destination_error_id,
                         class: "field-error",
                         role: "alert",
-                        format!(
-                            "Destination exceeds the {}-byte input limit.",
-                            LXMF_DESTINATION_INPUT_MAX_BYTES
-                        )
+                        {format!(
+                            "Destination exceeds the {LXMF_DESTINATION_INPUT_MAX_BYTES}-byte input limit."
+                        )}
                     }
                 }
                 if has_start_failure {
