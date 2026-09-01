@@ -80,6 +80,7 @@ fn NewMessageShell(
     generation: u64,
     initial_search: String,
     initial_destination: String,
+    #[props(default)] failure: Option<TypedFailure>,
 ) -> Element {
     rsx! {
         NewMessageForm {
@@ -88,6 +89,7 @@ fn NewMessageShell(
             enabled: true,
             initial_search,
             initial_destination,
+            failure,
             action_sink: move |_action| {},
         }
     }
@@ -585,20 +587,14 @@ fn new_message_rejects_incomplete_and_oversized_input_before_dispatch() {
         opening_tag_with_id(&oversized, "mobile.direct-destination")
             .contains("aria-invalid=\"true\"")
     );
-    assert!(
-        opening_tag_with_id(&oversized, "mobile.direct-destination")
-            .contains("autofocus")
-    );
+    assert!(opening_tag_with_id(&oversized, "mobile.direct-destination").contains("autofocus"));
     assert!(
         opening_tag_with_id(&oversized, "mobile.direct-destination")
             .contains("aria-errormessage=\"mobile.direct-destination-error\"")
     );
-    assert!(
-        opening_tag_with_id(&oversized, "mobile.direct-destination")
-            .contains(
-                "aria-describedby=\"mobile.direct-destination-status mobile.direct-destination-error\""
-            )
-    );
+    assert!(opening_tag_with_id(&oversized, "mobile.direct-destination").contains(
+        "aria-describedby=\"mobile.direct-destination-status mobile.direct-destination-error\""
+    ));
     assert!(oversized.contains("id=\"mobile.direct-destination-error\""));
     assert!(oversized.contains("exceeds the 32-byte input limit"));
     assert!(!oversized.contains(&"a".repeat(34)));
@@ -608,17 +604,15 @@ fn new_message_rejects_incomplete_and_oversized_input_before_dispatch() {
 fn new_message_backend_failure_associates_and_focuses_the_destination_error() {
     let state = fixture("canonical-peer-discovery");
     let markup = dioxus_ssr::render_element(rsx! {
-        NewMessageForm {
+        NewMessageShell {
             peers: state.peers,
             generation: state.generation,
-            enabled: true,
             initial_search: String::new(),
-            initial_destination: "e01b09b22ccc4e2755d29eead962677b".into(),
+            initial_destination: "e01b09b22ccc4e2755d29eead962677b",
             failure: Some(TypedFailure {
                 code: "conversation_start_failed".into(),
                 retryable: true,
             }),
-            action_sink: move |_action| {},
         }
     });
 
@@ -1347,7 +1341,9 @@ fn composer_exposes_disabled_send_reason_when_completion_is_blocked() {
     });
 
     let send = opening_tag_with_id(&markup, "mobile.send");
-    assert!(send.contains("aria-describedby=\"mobile.composer-status mobile.send-disabled-reason\""));
+    assert!(
+        send.contains("aria-describedby=\"mobile.composer-status mobile.send-disabled-reason\"")
+    );
     assert!(markup.contains("id=\"mobile.send-disabled-reason\""));
     assert!(markup.contains("Choose a conversation before sending a message."));
 }
