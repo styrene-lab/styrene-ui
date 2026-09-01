@@ -39,6 +39,12 @@ screenshots and verifies these public facts:
 - availability is `Available` and downgrade is `None`.
 - the 32-hex public destination is unchanged after termination and relaunch.
 
+The assigned host runner owns the destructive reset, baseline installation,
+normal restart, explicit forced termination, in-place upgrade, and relaunch
+steps. XCTest verifies the rendered custody projection and public identity at
+the required checkpoints. It does not perform package installation or device
+reset operations.
+
 Use `testPhysicalRestoredIdentityCustody` after an in-place package upgrade.
 Inject the retained first-launch destination as `STYRENE_EXPECTED_IDENTITY` in
 the test-runner environment. The value is public identity metadata. It is not a
