@@ -7,7 +7,7 @@ This procedure starts QR ingress implementation and E87 verification on
 
 - UI branch: `feat/complete-mobile-product-workflows`
 - Backend branch: `feat/complete-mobile-product-workflows`
-- Backend revision pinned by the UI: `e70c3d6cb140cf5427fc912b32acc318981eaee8`
+- Backend revision pinned by the UI: `23beb83dbed95165347debdaabb1a672febfdc92`
 - OpenSpec: `styrene-rs/openspec/changes/complete-mobile-product-workflows/`
 - TDD corpus: `tests/fixtures/mobile-qr-ingress-v1/corpus.json`
 - Selected design: system image capture plus bounded Rust `quircs` decoding
