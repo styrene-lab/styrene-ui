@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use dioxus::prelude::*;
+use qrcode::{Color, QrCode};
 use styrene_ui_platform::{
     AndroidUsbAttachment, Appearance, ApplicationLifecycle, AuthorizationState, BleAdapterState,
     BleControlDisabledReason, BleControlFailure, BleControlPhase, BleControlState, BlePeripheralId,
@@ -552,6 +553,10 @@ pub fn MobileShell(
     #[props(default)] clipboard_failure: Option<String>,
     #[props(default)] clipboard_busy: bool,
     #[props(default)] clipboard_read: Option<EventHandler<()>>,
+    #[props(default)] identity_copy_busy: bool,
+    #[props(default)] identity_copy_succeeded: bool,
+    #[props(default)] identity_copy_failure: Option<String>,
+    #[props(default)] identity_copy: Option<EventHandler<String>>,
     #[props(default)] application_settings_busy: bool,
     #[props(default)] application_settings_failure: Option<String>,
     #[props(default)] open_application_settings: Option<EventHandler<()>>,
@@ -571,8 +576,11 @@ pub fn MobileShell(
     let mut compact_thread_open = use_signal(|| false);
     let mut new_message_open = use_signal(|| false);
     let mut new_message_trigger = use_signal(|| None::<Event<MountedData>>);
+    let mut identity_qr_open = use_signal(|| false);
     let new_message_key =
         format!("{}:{}", fixture.generation, clipboard_candidate.as_deref().unwrap_or_default());
+    let public_destination = fixture.session.identity_hash.clone();
+    let identity_copy_enabled = identity_copy.is_some() && !identity_copy_busy;
 
     let active_destination = *destination.read();
     let selected_hash = selected_peer
@@ -1193,6 +1201,49 @@ pub fn MobileShell(
                             {fixture.session.identity_hash.clone()}
                         }
                     }
+                    div {
+                        class: "identity-actions",
+                        button {
+                            id: "mobile.identity-copy",
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: !identity_copy_enabled,
+                            "aria-describedby": "mobile.identity-copy-status",
+                            onclick: {
+                                let public_destination = public_destination.clone();
+                                move |_| {
+                                    if let Some(handler) = identity_copy {
+                                        handler.call(public_destination.clone());
+                                    }
+                                }
+                            },
+                            if identity_copy_busy { "Copying" } else { "Copy" }
+                        }
+                        button {
+                            id: "mobile.identity-show-qr",
+                            class: "secondary-action",
+                            r#type: "button",
+                            "aria-expanded": identity_qr_open().to_string(),
+                            "aria-controls": "mobile.identity-qr",
+                            onclick: move |_| identity_qr_open.toggle(),
+                            if identity_qr_open() { "Hide QR" } else { "Show QR" }
+                        }
+                    }
+                    p {
+                        id: "mobile.identity-copy-status",
+                        class: if identity_copy_failure.is_some() { "field-error" } else { "field-hint" },
+                        role: "status",
+                        if let Some(failure) = &identity_copy_failure {
+                            "Public destination was not copied ({failure})."
+                        } else if identity_copy_succeeded {
+                            "Public destination copied."
+                        } else {
+                            "Copy shares only the public LXMF destination."
+                        }
+                    }
+                    if identity_qr_open() {
+                        IdentityQrCode { value: public_destination.clone() }
+                    }
                     if let Some(custody) = &fixture.session.custody {
                         section {
                             id: "mobile.identity-custody",
@@ -1359,6 +1410,39 @@ pub fn MobileShell(
                     }
                 }
             }
+        }
+    }
+}
+
+#[component]
+pub fn IdentityQrCode(value: String) -> Element {
+    let Ok(code) = QrCode::new(value.as_bytes()) else {
+        return rsx! {
+            p { id: "mobile.identity-qr", class: "field-error", role: "status", "QR unavailable." }
+        };
+    };
+    let width = code.width();
+    let view_size = width + 8;
+    let dark_modules = (0..width)
+        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .filter(|&(x, y)| code[(x, y)] == Color::Dark)
+        .collect::<Vec<_>>();
+
+    rsx! {
+        figure {
+            id: "mobile.identity-qr",
+            class: "identity-qr",
+            "data-payload": value.clone(),
+            svg {
+                role: "img",
+                "aria-label": format!("QR code for public LXMF destination {value}"),
+                view_box: format!("-4 -4 {view_size} {view_size}"),
+                rect { x: "-4", y: "-4", width: view_size, height: view_size, fill: "white" }
+                for (x, y) in dark_modules {
+                    rect { key: "{x}-{y}", x, y, width: "1", height: "1", fill: "black" }
+                }
+            }
+            figcaption { "Public LXMF destination" }
         }
     }
 }

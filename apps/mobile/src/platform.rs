@@ -2,10 +2,10 @@ use dioxus::prelude::*;
 use serde::Deserialize;
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
-    AuthorizationState, ClipboardTextReader, Contrast, KeyboardGeometry, MotionPreference,
-    PermissionKind, PermissionStatus, PlatformApplyResult, PlatformChange, PlatformEvent,
-    PlatformEventStream, PlatformFailure, PlatformFuture, PlatformGeometry, PlatformInsets,
-    PlatformService, PlatformSnapshot, PlatformState, TextAcquisitionCompletion,
+    AuthorizationState, ClipboardTextReader, ClipboardTextWriter, Contrast, KeyboardGeometry,
+    MotionPreference, PermissionKind, PermissionStatus, PlatformApplyResult, PlatformChange,
+    PlatformEvent, PlatformEventStream, PlatformFailure, PlatformFuture, PlatformGeometry,
+    PlatformInsets, PlatformService, PlatformSnapshot, PlatformState, TextAcquisitionCompletion,
     TextAcquisitionGeneration, TextScale, WindowClass, WindowMetrics,
 };
 
@@ -279,6 +279,10 @@ mod native_platform {
         TextAcquisitionCompletion { generation, result }
     }
 
+    pub async fn write_clipboard_text(value: String) -> Result<(), PlatformFailure> {
+        dispatch_query(move |env, activity| set_clipboard_text(env, activity, &value)).await
+    }
+
     async fn request_and_observe(
         names: &'static [&'static str],
     ) -> Result<AuthorizationState, PlatformFailure> {
@@ -415,6 +419,39 @@ mod native_platform {
         }
         let text = env.get_string(&JString::from(text))?.to_string_lossy().into_owned();
         Ok(Some(ClipboardRead::Payload(text.into_bytes())))
+    }
+
+    fn set_clipboard_text(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        value: &str,
+    ) -> jni::errors::Result<()> {
+        let service_name = env.new_string("clipboard")?;
+        let manager = env
+            .call_method(
+                activity,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&service_name)],
+            )?
+            .l()?;
+        let label = env.new_string("Public LXMF destination")?;
+        let value = env.new_string(value)?;
+        let clip = env
+            .call_static_method(
+                "android/content/ClipData",
+                "newPlainText",
+                "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;",
+                &[JValue::Object(&label), JValue::Object(&value)],
+            )?
+            .l()?;
+        env.call_method(
+            &manager,
+            "setPrimaryClip",
+            "(Landroid/content/ClipData;)V",
+            &[JValue::Object(&clip)],
+        )?;
+        Ok(())
     }
 
     fn read_sdk(env: &mut JNIEnv<'_>, _: &JObject<'_>) -> jni::errors::Result<i32> {
@@ -921,6 +958,13 @@ mod native_platform {
         std::future::ready(TextAcquisitionCompletion { generation, result })
     }
 
+    pub fn write_clipboard_text(value: String) -> std::future::Ready<Result<(), PlatformFailure>> {
+        std::future::ready(
+            styrene_ui_apple_bridge::set_clipboard_text(&value)
+                .map_err(|_| failure("ios_clipboard_write_failed", true)),
+        )
+    }
+
     pub fn android_usb_attachments()
     -> std::future::Ready<Result<Vec<AndroidUsbAttachment>, PlatformFailure>> {
         std::future::ready(Ok(Vec::new()))
@@ -1036,6 +1080,13 @@ mod native_platform {
             generation,
             result: Err(TextAcquisitionFailure::Unavailable),
         })
+    }
+
+    pub fn write_clipboard_text(_: String) -> std::future::Ready<Result<(), PlatformFailure>> {
+        std::future::ready(Err(PlatformFailure {
+            code: "clipboard_write_unavailable".into(),
+            retryable: false,
+        }))
     }
 
     pub fn android_usb_attachments()
@@ -1263,6 +1314,18 @@ impl ClipboardTextReader for NativeClipboardTextReader {
         generation: TextAcquisitionGeneration,
     ) -> PlatformFuture<'_, TextAcquisitionCompletion> {
         Box::pin(async move { native_platform::read_clipboard_text(generation).await })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeClipboardTextWriter;
+
+impl ClipboardTextWriter for NativeClipboardTextWriter {
+    fn write_clipboard_text(
+        &self,
+        value: String,
+    ) -> PlatformFuture<'_, Result<(), PlatformFailure>> {
+        Box::pin(async move { native_platform::write_clipboard_text(value).await })
     }
 }
 

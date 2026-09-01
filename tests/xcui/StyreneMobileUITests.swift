@@ -44,6 +44,28 @@ final class StyreneMobileUITests: XCTestCase {
         }
     }
 
+    func testPublicIdentityCopyAndQRPresentation() throws {
+        let app = launchFixture()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+        app.buttons["More"].tap()
+
+        let destination = app.staticTexts["66666666666666666666666666666666"]
+        XCTAssertTrue(destination.waitForExistence(timeout: 5))
+
+        let copy = app.buttons["Copy"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 5))
+        copy.tap()
+        XCTAssertTrue(app.staticTexts["Public destination copied."].waitForExistence(timeout: 5))
+
+        let showQR = app.buttons["Show QR"]
+        XCTAssertTrue(showQR.exists)
+        showQR.tap()
+        XCTAssertTrue(app.images.matching(
+            NSPredicate(format: "label BEGINSWITH %@", "QR code for public LXMF destination ")
+        ).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Hide QR"].exists)
+    }
+
     func testNavigationSurvivesBackgroundAndForeground() throws {
         let app = launchFixture()
         let more = app.buttons["More"]

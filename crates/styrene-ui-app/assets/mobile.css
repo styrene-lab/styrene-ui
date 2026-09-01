@@ -731,6 +731,38 @@ label {
   margin-block-end: 0;
 }
 
+.identity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-block-start: 1rem;
+}
+
+.identity-actions button {
+  min-block-size: 2.75rem;
+  padding-inline: 1rem;
+}
+
+.identity-qr {
+  inline-size: min(100%, 20rem);
+  margin: 1rem auto 0;
+  text-align: center;
+}
+
+.identity-qr svg {
+  display: block;
+  inline-size: 100%;
+  block-size: auto;
+  border: var(--stroke) solid var(--line);
+  background: white;
+}
+
+.identity-qr figcaption {
+  margin-block-start: 0.5rem;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+
 .identity-custody {
   margin-block-start: 1rem;
   padding-block-start: 1rem;

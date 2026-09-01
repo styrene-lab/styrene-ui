@@ -1,5 +1,6 @@
 use dioxus::prelude::*;
 use styrene_ui_app::{BackNavigation, MobileShell};
+use styrene_ui_platform::ClipboardTextWriter;
 #[cfg(all(
     any(target_os = "android", target_os = "ios", target_os = "macos"),
     not(feature = "ui-test")
@@ -86,6 +87,9 @@ fn bootstrap_fixture() -> MobileFixture {
 pub fn App() -> Element {
     platform::use_back_navigation();
     let platform_snapshot = platform::use_platform_snapshot();
+    let mut identity_copy_busy = use_signal(|| false);
+    let mut identity_copy_succeeded = use_signal(|| false);
+    let mut identity_copy_failure = use_signal(|| None::<String>);
     #[cfg(all(
         any(target_os = "android", target_os = "ios", target_os = "macos"),
         not(feature = "ui-test")
@@ -362,6 +366,25 @@ pub fn App() -> Element {
                         clipboard_busy.set(false);
                     });
                 },
+                identity_copy_busy: *identity_copy_busy.read(),
+                identity_copy_succeeded: *identity_copy_succeeded.read(),
+                identity_copy_failure: identity_copy_failure.read().clone(),
+                identity_copy: move |value: String| {
+                    if *identity_copy_busy.read() {
+                        return;
+                    }
+                    identity_copy_busy.set(true);
+                    identity_copy_succeeded.set(false);
+                    identity_copy_failure.set(None);
+                    spawn(async move {
+                        let writer = platform::NativeClipboardTextWriter;
+                        match writer.write_clipboard_text(value).await {
+                            Ok(()) => identity_copy_succeeded.set(true),
+                            Err(error) => identity_copy_failure.set(Some(error.code)),
+                        }
+                        identity_copy_busy.set(false);
+                    });
+                },
                 application_settings_busy: *application_settings_busy.read(),
                 application_settings_failure: application_settings_failure.read().clone(),
                 open_application_settings: move |()| {
@@ -392,6 +415,25 @@ pub fn App() -> Element {
             fixture: bootstrap_fixture(),
             platform_snapshot: platform_snapshot.read().clone(),
             back_navigation: BackNavigation::web_history(),
+            identity_copy_busy: *identity_copy_busy.read(),
+            identity_copy_succeeded: *identity_copy_succeeded.read(),
+            identity_copy_failure: identity_copy_failure.read().clone(),
+            identity_copy: move |value: String| {
+                if *identity_copy_busy.read() {
+                    return;
+                }
+                identity_copy_busy.set(true);
+                identity_copy_succeeded.set(false);
+                identity_copy_failure.set(None);
+                spawn(async move {
+                    let writer = platform::NativeClipboardTextWriter;
+                    match writer.write_clipboard_text(value).await {
+                        Ok(()) => identity_copy_succeeded.set(true),
+                        Err(error) => identity_copy_failure.set(Some(error.code)),
+                    }
+                    identity_copy_busy.set(false);
+                });
+            },
         }
     }
 }
@@ -412,6 +454,10 @@ mod tests {
         include_str!("../../../tests/fixtures/mobile-application-parity-v1/README.md");
     const HANDOFF_PROVENANCE: &str =
         include_str!("../../../tests/fixtures/mobile-product-handoff-v1/README.md");
+    const INTEGRATION_CORPUS: &str =
+        include_str!("../../../tests/fixtures/mobile-integration-v1/corpus.json");
+    const INTEGRATION_PROVENANCE: &str =
+        include_str!("../../../tests/fixtures/mobile-integration-v1/README.md");
     const PARITY_CONTRACT: &str = include_str!("../../../docs/parity-corpus.md");
 
     #[test]
@@ -442,6 +488,19 @@ mod tests {
         assert_eq!(MOBILE_MANIFEST.matches(BACKEND_REVISION).count(), 4);
         assert!(FIXTURE_PROVENANCE.contains(MINIMUM_FIXTURE_REVISION));
         assert!(HANDOFF_PROVENANCE.contains(BACKEND_REVISION));
+        assert!(INTEGRATION_PROVENANCE.contains("0bcf5843208a9a2578836e26b4ac4e23a0f7b4e7"));
+        let integration: serde_json::Value =
+            serde_json::from_str(INTEGRATION_CORPUS).expect("integration corpus must deserialize");
+        let identity_case = integration["cases"]
+            .as_array()
+            .expect("integration corpus cases")
+            .iter()
+            .find(|case| case["id"] == "mobile.identity.copy-public-destination")
+            .expect("public destination case");
+        assert_eq!(
+            identity_case["actions"],
+            serde_json::json!(["open-identity", "copy-public-hash", "read-clipboard"])
+        );
         assert!(APPLICATION_PROVENANCE.contains("Source baseline revision:"));
         assert!(APPLICATION_PROVENANCE.contains("before using the UI copy as revision-locked"));
         assert!(PARITY_CONTRACT.contains("current integration baseline revision"));
