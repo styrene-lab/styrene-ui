@@ -15,7 +15,7 @@ use styrene_ipc::types::{
     MessageRetryIneligibilityReason as BackendRetryIneligibilityReason,
 };
 #[cfg(target_os = "ios")]
-use styrene_ui_platform::DeviceAuthenticationOutcome;
+use styrene_ui_platform::AppLockGateOutcome;
 use styrene_ui_platform::{AndroidUsbAttachment, OpaqueDocument};
 use styrene_ui_state::{
     Bearer, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
@@ -52,6 +52,8 @@ const SUBSCRIPTION_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
 pub struct MobileSession {
+    #[cfg(target_os = "ios")]
+    unlock_retries: Sender<()>,
     actions: Sender<MobileAction>,
     updates: Receiver<SessionView>,
     bootstrap_requests: Sender<BootstrapRequest>,
@@ -170,6 +172,8 @@ impl MobileSession {
         let (backup_exports, backup_export_receiver) = async_channel::bounded(1);
         #[cfg(target_os = "ios")]
         let (backend_node_sender, backend_nodes) = async_channel::bounded(1);
+        #[cfg(target_os = "ios")]
+        let (unlock_retries, unlock_retry_receiver) = async_channel::bounded(1);
         let startup_failures = update_sender.clone();
         if let Err(error) =
             thread::Builder::new().name("styrene-mobile-session".into()).spawn(move || {
@@ -182,6 +186,8 @@ impl MobileSession {
                     backup_export_receiver,
                     #[cfg(target_os = "ios")]
                     backend_node_sender,
+                    #[cfg(target_os = "ios")]
+                    unlock_retry_receiver,
                     update_sender,
                 );
             })
@@ -193,6 +199,8 @@ impl MobileSession {
             )));
         }
         Self {
+            #[cfg(target_os = "ios")]
+            unlock_retries,
             actions,
             updates,
             bootstrap_requests,
@@ -207,6 +215,15 @@ impl MobileSession {
 
     pub fn dispatch(&self, action: MobileAction) {
         let _ = self.actions.try_send(action);
+    }
+
+    /// Request another App Lock authentication after a closed outcome.
+    ///
+    /// Only the startup owner decides whether a prompt is still required; a
+    /// retry never bypasses the persisted policy.
+    #[cfg(target_os = "ios")]
+    pub fn retry_app_unlock(&self) {
+        let _ = self.unlock_retries.try_send(());
     }
 
     pub async fn next_update(&self) -> Option<SessionView> {
@@ -337,28 +354,12 @@ fn run_owner(
     usb_probes: Receiver<UsbProbeRequest>,
     backup_exports: Receiver<BackupExportRequest>,
     #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
+    #[cfg(target_os = "ios")] unlock_retries: Receiver<()>,
     updates: Sender<SessionView>,
 ) {
     #[cfg(target_os = "ios")]
-    {
-        if styrene_ui_apple_bridge::app_lock_requires_authentication() {
-            let _ = updates.force_send(authenticating_update());
-            let outcome = styrene_ui_apple_bridge::authenticate_device_owner(
-                "unlock your private mesh communications",
-            );
-            if outcome != DeviceAuthenticationOutcome::Authenticated {
-                let code = match outcome {
-                    DeviceAuthenticationOutcome::Cancelled => "app_unlock_cancelled",
-                    DeviceAuthenticationOutcome::Unavailable => "app_unlock_unavailable",
-                    DeviceAuthenticationOutcome::Failed => "app_unlock_failed",
-                    DeviceAuthenticationOutcome::Authenticated => unreachable!(),
-                };
-                let _ =
-                    updates.force_send(SessionView::Failed(failed_update(1, code, String::new())));
-                return;
-            }
-            styrene_ui_apple_bridge::record_app_lock_authentication();
-        }
+    if !gate_app_lock(&unlock_retries, &updates) {
+        return;
     }
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(runtime) => runtime,
@@ -382,6 +383,35 @@ fn run_owner(
         backend_nodes,
         updates,
     ));
+}
+
+/// Gate private startup behind the persisted App Lock policy.
+///
+/// Returns `true` once the gate opened. Every closed outcome publishes a typed,
+/// retryable failure and waits for an explicit retry request. Dropping the
+/// retry sender ends the session without starting the private backend.
+#[cfg(target_os = "ios")]
+fn gate_app_lock(unlock_retries: &Receiver<()>, updates: &Sender<SessionView>) -> bool {
+    const REASON: &str = "unlock your private mesh communications";
+    let mut authenticator = styrene_ui_apple_bridge::LocalAuthenticationAuthenticator;
+    loop {
+        if styrene_ui_apple_bridge::app_lock_requires_authentication() {
+            let _ = updates.force_send(authenticating_update());
+        }
+        match styrene_ui_apple_bridge::gate_app_lock(&mut authenticator, REASON) {
+            AppLockGateOutcome::Opened(_) => return true,
+            AppLockGateOutcome::Closed(failure) => {
+                let _ = updates.force_send(SessionView::Failed(failed_update(
+                    1,
+                    failure.code(),
+                    String::new(),
+                )));
+                if unlock_retries.recv_blocking().is_err() {
+                    return false;
+                }
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "ios")]

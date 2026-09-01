@@ -9,7 +9,7 @@ use styrene_ui_platform::{
     BleAdapterState, BleControlDisabledReason, BleControlFailure, BleControlPhase, BleControlState,
     BlePeripheralId, Contrast, KeyboardGeometry, MAX_QR_ENCODED_IMAGE_BYTES, MotionPreference,
     PermissionKind, PlatformInsets, PlatformSnapshot, TextAcquisitionFailure, TextScale,
-    WindowClass,
+    WindowClass, is_app_lock_failure_code,
 };
 use styrene_ui_state::{
     BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
@@ -577,6 +577,7 @@ pub fn MobileShell(
     #[props(default)] open_application_settings: Option<EventHandler<()>>,
     #[props(default)] app_lock_policy: Option<AppLockPolicy>,
     #[props(default)] app_lock_policy_change: Option<EventHandler<AppLockPolicy>>,
+    #[props(default)] app_unlock_retry: Option<EventHandler<()>>,
 ) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let store = MobileStore::new(fixture.clone());
@@ -762,7 +763,22 @@ pub fn MobileShell(
                     "aria-live": "polite",
                     "data-code": failure.code.clone(),
                     "data-retryable": failure.retryable.to_string(),
-                    if fixture.session.phase == SessionPhase::Failed {
+                    if is_app_lock_failure_code(&failure.code) {
+                        p { "App Lock did not unlock this session. Identity custody was not changed." }
+                        button {
+                            id: "mobile.app-unlock-retry",
+                            class: "primary-action",
+                            r#type: "button",
+                            disabled: app_unlock_retry.is_none(),
+                            "aria-describedby": "mobile.session-failure",
+                            onclick: move |_| {
+                                if let Some(handler) = app_unlock_retry {
+                                    handler.call(());
+                                }
+                            },
+                            "Retry unlock"
+                        }
+                    } else if fixture.session.phase == SessionPhase::Failed {
                         p { "Session unavailable. Open Network to review connection settings." }
                     } else {
                         p { "The last operation failed. Current session state is unchanged." }
@@ -1413,12 +1429,13 @@ pub fn MobileShell(
                         id: "mobile.app-lock",
                         class: "surface-card settings-card",
                         h3 { "App Lock" }
-                        p { class: "field-hint", "Controls access to the app. Identity custody remains protected separately by the iOS Keychain." }
+                        p { id: "mobile.app-lock-custody", class: "field-hint", "Controls access to the app. Identity custody remains protected separately by the iOS Keychain." }
                         label { r#for: "mobile.app-lock-policy", "Require Face ID or device passcode" }
                         select {
                             id: "mobile.app-lock-policy",
                             value: policy.as_str(),
                             disabled: app_lock_policy_change.is_none(),
+                            "aria-describedby": if app_lock_policy_change.is_none() { "mobile.app-lock-custody mobile.app-lock-disabled" } else { "mobile.app-lock-custody" },
                             onchange: move |event| {
                                 if let Some(policy) = AppLockPolicy::parse(&event.value())
                                     && let Some(handler) = app_lock_policy_change
@@ -1426,9 +1443,12 @@ pub fn MobileShell(
                                     handler.call(policy);
                                 }
                             },
-                            option { value: AppLockPolicy::EveryLaunch.as_str(), "Every app launch" }
-                            option { value: AppLockPolicy::OncePerBoot.as_str(), "Once after device reboot" }
-                            option { value: AppLockPolicy::Off.as_str(), "Off" }
+                            option { value: AppLockPolicy::EveryLaunch.as_str(), selected: policy == AppLockPolicy::EveryLaunch, "Every app launch" }
+                            option { value: AppLockPolicy::OncePerBoot.as_str(), selected: policy == AppLockPolicy::OncePerBoot, "Once after device reboot" }
+                            option { value: AppLockPolicy::Off.as_str(), selected: policy == AppLockPolicy::Off, "Off" }
+                        }
+                        if app_lock_policy_change.is_none() {
+                            p { id: "mobile.app-lock-disabled", class: "field-hint", role: "status", "App Lock policy cannot be changed in this view." }
                         }
                         p { class: "field-hint", "A system passcode is the fallback when Face ID is unavailable." }
                     }
