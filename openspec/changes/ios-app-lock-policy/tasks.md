@@ -35,4 +35,4 @@
 - [x] Retain the signed-build observations for fresh setup, one default cold launch, and one same-boot once-per-boot relaunch from UI PR #12
 - [ ] Verify same-process retry, post-reboot once-per-boot, `Off`, cancellation, unavailable authentication, and failed authentication on an iPhone
 - [ ] Record App Lock and any independent Keychain prompts as separate observations
-- [ ] Run formatting, focused tests, warning-denied iPhoneOS Clippy, OpenSpec validation, and clean package checks
+- [x] Run formatting, focused tests, warning-denied iPhoneOS Clippy, OpenSpec validation, and clean package checks
