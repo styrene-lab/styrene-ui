@@ -7,7 +7,8 @@ use styrene_ui_platform::ClipboardTextWriter;
 ))]
 use styrene_ui_platform::{
     AndroidUsbAttachment, ApplicationSettingsService, AuthorizationState, BleControlPhase,
-    BleControlState, ClipboardTextReader, TextAcquisitionGeneration,
+    BleControlState, ClipboardTextReader, DocumentRequestGeneration, DocumentShareFailure,
+    DocumentShareOutcome, OpaqueDocumentSharer, TextAcquisitionGeneration,
 };
 #[cfg(all(
     not(target_os = "ios"),
@@ -15,7 +16,9 @@ use styrene_ui_platform::{
     not(feature = "ui-test")
 ))]
 use styrene_ui_platform::{BleAdapterState, BleControlFailure, PermissionKind};
-use styrene_ui_state::TargetClass;
+use styrene_ui_state::{
+    IdentityRecoveryFailure, IdentityRecoveryPhase, IdentityRecoveryState, TargetClass,
+};
 #[cfg(any(
     test,
     feature = "ui-test",
@@ -102,6 +105,7 @@ pub fn App() -> Element {
     let platform_snapshot = platform::use_platform_snapshot();
     let mut identity_copy_busy = use_signal(|| false);
     let mut identity_copy_completion = use_signal(|| None::<IdentityCopyCompletion>);
+    let mut identity_recovery = use_signal(IdentityRecoveryState::default);
     #[cfg(all(
         any(target_os = "android", target_os = "ios", target_os = "macos"),
         not(feature = "ui-test")
@@ -406,6 +410,77 @@ pub fn App() -> Element {
                             failure,
                         }));
                         identity_copy_busy.set(false);
+                    });
+                },
+                identity_recovery: *identity_recovery.read(),
+                identity_backup: move |protection| {
+                    if matches!(
+                        identity_recovery.read().phase,
+                        IdentityRecoveryPhase::Exporting | IdentityRecoveryPhase::Sharing
+                    ) {
+                        return;
+                    }
+                    identity_recovery.set(IdentityRecoveryState {
+                        phase: IdentityRecoveryPhase::Exporting,
+                        failure: None,
+                        restore_available: false,
+                    });
+                    let session = session.read().clone();
+                    spawn(async move {
+                        let document = match session
+                            .export_portable_identity_backup(current_generation, protection)
+                            .await
+                        {
+                            Ok(document) => document,
+                            Err(failure) => {
+                                if update.read().fixture.generation != current_generation {
+                                    return;
+                                }
+                                identity_recovery.set(IdentityRecoveryState {
+                                    phase: IdentityRecoveryPhase::Idle,
+                                    failure: Some(failure),
+                                    restore_available: false,
+                                });
+                                return;
+                            }
+                        };
+                        if update.read().fixture.generation != current_generation {
+                            return;
+                        }
+                        identity_recovery.set(IdentityRecoveryState {
+                            phase: IdentityRecoveryPhase::Sharing,
+                            failure: None,
+                            restore_available: false,
+                        });
+                        let generation = DocumentRequestGeneration::new(current_generation);
+                        let sharer = platform::NativeOpaqueDocumentSharer;
+                        let completion = sharer.present_document_share(generation, document).await;
+                        if update.read().fixture.generation != current_generation {
+                            return;
+                        }
+                        let state = match completion.into_result_for(generation) {
+                            Some(Ok(DocumentShareOutcome::Presented)) => IdentityRecoveryState {
+                                phase: IdentityRecoveryPhase::SharePresented,
+                                failure: None,
+                                restore_available: false,
+                            },
+                            Some(Err(DocumentShareFailure::Unavailable)) => IdentityRecoveryState {
+                                phase: IdentityRecoveryPhase::Idle,
+                                failure: Some(IdentityRecoveryFailure::ShareUnavailable),
+                                restore_available: false,
+                            },
+                            Some(Err(DocumentShareFailure::PresentationFailed)) => {
+                                IdentityRecoveryState {
+                                    phase: IdentityRecoveryPhase::Idle,
+                                    failure: Some(
+                                        IdentityRecoveryFailure::SharePresentationFailed,
+                                    ),
+                                    restore_available: false,
+                                }
+                            }
+                            None => return,
+                        };
+                        identity_recovery.set(state);
                     });
                 },
                 application_settings_busy: *application_settings_busy.read(),

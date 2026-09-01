@@ -14,28 +14,30 @@ use styrene_ipc::types::{
     IdentityCustodyProtection as BackendCustodyProtection, MessageInfo, MessageLifecycleState,
     MessageRetryIneligibilityReason as BackendRetryIneligibilityReason,
 };
-use styrene_ui_platform::AndroidUsbAttachment;
+use styrene_ui_platform::{AndroidUsbAttachment, OpaqueDocument};
 use styrene_ui_state::{
     Bearer, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
-    ExpectedProjection, IdentityCustody, IdentityCustodyAuthentication,
+    ExpectedProjection, IdentityBackupProtection, IdentityCustody, IdentityCustodyAuthentication,
     IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
-    IdentityCustodyProtection, Message, MessageAttachment, MessageAttachmentTransfer,
-    MessageAttempt, MessageAuthentication, MessageDeliveryKind, MessageDeliveryObservation,
-    MessageDeliveryState, MessageDetails, MessageInterfaceObservation, MessageLifecycle,
-    MessagePropagationCorrelation, MessageRetryIneligibilityReason, MessageRouteObservation,
-    MessageRouteOutcome, MessageStampState, MobileAction, MobileActionKind, MobileFixture, Peer,
-    PeerSource, PersistenceState, Profile, Propagation, PropagationCandidate, PropagationEvidence,
-    PropagationPolicy, PropagationProgress, PropagationReadiness, PropagationSynchronization,
-    PropagationTerminalOutcome, PropagationTriggerSource, PropagationUpdate, Session, SessionPhase,
-    SessionRuntime, SyncState, TransportEvidence, TypedFailure,
+    IdentityCustodyProtection, IdentityRecoveryFailure, Message, MessageAttachment,
+    MessageAttachmentTransfer, MessageAttempt, MessageAuthentication, MessageDeliveryKind,
+    MessageDeliveryObservation, MessageDeliveryState, MessageDetails, MessageInterfaceObservation,
+    MessageLifecycle, MessagePropagationCorrelation, MessageRetryIneligibilityReason,
+    MessageRouteObservation, MessageRouteOutcome, MessageStampState, MobileAction,
+    MobileActionKind, MobileFixture, Peer, PeerSource, PersistenceState, Profile, Propagation,
+    PropagationCandidate, PropagationEvidence, PropagationPolicy, PropagationProgress,
+    PropagationReadiness, PropagationSynchronization, PropagationTerminalOutcome,
+    PropagationTriggerSource, PropagationUpdate, Session, SessionPhase, SessionRuntime, SyncState,
+    TransportEvidence, TypedFailure,
 };
 use styrened::mobile::{
     IdentityBackend, MobileBearerKind, MobileBearerReason, MobileBearerState, MobileConfig,
-    MobileConnectionPhase, MobileDeliveryMethod, MobileInterfaceConfig, MobileNode,
-    MobilePeerAspect, MobilePropagationReadiness, MobilePropagationSnapshot,
-    MobilePropagationSyncState, MobilePropagationTerminalOutcome, MobilePropagationTriggerSource,
-    MobileRuntimeState, MobileSendRequest, MobileStateEvent, MobileStateSubscription,
-    MobileStateSubscriptionError, MobileUsbFallbackDisposition, persist_mobile_tcp_endpoint,
+    MobileConnectionPhase, MobileDeliveryMethod, MobileIdentityRecoveryError,
+    MobileInterfaceConfig, MobileNode, MobilePeerAspect, MobilePropagationReadiness,
+    MobilePropagationSnapshot, MobilePropagationSyncState, MobilePropagationTerminalOutcome,
+    MobilePropagationTriggerSource, MobileRuntimeState, MobileSendRequest, MobileStateEvent,
+    MobileStateSubscription, MobileStateSubscriptionError, MobileUsbFallbackDisposition,
+    persist_mobile_tcp_endpoint,
 };
 #[cfg(target_os = "android")]
 use styrened::mobile::{
@@ -53,6 +55,7 @@ pub struct MobileSession {
     usb_fallbacks: Sender<UsbFallbackRequest>,
     usb_connections: Sender<UsbConnectionRequest>,
     usb_probes: Sender<UsbProbeRequest>,
+    backup_exports: Sender<BackupExportRequest>,
     #[cfg(target_os = "ios")]
     backend_nodes: Receiver<Arc<MobileNode>>,
 }
@@ -86,6 +89,18 @@ struct UsbProbeRequest {
     response: Sender<Result<AndroidUsbProbeOutcome, String>>,
 }
 
+struct BackupExportRequest {
+    generation: u64,
+    protection: Vec<u8>,
+    response: Sender<Result<OpaqueDocument, IdentityRecoveryFailure>>,
+}
+
+impl Drop for BackupExportRequest {
+    fn drop(&mut self) {
+        self.protection.fill(0);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AndroidUsbProbeOutcome {
     pub frame_bytes: usize,
@@ -111,6 +126,7 @@ impl MobileSession {
         let (usb_fallbacks, usb_fallback_receiver) = async_channel::bounded(1);
         let (usb_connections, usb_connection_receiver) = async_channel::bounded(1);
         let (usb_probes, usb_probe_receiver) = async_channel::bounded(1);
+        let (backup_exports, backup_export_receiver) = async_channel::bounded(1);
         #[cfg(target_os = "ios")]
         let (backend_node_sender, backend_nodes) = async_channel::bounded(1);
         let startup_failures = update_sender.clone();
@@ -121,6 +137,7 @@ impl MobileSession {
                     usb_fallback_receiver,
                     usb_connection_receiver,
                     usb_probe_receiver,
+                    backup_export_receiver,
                     #[cfg(target_os = "ios")]
                     backend_node_sender,
                     update_sender,
@@ -139,6 +156,7 @@ impl MobileSession {
             usb_fallbacks,
             usb_connections,
             usb_probes,
+            backup_exports,
             #[cfg(target_os = "ios")]
             backend_nodes,
         }
@@ -209,6 +227,19 @@ impl MobileSession {
             .map_err(|_| "mobile session closed the USB probe request".to_string())?
     }
 
+    pub async fn export_portable_identity_backup(
+        &self,
+        generation: u64,
+        protection: IdentityBackupProtection,
+    ) -> Result<OpaqueDocument, IdentityRecoveryFailure> {
+        let (response, result) = async_channel::bounded(1);
+        self.backup_exports
+            .send(BackupExportRequest { generation, protection: protection.into_bytes(), response })
+            .await
+            .map_err(|_| IdentityRecoveryFailure::SessionUnavailable)?;
+        result.recv().await.map_err(|_| IdentityRecoveryFailure::SessionUnavailable)?
+    }
+
     #[cfg(target_os = "ios")]
     pub async fn backend_node(&self) -> Result<Arc<MobileNode>, String> {
         self.backend_nodes
@@ -232,6 +263,7 @@ fn run_owner(
     usb_fallbacks: Receiver<UsbFallbackRequest>,
     usb_connections: Receiver<UsbConnectionRequest>,
     usb_probes: Receiver<UsbProbeRequest>,
+    backup_exports: Receiver<BackupExportRequest>,
     #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
     updates: Sender<SessionUpdate>,
 ) {
@@ -247,6 +279,7 @@ fn run_owner(
         usb_fallbacks,
         usb_connections,
         usb_probes,
+        backup_exports,
         #[cfg(target_os = "ios")]
         backend_nodes,
         updates,
@@ -258,6 +291,7 @@ async fn owner_loop(
     usb_fallbacks: Receiver<UsbFallbackRequest>,
     usb_connections: Receiver<UsbConnectionRequest>,
     usb_probes: Receiver<UsbProbeRequest>,
+    backup_exports: Receiver<BackupExportRequest>,
     #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
     updates: Sender<SessionUpdate>,
 ) {
@@ -336,6 +370,13 @@ async fn owner_loop(
                     let _ = request.response.try_send(Err("Android USB is not active".into()));
                 }
             }
+            request = backup_exports.recv(), if !backup_exports.is_closed() => {
+                let Ok(request) = request else {
+                    continue;
+                };
+                let result = owner.export_identity_backup(request.generation, &request.protection).await;
+                let _ = request.response.try_send(result);
+            }
             action = actions.recv() => {
                 let Ok(action) = action else {
                     owner.stop_usb_worker().await;
@@ -350,7 +391,49 @@ async fn owner_loop(
     }
 }
 
+const fn identity_recovery_failure(error: MobileIdentityRecoveryError) -> IdentityRecoveryFailure {
+    match error {
+        MobileIdentityRecoveryError::ProtectionRequired => {
+            IdentityRecoveryFailure::ProtectionRequired
+        }
+        MobileIdentityRecoveryError::ProtectionTooLarge => {
+            IdentityRecoveryFailure::ProtectionTooLarge
+        }
+        MobileIdentityRecoveryError::ArtifactTooLarge => IdentityRecoveryFailure::ArtifactTooLarge,
+        MobileIdentityRecoveryError::InvalidBackup => IdentityRecoveryFailure::InvalidBackup,
+        MobileIdentityRecoveryError::AuthenticationFailed => {
+            IdentityRecoveryFailure::AuthenticationFailed
+        }
+        MobileIdentityRecoveryError::CustodyUnavailable => {
+            IdentityRecoveryFailure::CustodyUnavailable
+        }
+        MobileIdentityRecoveryError::IdentityConflict => IdentityRecoveryFailure::IdentityConflict,
+        MobileIdentityRecoveryError::UnsupportedBackend => {
+            IdentityRecoveryFailure::UnsupportedBackend
+        }
+    }
+}
+
 impl SessionOwner {
+    async fn export_identity_backup(
+        &self,
+        generation: u64,
+        protection: &[u8],
+    ) -> Result<OpaqueDocument, IdentityRecoveryFailure> {
+        if generation == self.generation {
+            self.node
+                .export_portable_identity_backup(protection)
+                .await
+                .map_err(identity_recovery_failure)
+                .and_then(|export| {
+                    OpaqueDocument::new(export.encrypted_bytes)
+                        .map_err(|_| IdentityRecoveryFailure::ArtifactTooLarge)
+                })
+        } else {
+            Err(IdentityRecoveryFailure::SessionUnavailable)
+        }
+    }
+
     async fn report_usb_denied(&mut self) -> Result<(), String> {
         self.stop_usb_worker().await;
         self.node

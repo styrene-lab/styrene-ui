@@ -2,11 +2,13 @@ use dioxus::prelude::*;
 use serde::Deserialize;
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
-    AuthorizationState, ClipboardTextReader, ClipboardTextWriter, Contrast, KeyboardGeometry,
-    MotionPreference, PermissionKind, PermissionStatus, PlatformApplyResult, PlatformChange,
-    PlatformEvent, PlatformEventStream, PlatformFailure, PlatformFuture, PlatformGeometry,
-    PlatformInsets, PlatformService, PlatformSnapshot, PlatformState, TextAcquisitionCompletion,
-    TextAcquisitionGeneration, TextScale, WindowClass, WindowMetrics,
+    AuthorizationState, ClipboardTextReader, ClipboardTextWriter, Contrast,
+    DocumentRequestGeneration, DocumentShareCompletion, DocumentShareFailure, KeyboardGeometry,
+    MotionPreference, OpaqueDocument, OpaqueDocumentSharer, PermissionKind, PermissionStatus,
+    PlatformApplyResult, PlatformChange, PlatformEvent, PlatformEventStream, PlatformFailure,
+    PlatformFuture, PlatformGeometry, PlatformInsets, PlatformService, PlatformSnapshot,
+    PlatformState, TextAcquisitionCompletion, TextAcquisitionGeneration, TextScale, WindowClass,
+    WindowMetrics,
 };
 
 #[cfg(any(test, target_os = "android"))]
@@ -1335,6 +1337,61 @@ pub struct NativeApplicationSettingsService;
 impl styrene_ui_platform::ApplicationSettingsService for NativeApplicationSettingsService {
     fn open_application_settings(&self) -> PlatformFuture<'_, Result<(), PlatformFailure>> {
         Box::pin(async move { native_platform::open_application_settings().await })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeOpaqueDocumentSharer;
+
+impl OpaqueDocumentSharer for NativeOpaqueDocumentSharer {
+    fn present_document_share(
+        &self,
+        generation: DocumentRequestGeneration,
+        document: OpaqueDocument,
+    ) -> PlatformFuture<'_, DocumentShareCompletion> {
+        Box::pin(async move {
+            #[cfg(target_os = "ios")]
+            let result = {
+                let map_error = |error| match error {
+                    styrene_ui_apple_bridge::NativeBridgeFailure::MainThreadUnavailable
+                    | styrene_ui_apple_bridge::NativeBridgeFailure::PresentationUnavailable => {
+                        DocumentShareFailure::Unavailable
+                    }
+                    styrene_ui_apple_bridge::NativeBridgeFailure::MediaTypeUnavailable
+                    | styrene_ui_apple_bridge::NativeBridgeFailure::Oversized
+                    | styrene_ui_apple_bridge::NativeBridgeFailure::WriteFailed => {
+                        DocumentShareFailure::PresentationFailed
+                    }
+                };
+                let (presented, presentation) = async_channel::bounded(1);
+                match styrene_ui_apple_bridge::present_identity_backup(
+                    document.as_bytes(),
+                    move || {
+                        let _ = presented.force_send(());
+                    },
+                ) {
+                    Ok(()) => match tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        presentation.recv(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => Ok(styrene_ui_platform::DocumentShareOutcome::Presented),
+                        Ok(Err(_)) | Err(_) => {
+                            let _ = styrene_ui_apple_bridge::remove_identity_backup_temp_file();
+                            Err(DocumentShareFailure::PresentationFailed)
+                        }
+                    },
+                    Err(error) => Err(map_error(error)),
+                }
+            };
+            #[cfg(not(target_os = "ios"))]
+            let result = {
+                let _ = document;
+                Err(DocumentShareFailure::Unavailable)
+            };
+            DocumentShareCompletion { generation, result }
+        })
     }
 }
 

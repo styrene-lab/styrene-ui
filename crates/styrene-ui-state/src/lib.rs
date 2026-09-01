@@ -1,6 +1,119 @@
 //! Renderer-neutral presentation state for Styrene Dioxus applications.
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
+
+pub const MAX_IDENTITY_BACKUP_PROTECTION_BYTES: usize = 1024;
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct IdentityBackupProtection(Vec<u8>);
+
+impl IdentityBackupProtection {
+    /// Create one bounded protection input for an identity recovery operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IdentityRecoveryFailure::ProtectionRequired`] for an empty
+    /// value and [`IdentityRecoveryFailure::ProtectionTooLarge`] when the UTF-8
+    /// bytes exceed [`MAX_IDENTITY_BACKUP_PROTECTION_BYTES`].
+    pub fn new(value: String) -> Result<Self, IdentityRecoveryFailure> {
+        if value.is_empty() {
+            return Err(IdentityRecoveryFailure::ProtectionRequired);
+        }
+        if value.len() > MAX_IDENTITY_BACKUP_PROTECTION_BYTES {
+            return Err(IdentityRecoveryFailure::ProtectionTooLarge);
+        }
+        Ok(Self(value.into_bytes()))
+    }
+
+    #[must_use]
+    pub fn into_bytes(mut self) -> Vec<u8> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Drop for IdentityBackupProtection {
+    fn drop(&mut self) {
+        self.0.fill(0);
+    }
+}
+
+impl fmt::Debug for IdentityBackupProtection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IdentityBackupProtection")
+            .field("bytes", &"[REDACTED]")
+            .field("len", &self.0.len())
+            .finish()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IdentityRecoveryPhase {
+    Idle,
+    Exporting,
+    Sharing,
+    SharePresented,
+    Selecting,
+    Restoring,
+    Restored,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum IdentityRecoveryFailure {
+    ProtectionRequired,
+    ProtectionMismatch,
+    ProtectionTooLarge,
+    ArtifactTooLarge,
+    InvalidBackup,
+    AuthenticationFailed,
+    CustodyUnavailable,
+    IdentityConflict,
+    UnsupportedBackend,
+    PickerCancelled,
+    PickerUnavailable,
+    PickerReadFailed,
+    ShareUnavailable,
+    SharePresentationFailed,
+    SessionUnavailable,
+}
+
+impl IdentityRecoveryFailure {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::ProtectionRequired => "protection_required",
+            Self::ProtectionMismatch => "protection_mismatch",
+            Self::ProtectionTooLarge => "protection_too_large",
+            Self::ArtifactTooLarge => "artifact_too_large",
+            Self::InvalidBackup => "invalid_backup",
+            Self::AuthenticationFailed => "authentication_failed",
+            Self::CustodyUnavailable => "custody_unavailable",
+            Self::IdentityConflict => "identity_conflict",
+            Self::UnsupportedBackend => "unsupported_backend",
+            Self::PickerCancelled => "picker_cancelled",
+            Self::PickerUnavailable => "picker_unavailable",
+            Self::PickerReadFailed => "picker_read_failed",
+            Self::ShareUnavailable => "share_unavailable",
+            Self::SharePresentationFailed => "share_presentation_failed",
+            Self::SessionUnavailable => "session_unavailable",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IdentityRecoveryState {
+    pub phase: IdentityRecoveryPhase,
+    pub failure: Option<IdentityRecoveryFailure>,
+    pub restore_available: bool,
+}
+
+impl Default for IdentityRecoveryState {
+    fn default() -> Self {
+        Self { phase: IdentityRecoveryPhase::Idle, failure: None, restore_available: false }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

@@ -34,6 +34,8 @@ pub enum NativeBridgeFailure {
     MediaTypeUnavailable,
     MainThreadUnavailable,
     Oversized,
+    WriteFailed,
+    PresentationUnavailable,
 }
 
 #[cfg(target_os = "ios")]
@@ -43,18 +45,22 @@ mod ios {
 
     use block2::RcBlock;
     use objc2::rc::Retained;
-    use objc2::runtime::{Bool, ProtocolObject};
-    use objc2::{AnyThread, DefinedClass, MainThreadMarker, define_class, msg_send};
+    use objc2::runtime::{AnyObject, Bool, ProtocolObject};
+    use objc2::{
+        AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send,
+    };
     use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeVideo};
     use objc2_core_bluetooth::{
         CBCentralManager, CBCentralManagerDelegate, CBManager, CBManagerAuthorization,
     };
     use objc2_foundation::{
-        NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSString, NSURL,
+        NSArray, NSData, NSError, NSFileManager, NSNotification, NSNotificationCenter, NSObject,
+        NSObjectProtocol, NSString, NSURL,
     };
     use objc2_ui_kit::{
-        UIApplication, UIApplicationOpenSettingsURLString,
-        UIContentSizeCategoryDidChangeNotification, UIPasteboard,
+        UIActivityType, UIActivityViewController, UIApplication,
+        UIApplicationOpenSettingsURLString, UIContentSizeCategoryDidChangeNotification,
+        UIPasteboard,
     };
     use objc2_user_notifications::{
         UNAuthorizationStatus, UNNotificationSettings, UNUserNotificationCenter,
@@ -143,6 +149,84 @@ mod ios {
             NSURL::URLWithString(settings_url).ok_or(NativeBridgeFailure::MediaTypeUnavailable)?;
         #[allow(deprecated)]
         Ok(UIApplication::sharedApplication(marker).openURL(&url))
+    }
+
+    /// Present an opaque encrypted identity artifact through the iOS share sheet.
+    pub fn present_identity_backup<F>(bytes: &[u8], presented: F) -> Result<(), NativeBridgeFailure>
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
+        let marker = MainThreadMarker::new().ok_or(NativeBridgeFailure::MainThreadUnavailable)?;
+        let filename = NSString::from_str("styrene-identity-backup.stid");
+        let file_manager = NSFileManager::defaultManager();
+        let url = file_manager
+            .temporaryDirectory()
+            .URLByAppendingPathComponent(&filename)
+            .ok_or(NativeBridgeFailure::WriteFailed)?;
+        let _ = file_manager.removeItemAtURL_error(&url);
+        // SAFETY: `bytes` remains valid for this call and NSData copies the
+        // complete bounded slice before the function continues.
+        let data = unsafe { NSData::dataWithBytes_length(bytes.as_ptr().cast(), bytes.len()) };
+        if !data.writeToURL_atomically(&url, true) {
+            return Err(NativeBridgeFailure::WriteFailed);
+        }
+
+        #[allow(deprecated)]
+        let Some(window) = UIApplication::sharedApplication(marker).keyWindow() else {
+            let _ = file_manager.removeItemAtURL_error(&url);
+            return Err(NativeBridgeFailure::PresentationUnavailable);
+        };
+        let mut presenter =
+            window.rootViewController().ok_or(NativeBridgeFailure::PresentationUnavailable)?;
+        while let Some(presented) = presenter.presentedViewController() {
+            presenter = presented;
+        }
+        // SAFETY: NSURL is an Objective-C object and UIActivityViewController
+        // accepts heterogeneous Objective-C activity items.
+        let activity_item = unsafe { Retained::<NSURL>::cast_unchecked::<AnyObject>(url.clone()) };
+        let items = NSArray::from_slice(&[&*activity_item]);
+        // SAFETY: The activity item is a retained file URL and no custom
+        // activities are supplied. UIKit retains the controller while shown.
+        let controller = unsafe {
+            UIActivityViewController::initWithActivityItems_applicationActivities(
+                UIActivityViewController::alloc(marker),
+                &items,
+                None,
+            )
+        };
+        let cleanup_url = url.clone();
+        let cleanup = RcBlock::new(
+            move |_: *mut UIActivityType, _: Bool, _: *mut NSArray, _: *mut NSError| {
+                let _ = NSFileManager::defaultManager().removeItemAtURL_error(&cleanup_url);
+            },
+        );
+        // SAFETY: The block signature exactly matches UIKit's completion type.
+        // UIKit copies the block and invokes it after the share sheet closes.
+        unsafe {
+            controller.setCompletionWithItemsHandler(
+                (&*cleanup as *const block2::DynBlock<_>).cast_mut(),
+            );
+        }
+        if let Some(popover) = controller.popoverPresentationController()
+            && let Some(view) = presenter.view()
+        {
+            popover.setSourceView(Some(&view));
+            popover.setSourceRect(view.bounds());
+        }
+        let presentation = RcBlock::new(move || presented());
+        presenter.presentViewController_animated_completion(&controller, true, Some(&presentation));
+        Ok(())
+    }
+
+    pub fn remove_identity_backup_temp_file() -> Result<(), NativeBridgeFailure> {
+        let filename = NSString::from_str("styrene-identity-backup.stid");
+        let file_manager = NSFileManager::defaultManager();
+        let url = file_manager
+            .temporaryDirectory()
+            .URLByAppendingPathComponent(&filename)
+            .ok_or(NativeBridgeFailure::WriteFailed)?;
+        let _ = file_manager.removeItemAtURL_error(&url);
+        Ok(())
     }
 
     pub fn camera_authorization() -> NativeAuthorization {
@@ -278,8 +362,8 @@ pub use ios::BluetoothAuthorizationRequest;
 #[cfg(target_os = "ios")]
 pub use ios::{
     bluetooth_authorization, camera_authorization, clipboard_text, install_content_size_observer,
-    open_application_settings, query_notification_authorization, request_bluetooth, request_camera,
-    set_clipboard_text,
+    open_application_settings, present_identity_backup, query_notification_authorization,
+    remove_identity_backup_temp_file, request_bluetooth, request_camera, set_clipboard_text,
 };
 
 #[cfg(not(target_os = "ios"))]

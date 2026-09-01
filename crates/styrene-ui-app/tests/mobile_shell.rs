@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use styrene_ui_app::{
-    BackNavigation, Composer, IdentityQrCode, LocalAnnounceStatus, MobileShell, NewMessageForm,
-    PropagationPanel,
+    BackNavigation, Composer, IdentityQrCode, IdentityRecoveryPanel, LocalAnnounceStatus,
+    MobileShell, NewMessageForm, PropagationPanel,
 };
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
@@ -13,10 +13,11 @@ use styrene_ui_platform::{
 use styrene_ui_state::{
     ApplyResult, BearerState, Conversation, IdentityCustody, IdentityCustodyAuthentication,
     IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
-    IdentityCustodyProtection, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
-    MobileStore, PropagationCandidate, PropagationPolicy, PropagationProgress,
-    PropagationSynchronization, PropagationTerminalOutcome, PropagationTriggerSource,
-    PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState, TargetClass, TypedFailure,
+    IdentityCustodyProtection, IdentityRecoveryFailure, IdentityRecoveryPhase,
+    IdentityRecoveryState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus, MobileStore,
+    PropagationCandidate, PropagationPolicy, PropagationProgress, PropagationSynchronization,
+    PropagationTerminalOutcome, PropagationTriggerSource, PropagationUpdate, RuntimeBoundary,
+    SessionPhase, SyncState, TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -57,6 +58,23 @@ fn IdentityShell(
 
 fn render_identity_actions(fixture: MobileFixture) -> String {
     dioxus_ssr::render_element(rsx! { IdentityShell { fixture } })
+}
+
+#[component]
+fn RecoveryShell(state: IdentityRecoveryState) -> Element {
+    rsx! {
+        IdentityRecoveryPanel {
+            state,
+            enabled: true,
+            backup: move |_protection| {},
+            restore_select: move |()| {},
+            restore: move |_protection| {},
+        }
+    }
+}
+
+fn render_recovery(state: IdentityRecoveryState) -> String {
+    dioxus_ssr::render_element(rsx! { RecoveryShell { state } })
 }
 
 #[component]
@@ -417,6 +435,50 @@ fn public_identity_actions_are_unavailable_without_a_backend_destination() {
     assert!(opening_tag_with_id(&markup, "mobile.identity-show-qr").contains("disabled"));
     assert!(markup.contains("Public destination is not available yet."));
     assert!(!markup.contains("id=\"mobile.identity-qr\""));
+}
+
+#[test]
+fn encrypted_recovery_uses_password_inputs_and_safe_presentation_state() {
+    let marker = "never-render-this-passphrase";
+    let markup = render_recovery(IdentityRecoveryState::default());
+
+    assert!(markup.contains("id=\"mobile.identity-recovery\""));
+    assert!(markup.contains("id=\"mobile.identity-backup-protection\""));
+    assert!(markup.contains("type=\"password\""));
+    assert!(markup.contains("autocomplete=\"new-password\""));
+    assert!(markup.contains("Create encrypted backup"));
+    assert!(markup.contains("not retained in workflow status or diagnostics"));
+    assert!(markup.contains("Restore is available before this device creates an identity"));
+    assert!(!markup.contains(marker));
+    assert!(!markup.contains("mobile.identity-restore-form"));
+}
+
+#[test]
+fn recovery_reports_share_presentation_without_claiming_completion() {
+    let markup = render_recovery(IdentityRecoveryState {
+        phase: IdentityRecoveryPhase::SharePresented,
+        failure: None,
+        restore_available: false,
+    });
+
+    assert!(markup.contains("ready in the system share sheet"));
+    assert!(markup.contains("Saving or sharing is not yet confirmed"));
+    assert!(!markup.contains("Backup saved"));
+}
+
+#[test]
+fn recovery_restore_is_explicit_and_typed_only_when_preboot_allows_it() {
+    let markup = render_recovery(IdentityRecoveryState {
+        phase: IdentityRecoveryPhase::Idle,
+        failure: Some(IdentityRecoveryFailure::AuthenticationFailed),
+        restore_available: true,
+    });
+
+    assert!(markup.contains("id=\"mobile.identity-restore-select\""));
+    assert!(markup.contains("id=\"mobile.identity-restore-form\""));
+    assert!(markup.contains("autocomplete=\"current-password\""));
+    assert!(markup.contains("data-failure=\"authentication_failed\""));
+    assert!(markup.contains("could not be authenticated"));
 }
 
 #[test]
