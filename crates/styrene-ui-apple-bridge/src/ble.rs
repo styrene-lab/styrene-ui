@@ -146,7 +146,7 @@ impl CoreBluetoothAttemptBoundary {
         if generation != self.generation {
             return Ok(CoreBluetoothApply::IgnoredStale);
         }
-        if self.shutdown_transferred {
+        if self.phase == CoreBluetoothPhase::Closed {
             return Err(CoreBluetoothFailure::InvalidPhase);
         }
         if state != CoreBluetoothManagerState::PoweredOn {
