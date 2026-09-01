@@ -1,20 +1,23 @@
 use dioxus::prelude::*;
 use styrene_ui_app::{
-    BackNavigation, Composer, LocalAnnounceStatus, MobileShell, PropagationPanel,
+    BackNavigation, Composer, IdentityBootstrap, IdentityQrCode, IdentityRecoveryPanel,
+    LocalAnnounceStatus, MobileShell, NewMessageForm, PropagationPanel,
 };
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
     AuthorizationState, BleAdapterState, BleApprovedPeripheral, BleCandidate, BleControlFailure,
     BleControlPhase, BleControlState, BlePeripheralId, Contrast, KeyboardGeometry,
-    MotionPreference, PlatformGeometry, PlatformInsets, PlatformSnapshot, TextScale,
-    TextScaleCategory, WindowClass, WindowMetrics,
+    MotionPreference, PermissionKind, PermissionStatus, PlatformGeometry, PlatformInsets,
+    PlatformSnapshot, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
 };
 use styrene_ui_state::{
-    ApplyResult, BearerState, IdentityCustody, IdentityCustodyAuthentication,
+    ApplyResult, BearerState, Conversation, IdentityCustody, IdentityCustodyAuthentication,
     IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
-    IdentityCustodyProtection, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
-    MobileStore, PropagationCandidate, PropagationPolicy, PropagationProgress, PropagationUpdate,
-    RuntimeBoundary, SessionPhase, SyncState, TargetClass, TypedFailure,
+    IdentityCustodyProtection, IdentityRecoveryFailure, IdentityRecoveryPhase,
+    IdentityRecoveryState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus, MobileStore,
+    PropagationCandidate, PropagationPolicy, PropagationProgress, PropagationSynchronization,
+    PropagationTerminalOutcome, PropagationTriggerSource, PropagationUpdate, RuntimeBoundary,
+    SessionPhase, SyncState, TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -37,6 +40,61 @@ fn render(fixture: MobileFixture) -> String {
 }
 
 #[component]
+fn IdentityShell(
+    fixture: MobileFixture,
+    #[props(default)] succeeded: bool,
+    #[props(default)] failure: Option<String>,
+) -> Element {
+    rsx! {
+        MobileShell {
+            target: TargetClass::Ios,
+            fixture,
+            identity_copy_succeeded: succeeded,
+            identity_copy_failure: failure,
+            identity_copy: move |_value: String| {},
+        }
+    }
+}
+
+fn render_identity_actions(fixture: MobileFixture) -> String {
+    dioxus_ssr::render_element(rsx! { IdentityShell { fixture } })
+}
+
+#[component]
+fn RecoveryShell(state: IdentityRecoveryState) -> Element {
+    rsx! {
+        IdentityRecoveryPanel {
+            state,
+            enabled: true,
+            backup: move |_protection| {},
+            restore_select: move |()| {},
+            restore: move |_protection| {},
+        }
+    }
+}
+
+fn render_recovery(state: IdentityRecoveryState) -> String {
+    dioxus_ssr::render_element(rsx! { RecoveryShell { state } })
+}
+
+#[component]
+fn BootstrapShell(state: IdentityRecoveryState) -> Element {
+    rsx! {
+        IdentityBootstrap {
+            generation: 7,
+            state,
+            create: move |()| {},
+            restore_select: move |()| {},
+            restore: move |_protection| {},
+        }
+    }
+}
+
+fn render_bootstrap(state: IdentityRecoveryState) -> String {
+    dioxus_ssr::render_element(rsx! { BootstrapShell { state } })
+}
+
+#[component]
 fn BleShell(target: TargetClass, fixture: MobileFixture, state: BleControlState) -> Element {
     rsx! {
         MobileShell {
@@ -47,6 +105,78 @@ fn BleShell(target: TargetClass, fixture: MobileFixture, state: BleControlState)
             ble_select: move |_id: BlePeripheralId| {},
             ble_retry: move |()| {},
             ble_forget: move |()| {},
+        }
+    }
+}
+
+#[component]
+fn ComposerShell(conversation: Conversation, propagation: PropagationUpdate) -> Element {
+    rsx! {
+        Composer {
+            conversation: Some(conversation),
+            enabled: true,
+            propagation,
+            action_sink: move |_action| {},
+        }
+    }
+}
+
+#[component]
+fn ActionShell(fixture: MobileFixture) -> Element {
+    rsx! {
+        MobileShell {
+            target: TargetClass::Ios,
+            fixture,
+            action_sink: move |_action| {},
+        }
+    }
+}
+
+#[component]
+fn NewMessageShell(
+    peers: Vec<styrene_ui_state::Peer>,
+    generation: u64,
+    initial_search: String,
+    initial_destination: String,
+    #[props(default)] failure: Option<TypedFailure>,
+    #[props(default)] paste_failure: Option<String>,
+    #[props(default)] paste_enabled: bool,
+    #[props(default)] scan_failure: Option<String>,
+    #[props(default)] scan_enabled: bool,
+    #[props(default)] scan_busy: bool,
+) -> Element {
+    rsx! {
+        NewMessageForm {
+            peers,
+            generation,
+            enabled: true,
+            initial_search,
+            initial_destination,
+            failure,
+            paste_failure,
+            on_paste: paste_enabled.then_some(EventHandler::new(move |()| {})),
+            scan_failure,
+            scan_busy,
+            on_scan: scan_enabled.then_some(EventHandler::new(move |_capture| {})),
+            open_application_settings: move |()| {},
+            action_sink: move |_action| {},
+        }
+    }
+}
+
+#[component]
+fn PlatformShell(
+    fixture: MobileFixture,
+    platform_snapshot: PlatformSnapshot,
+    ble_controls: BleControlState,
+) -> Element {
+    rsx! {
+        MobileShell {
+            target: TargetClass::Android,
+            fixture,
+            platform_snapshot,
+            ble_controls,
+            open_application_settings: move |()| {},
         }
     }
 }
@@ -279,6 +409,136 @@ fn opening_tag_with_id<'a>(markup: &'a str, id: &str) -> &'a str {
 }
 
 #[test]
+fn public_identity_actions_share_one_backend_destination() {
+    let fixture = fixture("canonical-peer-discovery");
+    let public_destination = fixture.session.identity_hash.clone();
+    let markup = render_identity_actions(fixture);
+
+    assert!(markup.contains(&format!("Public LXMF destination {public_destination}")));
+    assert!(!opening_tag_with_id(&markup, "mobile.identity-copy").contains("disabled"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.identity-show-qr").contains("aria-expanded=\"false\"")
+    );
+    assert!(markup.contains("Copy shares only the public LXMF destination."));
+    assert!(!markup.contains("private"));
+
+    let qr =
+        dioxus_ssr::render_element(rsx! { IdentityQrCode { value: public_destination.clone() } });
+    assert!(
+        opening_tag_with_id(&qr, "mobile.identity-qr")
+            .contains(&format!("data-payload=\"{public_destination}\""))
+    );
+    assert!(qr.contains(&format!("QR code for public LXMF destination {public_destination}")));
+    assert!(qr.contains("<rect"));
+}
+
+#[test]
+fn public_identity_copy_reports_success_and_failure_without_changing_the_value() {
+    let fixture = fixture("canonical-peer-discovery");
+    let public_destination = fixture.session.identity_hash.clone();
+    let success = dioxus_ssr::render_element(rsx! {
+        IdentityShell { fixture: fixture.clone(), succeeded: true }
+    });
+    let failure = dioxus_ssr::render_element(rsx! {
+        IdentityShell { fixture, failure: Some("clipboard_denied".into()) }
+    });
+
+    assert!(success.contains("Public destination copied."));
+    assert!(success.contains(&public_destination));
+    assert!(failure.contains("Public destination was not copied (clipboard_denied)."));
+    assert!(failure.contains(&public_destination));
+}
+
+#[test]
+fn public_identity_actions_are_unavailable_without_a_backend_destination() {
+    let mut fixture = fixture("canonical-peer-discovery");
+    fixture.session.identity_hash.clear();
+    let markup = render_identity_actions(fixture);
+
+    assert!(opening_tag_with_id(&markup, "mobile.identity-copy").contains("disabled"));
+    assert!(opening_tag_with_id(&markup, "mobile.identity-show-qr").contains("disabled"));
+    assert!(markup.contains("Public destination is not available yet."));
+    assert!(!markup.contains("id=\"mobile.identity-qr\""));
+}
+
+#[test]
+fn encrypted_recovery_uses_password_inputs_and_safe_presentation_state() {
+    let marker = "never-render-this-passphrase";
+    let markup = render_recovery(IdentityRecoveryState::default());
+
+    assert!(markup.contains("id=\"mobile.identity-recovery\""));
+    assert!(markup.contains("id=\"mobile.identity-backup-protection\""));
+    assert!(markup.contains("type=\"password\""));
+    assert!(markup.contains("autocomplete=\"new-password\""));
+    assert!(markup.contains("Create encrypted backup"));
+    assert!(markup.contains("not retained in workflow status or diagnostics"));
+    assert!(markup.contains("Restore is available before this device creates an identity"));
+    assert!(!markup.contains(marker));
+    assert!(!markup.contains("mobile.identity-restore-form"));
+}
+
+#[test]
+fn absent_identity_requires_explicit_create_or_restore_before_startup() {
+    let marker = "never-render-this-artifact-or-passphrase";
+    let markup = render_bootstrap(IdentityRecoveryState::default());
+
+    assert!(markup.contains("id=\"mobile.identity-bootstrap\""));
+    assert!(markup.contains("data-generation=\"7\""));
+    assert!(markup.contains("before Styrene starts networking"));
+    assert!(markup.contains("id=\"mobile.identity-create-confirmation\""));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.identity-create-confirmation").contains("required")
+    );
+    assert!(markup.contains("id=\"mobile.identity-create\""));
+    assert!(markup.contains("id=\"mobile.identity-restore-select\""));
+    assert!(!markup.contains("id=\"mobile.identity-restore-form\""));
+    assert!(!markup.contains(marker));
+}
+
+#[test]
+fn selected_bootstrap_document_enables_only_transient_password_restore() {
+    let markup = render_bootstrap(IdentityRecoveryState {
+        phase: IdentityRecoveryPhase::Idle,
+        failure: Some(IdentityRecoveryFailure::AuthenticationFailed),
+        restore_available: true,
+    });
+
+    assert!(markup.contains("id=\"mobile.identity-restore-form\""));
+    assert!(markup.contains("type=\"password\""));
+    assert!(markup.contains("autocomplete=\"current-password\""));
+    assert!(markup.contains("data-failure=\"authentication_failed\""));
+    assert!(!markup.contains("value="));
+}
+
+#[test]
+fn recovery_reports_share_presentation_without_claiming_completion() {
+    let markup = render_recovery(IdentityRecoveryState {
+        phase: IdentityRecoveryPhase::SharePresented,
+        failure: None,
+        restore_available: false,
+    });
+
+    assert!(markup.contains("ready in the system share sheet"));
+    assert!(markup.contains("Saving or sharing is not yet confirmed"));
+    assert!(!markup.contains("Backup saved"));
+}
+
+#[test]
+fn recovery_restore_is_explicit_and_typed_only_when_preboot_allows_it() {
+    let markup = render_recovery(IdentityRecoveryState {
+        phase: IdentityRecoveryPhase::Idle,
+        failure: Some(IdentityRecoveryFailure::AuthenticationFailed),
+        restore_available: true,
+    });
+
+    assert!(markup.contains("id=\"mobile.identity-restore-select\""));
+    assert!(markup.contains("id=\"mobile.identity-restore-form\""));
+    assert!(markup.contains("autocomplete=\"current-password\""));
+    assert!(markup.contains("data-failure=\"authentication_failed\""));
+    assert!(markup.contains("could not be authenticated"));
+}
+
+#[test]
 fn every_fixture_renders_the_shared_accessibility_contract_for_both_targets() {
     let corpus: MobileMinimumCorpus =
         serde_json::from_str(FIXTURES).expect("mobile minimum fixture must deserialize");
@@ -388,15 +648,20 @@ fn shared_shell_exposes_typed_platform_facts_without_inventing_text_scale() {
             keyboard: KeyboardGeometry::WebViewManaged { visible: true },
         },
         lifecycle: ApplicationLifecycle::Active,
-        permissions: Vec::new(),
-        notification_authorization: AuthorizationState::Unavailable,
+        permissions: vec![PermissionStatus {
+            kind: PermissionKind::Camera,
+            state: AuthorizationState::Denied,
+        }],
+        notification_authorization: AuthorizationState::Granted,
     };
     let mut category_snapshot = platform_snapshot.clone();
+    let ble_controls =
+        BleControlState { permission: AuthorizationState::Restricted, ..Default::default() };
     let markup = dioxus_ssr::render_element(rsx! {
-        MobileShell {
-            target: TargetClass::Android,
+        PlatformShell {
             fixture: fixture("direct-message-queued"),
             platform_snapshot,
+            ble_controls,
         }
     });
 
@@ -412,6 +677,28 @@ fn shared_shell_exposes_typed_platform_facts_without_inventing_text_scale() {
     ] {
         assert!(markup.contains(fact), "missing platform fact: {fact}");
     }
+    assert!(
+        opening_tag_with_id(&markup, "mobile.permission.camera").contains("data-state=\"denied\"")
+    );
+    assert!(
+        opening_tag_with_id(&markup, "mobile.permission.bluetooth")
+            .contains("data-state=\"restricted\"")
+    );
+    assert!(
+        opening_tag_with_id(&markup, "mobile.permission.notifications")
+            .contains("data-state=\"granted\"")
+    );
+    assert!(
+        opening_tag_with_id(&markup, "mobile.permission.location")
+            .contains("data-state=\"not-requested\"")
+    );
+    assert!(markup.contains("Not requested by Styrene"));
+    assert!(markup.contains("system Settings."));
+    assert!(!opening_tag_with_id(&markup, "mobile.open-application-settings").contains("disabled"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.open-application-settings")
+            .contains("aria-describedby=\"mobile.permissions-recovery\"")
+    );
     assert!(!markup.contains("data-text-scale-percent"));
 
     category_snapshot.accessibility.text_scale =
@@ -446,6 +733,234 @@ fn mobile_shell_uses_destination_navigation_and_starts_on_the_conversation_list(
     assert!(opening_tag_with_id(&markup, "mobile.people").contains("hidden"));
     assert!(opening_tag_with_id(&markup, "mobile.network").contains("hidden"));
     assert!(opening_tag_with_id(&markup, "mobile.more").contains("hidden"));
+    let new_message = opening_tag_with_id(&markup, "mobile.new-message");
+    assert!(new_message.contains("aria-expanded=\"false\""));
+    assert!(new_message.contains("disabled"));
+    assert!(new_message.contains("aria-describedby=\"mobile.new-message-disabled\""));
+    assert!(markup.contains("New Message is unavailable in this view."));
+}
+
+fn render_new_message(initial_search: &str, initial_destination: &str) -> String {
+    let state = fixture("canonical-peer-discovery");
+    dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: initial_search.to_owned(),
+            initial_destination: initial_destination.to_owned(),
+        }
+    })
+}
+
+#[test]
+fn new_message_empty_entry_exposes_search_and_no_optimistic_product_state() {
+    let markup = render_new_message("", "");
+    let submit = opening_tag_with_id(&markup, "mobile.start-conversation");
+
+    assert!(markup.contains("id=\"mobile.peer-search\""));
+    assert!(opening_tag_with_id(&markup, "mobile.peer-search").contains("autofocus"));
+    assert!(markup.contains("FPIG_SKYWAVE"));
+    assert!(markup.contains("id=\"mobile.direct-destination\""));
+    assert!(markup.contains("Enter a 32-character LXMF destination."));
+    assert!(submit.contains("disabled"));
+    assert!(!markup.contains("id=\"mobile.conversation.e01b09b22ccc4e2755d29eead962677b\""));
+    assert!(!markup.contains("id=\"mobile.message."));
+}
+
+#[test]
+fn new_message_search_filters_peer_choices_without_hiding_direct_entry() {
+    let matching = render_new_message("skywave", "");
+    let missing = render_new_message("not-present", "");
+
+    assert!(matching.contains("id=\"mobile.new-message-peer.e01b09b22ccc4e2755d29eead962677b\""));
+    assert!(!matching.contains("No discovered peers match"));
+    assert!(missing.contains("No discovered peers match this search."));
+    assert!(!missing.contains("id=\"mobile.new-message-peer.e01b09b22ccc4e2755d29eead962677b\""));
+    assert!(missing.contains("id=\"mobile.direct-destination\""));
+}
+
+#[test]
+fn new_message_bounded_candidate_uses_backend_validation_action_semantics() {
+    let canonical = "e01b09b22ccc4e2755d29eead962677b";
+    let valid = render_new_message("", canonical);
+    let malformed_but_bounded = render_new_message("", &"z".repeat(32));
+
+    assert!(!opening_tag_with_id(&valid, "mobile.start-conversation").contains("disabled"));
+    assert!(valid.contains("maxlength=\"32\""));
+    assert!(
+        valid
+            .contains("The backend will validate this destination before creating a conversation.")
+    );
+    assert!(
+        !opening_tag_with_id(&malformed_but_bounded, "mobile.start-conversation")
+            .contains("disabled")
+    );
+    assert!(malformed_but_bounded.contains("backend will validate"));
+}
+
+#[test]
+fn new_message_clipboard_candidate_stays_on_backend_validation_path() {
+    let state = fixture("canonical-peer-discovery");
+    let candidate = "e01b09b22ccc4e2755d29eead962677b";
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: candidate.to_owned(),
+            paste_enabled: true,
+        }
+    });
+
+    assert!(opening_tag_with_id(&markup, "mobile.paste-destination").contains("type=\"button\""));
+    assert!(!opening_tag_with_id(&markup, "mobile.paste-destination").contains("disabled"));
+    assert!(markup.contains("unvalidated destination candidate"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.direct-destination")
+            .contains(&format!("value=\"{candidate}\""))
+    );
+    assert!(!opening_tag_with_id(&markup, "mobile.start-conversation").contains("disabled"));
+    assert!(markup.contains("backend will validate"));
+}
+
+#[test]
+fn new_message_clipboard_failure_is_bounded_and_associated() {
+    let state = fixture("canonical-peer-discovery");
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: String::new(),
+            paste_failure: Some("denied".into()),
+            paste_enabled: true,
+        }
+    });
+
+    assert!(
+        opening_tag_with_id(&markup, "mobile.paste-destination")
+            .contains("aria-describedby=\"mobile.paste-destination-status\"")
+    );
+    assert!(markup.contains("Clipboard text was not added (denied)."));
+}
+
+#[test]
+fn new_message_qr_capture_is_single_shot_and_uses_the_candidate_path() {
+    let state = fixture("canonical-peer-discovery");
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: String::new(),
+            paste_enabled: true,
+            scan_enabled: true,
+        }
+    });
+
+    let capture = opening_tag_with_id(&markup, "mobile.scan-qr-input");
+    assert!(capture.contains("type=\"file\""));
+    assert!(capture.contains("accept=\"image/jpeg,image/png\""));
+    assert!(capture.contains("capture=\"environment\""));
+    assert!(!capture.contains("multiple"));
+    assert!(markup.contains("Scan QR"));
+    assert!(markup.contains("one QR code is treated as an unvalidated destination candidate"));
+    assert!(!opening_tag_with_id(&markup, "mobile.paste-destination").contains("disabled"));
+    assert!(opening_tag_with_id(&markup, "mobile.start-conversation").contains("disabled"));
+}
+
+#[test]
+fn qr_denial_offers_settings_without_disabling_manual_or_paste_ingress() {
+    let state = fixture("canonical-peer-discovery");
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: String::new(),
+            paste_enabled: true,
+            scan_enabled: true,
+            scan_failure: Some("denied".into()),
+        }
+    });
+
+    assert!(markup.contains("QR image was not added (denied)."));
+    assert!(markup.contains("Open system Settings"));
+    assert!(!opening_tag_with_id(&markup, "mobile.paste-destination").contains("disabled"));
+    assert!(!opening_tag_with_id(&markup, "mobile.direct-destination").contains("disabled"));
+}
+
+#[test]
+fn qr_busy_state_disables_only_scan_capture() {
+    let state = fixture("canonical-peer-discovery");
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: String::new(),
+            paste_enabled: true,
+            scan_enabled: true,
+            scan_busy: true,
+        }
+    });
+
+    assert!(opening_tag_with_id(&markup, "mobile.scan-qr-input").contains("disabled"));
+    assert!(markup.contains("Scanning QR"));
+    assert!(!opening_tag_with_id(&markup, "mobile.paste-destination").contains("disabled"));
+    assert!(!opening_tag_with_id(&markup, "mobile.direct-destination").contains("disabled"));
+}
+
+#[test]
+fn new_message_rejects_incomplete_and_oversized_input_before_dispatch() {
+    let incomplete = render_new_message("", "abc");
+    let oversized = render_new_message("", &"a".repeat(4096));
+
+    assert!(opening_tag_with_id(&incomplete, "mobile.start-conversation").contains("disabled"));
+    assert!(incomplete.contains("must contain 32 characters"));
+    assert!(opening_tag_with_id(&oversized, "mobile.start-conversation").contains("disabled"));
+    assert!(
+        opening_tag_with_id(&oversized, "mobile.direct-destination")
+            .contains("aria-invalid=\"true\"")
+    );
+    assert!(opening_tag_with_id(&oversized, "mobile.direct-destination").contains("autofocus"));
+    assert!(
+        opening_tag_with_id(&oversized, "mobile.direct-destination")
+            .contains("aria-errormessage=\"mobile.direct-destination-error\"")
+    );
+    assert!(opening_tag_with_id(&oversized, "mobile.direct-destination").contains(
+        "aria-describedby=\"mobile.direct-destination-status mobile.direct-destination-error\""
+    ));
+    assert!(oversized.contains("id=\"mobile.direct-destination-error\""));
+    assert!(oversized.contains("exceeds the 32-byte input limit"));
+    assert!(!oversized.contains(&"a".repeat(34)));
+}
+
+#[test]
+fn new_message_backend_failure_associates_and_focuses_the_destination_error() {
+    let state = fixture("canonical-peer-discovery");
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: "e01b09b22ccc4e2755d29eead962677b",
+            failure: Some(TypedFailure {
+                code: "conversation_start_failed".into(),
+                retryable: true,
+            }),
+        }
+    });
+
+    let destination = opening_tag_with_id(&markup, "mobile.direct-destination");
+    assert!(destination.contains("autofocus"));
+    assert!(destination.contains("aria-invalid=\"true\""));
+    assert!(destination.contains("aria-errormessage=\"mobile.new-message-failure\""));
+    assert!(destination.contains(
+        "aria-describedby=\"mobile.direct-destination-status mobile.new-message-failure\""
+    ));
+    assert!(markup.contains("id=\"mobile.new-message-failure\""));
+    assert!(markup.contains("The backend rejected the destination. Check it and try again."));
 }
 
 #[test]
@@ -545,13 +1060,69 @@ fn initial_thread_selection_filters_messages_without_inventing_ordering() {
 
 #[test]
 fn composer_requires_a_canonical_conversation_before_enabling_send() {
+    let state = fixture("live-empty-connected");
     let markup = dioxus_ssr::render_element(rsx! {
-        Composer { conversation: None, enabled: true }
+        Composer {
+            conversation: None,
+            enabled: true,
+            propagation: PropagationUpdate::from_fixture(&state),
+        }
     });
 
     let send = opening_tag_with_id(&markup, "mobile.send");
     assert!(send.contains("data-enabled=\"false\""));
     assert!(send.contains("disabled"));
+}
+
+#[test]
+fn composer_disables_only_propagated_delivery_without_a_ready_node() {
+    let mut state = fixture("direct-message-queued");
+    state.conversations[0].draft = "Retain this draft".into();
+    let conversation = state.conversations[0].clone();
+    let mut propagation = PropagationUpdate::from_fixture(&state);
+    propagation.selected_destination = None;
+    propagation.ready = false;
+
+    let markup = dioxus_ssr::render_element(rsx! {
+        ComposerShell { conversation, propagation }
+    });
+
+    let direct = markup
+        .split("<option")
+        .find(|option| option.contains("value=\"direct\""))
+        .expect("direct option");
+    let propagated = markup
+        .split("<option")
+        .find(|option| option.contains("value=\"propagated\""))
+        .expect("propagated option");
+
+    assert!(!direct.split('>').next().unwrap().contains("disabled"));
+    assert!(propagated.split('>').next().unwrap().contains("disabled"));
+    assert!(markup.contains("Select a propagation node in Network"));
+    assert!(opening_tag_with_id(&markup, "mobile.send").contains("data-enabled=\"true\""));
+    assert!(!markup.contains("id=\"mobile.send-disabled-reason\""));
+    assert!(markup.contains("Ready to send."));
+}
+
+#[test]
+fn composer_enables_propagated_delivery_only_for_a_ready_selected_node() {
+    let mut state = fixture("direct-message-queued");
+    state.conversations[0].draft = "Retain this draft".into();
+    let conversation = state.conversations[0].clone();
+    let mut propagation = PropagationUpdate::from_fixture(&state);
+    propagation.selected_destination = Some("feedfeedfeedfeedfeedfeedfeedfeed".into());
+    propagation.ready = true;
+
+    let markup = dioxus_ssr::render_element(rsx! {
+        ComposerShell { conversation, propagation }
+    });
+    let propagated = markup
+        .split("<option")
+        .find(|option| option.contains("value=\"propagated\""))
+        .expect("propagated option");
+
+    assert!(!propagated.split('>').next().unwrap().contains("disabled"));
+    assert!(markup.contains("Propagated delivery is available through the selected node."));
 }
 
 #[test]
@@ -590,6 +1161,8 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
         "flex-wrap: wrap",
         "overflow-wrap: anywhere",
         "@media (max-width: 30rem)",
+        ".composer button,",
+        ".new-message-actions > button",
         "@media (min-width: 52rem)",
         "@media (prefers-color-scheme: dark)",
         "@media (prefers-contrast: more)",
@@ -673,6 +1246,99 @@ fn session_failure_exposes_a_typed_visible_status() {
 }
 
 #[test]
+fn degraded_session_preserves_independent_runtime_and_phase() {
+    let mut state = fixture("live-empty-connected");
+    state.session.runtime = styrene_ui_state::SessionRuntime::Ready;
+    state.session.phase = SessionPhase::Degraded;
+
+    let markup = render(state);
+    let status = opening_tag_with_id(&markup, "mobile.session-state");
+
+    assert!(status.contains("data-runtime=\"ready\""));
+    assert!(status.contains("data-phase=\"degraded\""));
+    assert!(status.contains("data-tone=\"caution\""));
+    assert!(markup.contains("Session degraded"));
+    assert!(!markup.contains("Session reconnecting"));
+}
+
+#[test]
+fn operational_summary_renders_bounded_authoritative_facts_and_unknown_routes() {
+    let mut state = fixture("canonical-peer-discovery");
+    state.conversations.push(Conversation {
+        peer_hash: "e01b09b22ccc4e2755d29eead962677b".into(),
+        unread_count: 3,
+        draft: String::new(),
+        draft_revision: 0,
+    });
+    let markup = render(state);
+
+    assert!(markup.contains("id=\"mobile.operational-summary\""));
+    assert!(markup.contains("Operational summary"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.summary.runtime").contains("data-phase=\"connected\"")
+    );
+    assert!(markup.contains("1 of 3 connected"));
+    assert!(markup.contains("1 canonical observations"));
+    assert!(markup.contains("id=\"mobile.summary.unread\">3"));
+    assert!(markup.contains("Unknown; no loaded attempt evidence"));
+    assert!(markup.contains("Selected node ready · idle"));
+    assert!(markup.contains("loaded attempts only"));
+    for fabricated in ["Relay connected", "Mail waiting", "Peer reachable"] {
+        assert!(!markup.contains(fabricated));
+    }
+}
+
+#[test]
+fn operational_summary_preserves_reconnecting_degraded_failed_and_mixed_bearers() {
+    let reconnecting = render(fixture("tcp-reconnecting-rnode-unavailable"));
+    assert!(
+        opening_tag_with_id(&reconnecting, "mobile.summary.runtime")
+            .contains("data-phase=\"reconnecting\"")
+    );
+    assert!(reconnecting.contains("0 of 3 connected"));
+    assert!(reconnecting.contains("Selected node not ready · idle"));
+
+    let mut degraded_state = fixture("live-empty-connected");
+    degraded_state.session.phase = SessionPhase::Degraded;
+    let degraded = render(degraded_state);
+    assert!(
+        opening_tag_with_id(&degraded, "mobile.summary.runtime")
+            .contains("data-phase=\"degraded\"")
+    );
+
+    let failed = render(fixture("recoverable-session-failure"));
+    assert!(
+        opening_tag_with_id(&failed, "mobile.summary.runtime").contains("data-phase=\"failed\"")
+    );
+}
+
+#[test]
+fn operational_summary_uses_the_current_propagation_projection_prop() {
+    let fixture = fixture("live-empty-connected");
+    let mut propagation = PropagationUpdate::from_fixture(&fixture);
+    propagation.selected_destination = Some("feedfeedfeedfeedfeedfeedfeedfeed".into());
+    propagation.ready = true;
+    propagation.readiness = styrene_ui_state::PropagationReadiness::Ready;
+    propagation.sync_state = SyncState::Complete;
+    let markup = dioxus_ssr::render_element(rsx! {
+        MobileShell {
+            target: TargetClass::Ios,
+            fixture,
+            propagation,
+        }
+    });
+
+    assert!(
+        opening_tag_with_id(&markup, "mobile.summary.propagation")
+            .contains("data-selected=\"true\"")
+    );
+    assert!(
+        opening_tag_with_id(&markup, "mobile.summary.propagation").contains("data-ready=\"true\"")
+    );
+    assert!(markup.contains("Selected node ready · complete"));
+}
+
+#[test]
 fn stale_completion_never_appears_in_rendered_state() {
     let mut store = MobileStore::new(fixture("stale-generation-rejected"));
     let mut stale = fixture("recoverable-session-failure");
@@ -749,16 +1415,59 @@ fn network_projection_exposes_the_backend_endpoint_as_an_editable_control() {
 
 #[test]
 fn repeated_announces_render_one_person_and_live_empty_renders_none() {
-    let directory = render(fixture("canonical-peer-discovery"));
+    let mut discovered = fixture("canonical-peer-discovery");
+    discovered.profile = styrene_ui_state::Profile::Live;
+    let directory = dioxus_ssr::render_element(rsx! { ActionShell { fixture: discovered } });
     let live_empty = render(fixture("live-empty-connected"));
 
     assert_eq!(directory.matches("id=\"mobile.peer.e01b09b22ccc4e2755d29eead962677b\"").count(), 1);
     assert!(directory.contains("FPIG_SKYWAVE"));
-    assert!(directory.contains("data-action=\"unavailable\""));
-    assert!(directory.contains("No conversation yet"));
-    assert!(!directory.contains("Open conversation"));
+    assert!(directory.contains("lxmf.delivery"));
+    assert!(directory.contains("Canonical announce"));
+    assert!(directory.contains("observed 4s ago"));
+    assert!(directory.contains("1 announce"));
+    assert!(!directory.contains("reachable"));
+    assert!(directory.contains("data-action=\"start-conversation\""));
+    assert!(directory.contains("Start conversation"));
+    assert!(
+        !opening_tag_with_id(&directory, "mobile.peer.e01b09b22ccc4e2755d29eead962677b")
+            .contains("disabled")
+    );
+    assert!(!directory.contains("No conversation yet"));
     assert!(!live_empty.contains("id=\"mobile.peer."));
     assert!(!live_empty.contains("FPIG_SKYWAVE"));
+}
+
+#[test]
+fn old_peer_observation_exposes_age_without_claiming_reachability() {
+    let mut state = fixture("canonical-peer-discovery");
+    state.profile = styrene_ui_state::Profile::Live;
+    state.peers[0].age_secs = 86_400;
+    let markup = dioxus_ssr::render_element(rsx! { ActionShell { fixture: state } });
+
+    assert!(markup.contains("observed 86400s ago"));
+    assert!(!markup.to_ascii_lowercase().contains("reachable"));
+    assert!(!markup.to_ascii_lowercase().contains("online"));
+}
+
+#[test]
+fn identity_surface_labels_public_destination_and_exposes_durable_name_edit() {
+    let mut state = fixture("live-empty-connected");
+    state.session.display_name = "Field Node".into();
+    let destination = state.session.identity_hash.clone();
+    let markup = dioxus_ssr::render_element(rsx! { ActionShell { fixture: state } });
+
+    assert!(markup.contains("Display name"));
+    assert!(markup.contains("value=\"Field Node\""));
+    assert!(markup.contains("This is the current public display name."));
+    assert!(opening_tag_with_id(&markup, "mobile.identity-display-name-save").contains("disabled"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.identity-display-name-save")
+            .contains("aria-describedby=\"mobile.identity-display-name-status\"")
+    );
+    assert!(markup.contains("Public LXMF destination"));
+    assert!(markup.contains(&format!("aria-label=\"Public LXMF destination {destination}\"")));
+    assert!(!markup.contains("Private key"));
 }
 
 #[test]
@@ -797,6 +1506,75 @@ fn messaging_components_distinguish_queue_upload_delivery_and_empty_live_state()
     assert!(!empty.contains("message-direct-1"));
 }
 
+#[test]
+fn message_history_renders_direction_chronology_and_independent_delivery_evidence() {
+    let mut state = fixture("direct-message-queued");
+    let message = &mut state.messages[0];
+    message.delivery = styrene_ui_state::DeliveryEvidence::Delivered;
+    message.failure = None;
+    message.details.source_hash = "local-source".into();
+    message.details.destination_hash = message.peer_hash.clone();
+    message.details.is_outgoing = true;
+    message.details.timestamp = 1_700_000_000;
+    message.details.requested_delivery_method = Some("propagated".into());
+    message.details.actual_delivery_method = Some("direct".into());
+    message.details.fallback_reason = Some("selected node stale".into());
+    message.details.terminal_detail = Some("policy rejected retry".into());
+    message.details.retry_eligible = Some(false);
+    message.details.attempts.push(styrene_ui_state::MessageAttempt {
+        number: 2,
+        state: "failed".into(),
+        bearer: Some("tcp".into()),
+        route: styrene_ui_state::MessageRouteObservation {
+            outcome: styrene_ui_state::MessageRouteOutcome::Observed,
+            hops: Some(2),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    message.details.propagation_correlations.push(
+        styrene_ui_state::MessagePropagationCorrelation {
+            relation: "upload".into(),
+            transient_id: "transient".into(),
+            peer_hash: Some("feedfeedfeedfeedfeedfeedfeedfeed".into()),
+            state: "accepted".into(),
+            ..Default::default()
+        },
+    );
+    message.details.delivery_evidence.push(styrene_ui_state::MessageDeliveryObservation {
+        kind: styrene_ui_state::MessageDeliveryKind::PacketReceipt,
+        state: styrene_ui_state::MessageDeliveryState::Completed,
+        outcome: Some("delivered".into()),
+        ..Default::default()
+    });
+
+    let markup = render(state);
+    let card = opening_tag_with_id(&markup, "mobile.message.message-direct-1");
+
+    assert!(card.contains("data-direction=\"outgoing\""));
+    assert!(card.contains("data-timestamp=\"1700000000\""));
+    assert!(card.contains("aria-labelledby=\"mobile.message-heading.message-direct-1\""));
+    assert!(markup.contains("<h4 id=\"mobile.message-heading.message-direct-1\">Sent</h4>"));
+    for expected in [
+        "Sent",
+        "Unix 1700000000",
+        "Requested method: propagated",
+        "Actual method: direct",
+        "Fallback: selected node stale",
+        "Terminal outcome: policy rejected retry",
+        "Attempt 2: failed",
+        "Bearer: tcp",
+        "Route observed",
+        "2 hops",
+        "upload: accepted",
+        "PacketReceipt: Completed",
+        "Retry unavailable for this terminal outcome.",
+    ] {
+        assert!(markup.contains(expected), "missing message evidence: {expected}");
+    }
+    assert!(!markup.contains("id=\"mobile.retry.message-direct-1\""));
+}
+
 fn render_propagation(propagation: PropagationUpdate) -> String {
     dioxus_ssr::render_element(rsx! {
         PropagationPanel { propagation, actions_enabled: true }
@@ -810,6 +1588,19 @@ fn propagation_component_discloses_selection_readiness_and_automatic_policy() {
     propagation.automatic_sync_enabled = true;
     propagation.automatic_sync_cooldown_secs = 30;
     propagation.sync_deadline_secs = 32;
+    propagation.trigger_capabilities = vec![
+        PropagationTriggerSource::ForegroundOpportunity,
+        PropagationTriggerSource::GrantedBackgroundOpportunity,
+        PropagationTriggerSource::Manual,
+    ];
+    propagation.last_synchronization = Some(PropagationSynchronization {
+        trigger: PropagationTriggerSource::Manual,
+        started_at: 1_700_000_000,
+        finished_at: 1_700_000_004,
+        outcome: PropagationTerminalOutcome::Succeeded,
+        new_messages: 2,
+    });
+    propagation.cooldown_remaining_secs = 12;
     let policy = PropagationPolicy {
         transfer_limit_kb: 256,
         sync_limit_kb: 4_000,
@@ -839,9 +1630,26 @@ fn propagation_component_discloses_selection_readiness_and_automatic_policy() {
     assert!(markup.contains("id=\"mobile.propagation-selected\""));
     assert!(markup.contains("780e7aa7b2f175c88f28c7ba8ab1b714"));
     assert!(markup.contains("data-ready=\"true\""));
-    assert!(markup.contains("Automatic synchronization enabled"));
     assert!(markup.contains("data-cooldown-secs=\"30\""));
     assert!(markup.contains("data-deadline-secs=\"32\""));
+    assert!(markup.contains("connection, reconnection, and allowed foreground opportunities"));
+    assert!(markup.contains("Background collection is best effort"));
+    assert!(markup.contains("may consume network airtime"));
+    assert!(markup.contains("foreground_opportunity, granted_background_opportunity, manual"));
+    assert!(markup.contains("explicitly granted, not guaranteed"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.propagation-last-sync")
+            .contains("data-trigger=\"manual\"")
+    );
+    assert!(
+        opening_tag_with_id(&markup, "mobile.propagation-last-sync")
+            .contains("data-outcome=\"succeeded\"")
+    );
+    assert!(markup.contains("Last synchronization: manual · succeeded · 2 new messages"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.propagation-cooldown")
+            .contains("data-remaining-secs=\"12\"")
+    );
     assert!(markup.contains("id=\"mobile.propagation-sync\""));
     assert!(markup.contains("id=\"mobile.propagation-node\""));
     assert!(markup.contains("value=\"780e7aa7b2f175c88f28c7ba8ab1b714\" selected"));
@@ -861,6 +1669,13 @@ fn stale_propagation_metadata_disables_manual_sync_without_losing_selection() {
     assert!(markup.contains("780e7aa7b2f175c88f28c7ba8ab1b714"));
     assert!(markup.contains("data-ready=\"false\""));
     assert!(opening_tag_with_id(&markup, "mobile.propagation-sync").contains("disabled"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.propagation-node")
+            .contains("aria-describedby=\"mobile.propagation-node-disabled\"")
+    );
+    assert!(markup.contains("Propagation-node selection is unavailable in this view."));
+    assert!(markup.contains("id=\"mobile.propagation-sync-disabled\""));
+    assert!(markup.contains("The selected propagation node is not ready."));
     assert!(markup.contains("Selected node is currently unavailable"));
 }
 
@@ -874,10 +1689,16 @@ fn propagation_component_renders_progress_repeat_sync_and_recoverable_failure() 
         received_count: 1,
         received_bytes: 256,
     });
+    progress.active_trigger = Some(PropagationTriggerSource::ForegroundOpportunity);
+    progress.active_sync_started_at = Some(1_700_000_100);
     let progress_markup = render_propagation(progress);
     assert!(progress_markup.contains("id=\"mobile.propagation-progress\""));
     assert!(progress_markup.contains("data-attempt-id=\"attempt-mobile-sync\""));
     assert!(progress_markup.contains("data-received-count=\"1\""));
+    assert!(
+        opening_tag_with_id(&progress_markup, "mobile.propagation-active-trigger")
+            .contains("data-trigger=\"foreground_opportunity\"")
+    );
 
     let mut repeated = PropagationUpdate::from_fixture(&completed_fixture);
     repeated.new_messages = 0;
@@ -889,6 +1710,7 @@ fn propagation_component_renders_progress_repeat_sync_and_recoverable_failure() 
     let mut failed = PropagationUpdate::from_fixture(&failed_fixture);
     failed.failure = Some(TypedFailure { code: "transport_unavailable".into(), retryable: true });
     let failure_markup = render_propagation(failed);
+    assert!(opening_tag_with_id(&failure_markup, "mobile.propagation-sync").contains("autofocus"));
     assert!(failure_markup.contains("id=\"mobile.propagation-failure\""));
     assert!(failure_markup.contains("data-code=\"transport_unavailable\""));
     assert!(failure_markup.contains("data-retryable=\"true\""));
@@ -912,4 +1734,23 @@ fn composer_projects_backend_draft_revision_and_retryability() {
     assert!(opening_tag_with_id(&markup, "mobile.send").contains("type=\"submit\""));
     assert!(markup.contains("id=\"mobile.retry.message-direct-1\""));
     assert!(opening_tag_with_id(&markup, "mobile.retry.message-direct-1").contains("disabled"));
+}
+
+#[test]
+fn composer_exposes_disabled_send_reason_when_completion_is_blocked() {
+    let state = fixture("live-empty-connected");
+    let markup = dioxus_ssr::render_element(rsx! {
+        Composer {
+            conversation: None,
+            enabled: true,
+            propagation: PropagationUpdate::from_fixture(&state),
+        }
+    });
+
+    let send = opening_tag_with_id(&markup, "mobile.send");
+    assert!(
+        send.contains("aria-describedby=\"mobile.composer-status mobile.send-disabled-reason\"")
+    );
+    assert!(markup.contains("id=\"mobile.send-disabled-reason\""));
+    assert!(markup.contains("Choose a conversation before sending a message."));
 }

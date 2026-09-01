@@ -1,8 +1,12 @@
 //! Renderer-independent contracts for mobile operating-system services.
 
 mod ble;
+mod document_exchange;
+mod text_acquisition;
 
 pub use ble::*;
+pub use document_exchange::*;
+pub use text_acquisition::*;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -309,6 +313,10 @@ pub struct PlatformFailure {
 pub trait PlatformEventStream {
     /// A closed stream returns `None`; lag must be reported as `ResyncRequired` first.
     fn next(&mut self) -> PlatformFuture<'_, Option<PlatformEvent>>;
+}
+
+pub trait ApplicationSettingsService {
+    fn open_application_settings(&self) -> PlatformFuture<'_, Result<(), PlatformFailure>>;
 }
 
 pub trait PlatformService {

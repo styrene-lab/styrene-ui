@@ -1,11 +1,18 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
+#[cfg(target_os = "ios")]
+use styrene_ui_platform::DocumentPickerFailure;
+#[cfg(not(target_os = "android"))]
+use styrene_ui_platform::DocumentShareFailure;
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
-    AuthorizationState, Contrast, KeyboardGeometry, MotionPreference, PermissionKind,
+    AuthorizationState, ClipboardTextReader, ClipboardTextWriter, Contrast,
+    DocumentPickerCompletion, DocumentRequestGeneration, DocumentShareCompletion, KeyboardGeometry,
+    MotionPreference, OpaqueDocument, OpaqueDocumentPicker, OpaqueDocumentSharer, PermissionKind,
     PermissionStatus, PlatformApplyResult, PlatformChange, PlatformEvent, PlatformEventStream,
     PlatformFailure, PlatformFuture, PlatformGeometry, PlatformInsets, PlatformService,
-    PlatformSnapshot, PlatformState, TextScale, WindowClass, WindowMetrics,
+    PlatformSnapshot, PlatformState, TextAcquisitionCompletion, TextAcquisitionGeneration,
+    TextScale, WindowClass, WindowMetrics,
 };
 
 #[cfg(any(test, target_os = "android"))]
@@ -56,6 +63,17 @@ mod android_policy {
             (Granted, Granted) => Granted,
         }
     }
+
+    pub const fn document_share_result(
+        status: i32,
+    ) -> Result<styrene_ui_platform::DocumentShareOutcome, styrene_ui_platform::DocumentShareFailure>
+    {
+        match status {
+            0 => Ok(styrene_ui_platform::DocumentShareOutcome::Presented),
+            1 => Err(styrene_ui_platform::DocumentShareFailure::Unavailable),
+            _ => Err(styrene_ui_platform::DocumentShareFailure::PresentationFailed),
+        }
+    }
 }
 
 #[cfg(any(test, target_os = "ios"))]
@@ -99,12 +117,26 @@ mod native_platform {
         atomic::{AtomicBool, AtomicU64, Ordering},
     };
     use styrene_ui_platform::{
-        AndroidUsbAttachment, AuthorizationState, PermissionKind, PermissionStatus,
-        PlatformFailure, PlatformSnapshot, TextScale,
+        AndroidUsbAttachment, AuthorizationState, CandidatePayload, DocumentPickerFailure,
+        MAX_CANDIDATE_PAYLOAD_BYTES, MAX_OPAQUE_DOCUMENT_BYTES, PermissionKind, PermissionStatus,
+        PlatformFailure, PlatformSnapshot, TextAcquisitionCompletion, TextAcquisitionFailure,
+        TextAcquisitionGeneration, TextScale,
     };
 
     static PERMISSION_REQUEST_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static DOCUMENT_REQUEST_ACTIVE: AtomicBool = AtomicBool::new(false);
     static USB_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+    enum ClipboardRead {
+        Payload(Vec<u8>),
+        Oversized,
+    }
+
+    enum DocumentRead {
+        Bytes(Vec<u8>),
+        Oversized,
+        InvalidType,
+    }
 
     struct PermissionRequestGuard;
 
@@ -215,6 +247,257 @@ mod native_platform {
         dispatch_query(move |env, activity| notifications_state(env, activity, sdk)).await
     }
 
+    pub async fn open_application_settings() -> Result<(), PlatformFailure> {
+        dispatch_query(|env, activity| {
+            let action = env.new_string("android.settings.APPLICATION_DETAILS_SETTINGS")?;
+            let action = JObject::from(action);
+            let intent = env.new_object(
+                "android/content/Intent",
+                "(Ljava/lang/String;)V",
+                &[JValue::Object(&action)],
+            )?;
+            let package =
+                env.call_method(activity, "getPackageName", "()Ljava/lang/String;", &[])?.l()?;
+            let package = JString::from(package);
+            let package = env.get_string(&package)?.to_string_lossy().into_owned();
+            let uri = env.new_string(format!("package:{package}"))?;
+            let uri = JObject::from(uri);
+            let uri = env
+                .call_static_method(
+                    "android/net/Uri",
+                    "parse",
+                    "(Ljava/lang/String;)Landroid/net/Uri;",
+                    &[JValue::Object(&uri)],
+                )?
+                .l()?;
+            env.call_method(
+                &intent,
+                "setData",
+                "(Landroid/net/Uri;)Landroid/content/Intent;",
+                &[JValue::Object(&uri)],
+            )?;
+            env.call_method(
+                activity,
+                "startActivity",
+                "(Landroid/content/Intent;)V",
+                &[JValue::Object(&intent)],
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn camera_authorization() -> AuthorizationState {
+        dispatch_query(read_native_facts)
+            .await
+            .map_or(AuthorizationState::Unavailable, |facts| facts.camera)
+    }
+
+    #[allow(dead_code)] // Consumed by the compose integration in the adjacent workflow task.
+    pub async fn read_clipboard_text(
+        generation: TextAcquisitionGeneration,
+    ) -> TextAcquisitionCompletion {
+        let result = dispatch_query(read_clipboard_bytes)
+            .await
+            .map_err(|_| TextAcquisitionFailure::Unavailable)
+            .and_then(|value| value.ok_or(TextAcquisitionFailure::Unavailable))
+            .and_then(|value| match value {
+                ClipboardRead::Payload(value) => {
+                    CandidatePayload::from_service_bytes(value).map_err(Into::into)
+                }
+                ClipboardRead::Oversized => Err(TextAcquisitionFailure::Oversized),
+            });
+        TextAcquisitionCompletion { generation, result }
+    }
+
+    pub async fn write_clipboard_text(value: String) -> Result<(), PlatformFailure> {
+        dispatch_query(move |env, activity| set_clipboard_text(env, activity, &value)).await
+    }
+
+    pub async fn pick_identity_backup() -> Result<Vec<u8>, DocumentPickerFailure> {
+        DOCUMENT_REQUEST_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| DocumentPickerFailure::Unavailable)?;
+        let (sender, receiver) = async_channel::bounded(1);
+        wry::set_document_picker_result_handler(move |uri| {
+            let _ = sender.try_send(uri);
+        });
+        let Ok(started) = dispatch_query(|env, activity| {
+            env.call_method(activity, "requestIdentityBackupDocument", "()Z", &[])?.z()
+        })
+        .await
+        else {
+            wry::clear_document_picker_result_handler();
+            DOCUMENT_REQUEST_ACTIVE.store(false, Ordering::Release);
+            return Err(DocumentPickerFailure::Unavailable);
+        };
+        if !started {
+            wry::clear_document_picker_result_handler();
+            DOCUMENT_REQUEST_ACTIVE.store(false, Ordering::Release);
+            return Err(DocumentPickerFailure::Unavailable);
+        }
+        let selected = tokio::time::timeout(std::time::Duration::from_mins(5), receiver.recv())
+            .await
+            .map_err(|_| DocumentPickerFailure::ReadFailed)
+            .and_then(|result| result.map_err(|_| DocumentPickerFailure::ReadFailed));
+        wry::clear_document_picker_result_handler();
+        DOCUMENT_REQUEST_ACTIVE.store(false, Ordering::Release);
+        let uri = selected?.ok_or(DocumentPickerFailure::Cancelled)?;
+        match dispatch_query(move |env, activity| read_document_uri(env, activity, &uri))
+            .await
+            .map_err(|_| DocumentPickerFailure::ReadFailed)?
+        {
+            DocumentRead::Bytes(bytes) => Ok(bytes),
+            DocumentRead::Oversized => Err(DocumentPickerFailure::Oversized),
+            DocumentRead::InvalidType => Err(DocumentPickerFailure::ReadFailed),
+        }
+    }
+
+    pub async fn share_identity_backup(
+        document: Vec<u8>,
+    ) -> Result<styrene_ui_platform::DocumentShareOutcome, styrene_ui_platform::DocumentShareFailure>
+    {
+        if document.len() > MAX_OPAQUE_DOCUMENT_BYTES {
+            return Err(styrene_ui_platform::DocumentShareFailure::PresentationFailed);
+        }
+        let status = dispatch_query(move |env, activity| {
+            let document = env.byte_array_from_slice(&document)?;
+            env.call_method(
+                activity,
+                "presentIdentityBackup",
+                "([B)I",
+                &[JValue::Object(&document)],
+            )?
+            .i()
+        })
+        .await
+        .map_err(|_| styrene_ui_platform::DocumentShareFailure::Unavailable)?;
+        super::android_policy::document_share_result(status)
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn read_document_uri(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        uri: &str,
+    ) -> jni::errors::Result<DocumentRead> {
+        let uri = env.new_string(uri)?;
+        let uri = env
+            .call_static_method(
+                "android/net/Uri",
+                "parse",
+                "(Ljava/lang/String;)Landroid/net/Uri;",
+                &[JValue::Object(&uri)],
+            )?
+            .l()?;
+        let resolver = env
+            .call_method(
+                activity,
+                "getContentResolver",
+                "()Landroid/content/ContentResolver;",
+                &[],
+            )?
+            .l()?;
+        let projection = env.new_object_array(2, "java/lang/String", JObject::null())?;
+        let display_name = env.new_string("_display_name")?;
+        let size = env.new_string("_size")?;
+        env.set_object_array_element(&projection, 0, &display_name)?;
+        env.set_object_array_element(&projection, 1, &size)?;
+        let cursor = env
+            .call_method(
+                &resolver,
+                "query",
+                "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;",
+                &[
+                    JValue::Object(&uri),
+                    JValue::Object(&projection),
+                    JValue::Object(&JObject::null()),
+                    JValue::Object(&JObject::null()),
+                    JValue::Object(&JObject::null()),
+                ],
+            )?
+            .l()?;
+        if cursor.is_null() || !env.call_method(&cursor, "moveToFirst", "()Z", &[])?.z()? {
+            return Ok(DocumentRead::InvalidType);
+        }
+        let name_index = env
+            .call_method(
+                &cursor,
+                "getColumnIndex",
+                "(Ljava/lang/String;)I",
+                &[JValue::Object(&display_name)],
+            )?
+            .i()?;
+        let size_index = env
+            .call_method(
+                &cursor,
+                "getColumnIndex",
+                "(Ljava/lang/String;)I",
+                &[JValue::Object(&size)],
+            )?
+            .i()?;
+        let name = if name_index >= 0 {
+            env.call_method(
+                &cursor,
+                "getString",
+                "(I)Ljava/lang/String;",
+                &[JValue::Int(name_index)],
+            )?
+            .l()?
+        } else {
+            JObject::null()
+        };
+        let declared_size = if size_index >= 0 {
+            env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(size_index)])?.j()?
+        } else {
+            -1
+        };
+        let _ = env.call_method(&cursor, "close", "()V", &[]);
+        if name.is_null()
+            || !env
+                .get_string(&JString::from(name))?
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .ends_with(".stid")
+        {
+            return Ok(DocumentRead::InvalidType);
+        }
+        if declared_size > i64::try_from(MAX_OPAQUE_DOCUMENT_BYTES).unwrap_or(i64::MAX) {
+            return Ok(DocumentRead::Oversized);
+        }
+        let stream = env
+            .call_method(
+                &resolver,
+                "openInputStream",
+                "(Landroid/net/Uri;)Ljava/io/InputStream;",
+                &[JValue::Object(&uri)],
+            )?
+            .l()?;
+        if stream.is_null() {
+            return Ok(DocumentRead::InvalidType);
+        }
+        let buffer = env.new_byte_array(8192)?;
+        let mut bytes = Vec::with_capacity(
+            usize::try_from(declared_size.max(0)).unwrap_or(0).min(MAX_OPAQUE_DOCUMENT_BYTES),
+        );
+        loop {
+            let read =
+                env.call_method(&stream, "read", "([B)I", &[JValue::Object(&buffer)])?.i()?;
+            if read < 0 {
+                break;
+            }
+            let read = usize::try_from(read).map_err(|_| invalid_arguments())?;
+            if bytes.len().saturating_add(read) > MAX_OPAQUE_DOCUMENT_BYTES {
+                let _ = env.call_method(&stream, "close", "()V", &[]);
+                return Ok(DocumentRead::Oversized);
+            }
+            let chunk = env.convert_byte_array(&buffer)?;
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        env.call_method(&stream, "close", "()V", &[])?.v()?;
+        Ok(DocumentRead::Bytes(bytes))
+    }
+
     async fn request_and_observe(
         names: &'static [&'static str],
     ) -> Result<AuthorizationState, PlatformFailure> {
@@ -306,6 +589,84 @@ mod native_platform {
             usb: AuthorizationState::Unavailable,
             notifications: notifications_state(env, activity, sdk)?,
         })
+    }
+
+    fn read_clipboard_bytes(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+    ) -> jni::errors::Result<Option<ClipboardRead>> {
+        let service_name = env.new_string("clipboard")?;
+        let manager = env
+            .call_method(
+                activity,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&service_name)],
+            )?
+            .l()?;
+        if manager.is_null() || !env.call_method(&manager, "hasPrimaryClip", "()Z", &[])?.z()? {
+            return Ok(None);
+        }
+        let clip = env
+            .call_method(&manager, "getPrimaryClip", "()Landroid/content/ClipData;", &[])?
+            .l()?;
+        if clip.is_null() || env.call_method(&clip, "getItemCount", "()I", &[])?.i()? == 0 {
+            return Ok(None);
+        }
+        let item = env
+            .call_method(
+                &clip,
+                "getItemAt",
+                "(I)Landroid/content/ClipData$Item;",
+                &[JValue::Int(0)],
+            )?
+            .l()?;
+        let text = env.call_method(&item, "getText", "()Ljava/lang/CharSequence;", &[])?.l()?;
+        if text.is_null() {
+            return Ok(None);
+        }
+        let text = env.call_method(&text, "toString", "()Ljava/lang/String;", &[])?.l()?;
+        let utf16_len = env.call_method(&text, "length", "()I", &[])?.i()?;
+        if usize::try_from(utf16_len).map_err(|_| invalid_arguments())?
+            > MAX_CANDIDATE_PAYLOAD_BYTES
+        {
+            return Ok(Some(ClipboardRead::Oversized));
+        }
+        let text = env.get_string(&JString::from(text))?.to_string_lossy().into_owned();
+        Ok(Some(ClipboardRead::Payload(text.into_bytes())))
+    }
+
+    fn set_clipboard_text(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        value: &str,
+    ) -> jni::errors::Result<()> {
+        let service_name = env.new_string("clipboard")?;
+        let manager = env
+            .call_method(
+                activity,
+                "getSystemService",
+                "(Ljava/lang/String;)Ljava/lang/Object;",
+                &[JValue::Object(&service_name)],
+            )?
+            .l()?;
+        let label = env.new_string("Public LXMF destination")?;
+        let value = env.new_string(value)?;
+        let clip = env
+            .call_static_method(
+                "android/content/ClipData",
+                "newPlainText",
+                "(Ljava/lang/CharSequence;Ljava/lang/CharSequence;)Landroid/content/ClipData;",
+                &[JValue::Object(&label), JValue::Object(&value)],
+            )?
+            .l()?;
+        env.call_method(
+            &manager,
+            "setPrimaryClip",
+            "(Landroid/content/ClipData;)V",
+            &[JValue::Object(&clip)],
+        )?;
+        Ok(())
     }
 
     fn read_sdk(env: &mut JNIEnv<'_>, _: &JObject<'_>) -> jni::errors::Result<i32> {
@@ -702,8 +1063,9 @@ mod native_platform {
     use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
     use styrene_ui_apple_bridge::NativeAuthorization;
     use styrene_ui_platform::{
-        AndroidUsbAttachment, AuthorizationState, PermissionKind, PermissionStatus,
-        PlatformFailure, PlatformSnapshot,
+        AndroidUsbAttachment, AuthorizationState, CandidatePayload, MAX_CANDIDATE_PAYLOAD_BYTES,
+        PermissionKind, PermissionStatus, PlatformFailure, PlatformSnapshot,
+        TextAcquisitionCompletion, TextAcquisitionFailure, TextAcquisitionGeneration,
     };
 
     static CONFIGURATION_SENDER: Mutex<Option<async_channel::Sender<()>>> = Mutex::new(None);
@@ -786,6 +1148,42 @@ mod native_platform {
         query_notification_authorization().await
     }
 
+    pub async fn open_application_settings() -> Result<(), PlatformFailure> {
+        if styrene_ui_apple_bridge::open_application_settings()
+            .map_err(|_| failure("ios_settings_open_failed", true))?
+        {
+            Ok(())
+        } else {
+            Err(failure("ios_settings_open_failed", true))
+        }
+    }
+
+    pub fn camera_authorization() -> std::future::Ready<AuthorizationState> {
+        std::future::ready(authorization(styrene_ui_apple_bridge::camera_authorization()))
+    }
+
+    #[allow(dead_code)] // Consumed by the compose integration in the adjacent workflow task.
+    pub fn read_clipboard_text(
+        generation: TextAcquisitionGeneration,
+    ) -> std::future::Ready<TextAcquisitionCompletion> {
+        let result = match styrene_ui_apple_bridge::clipboard_text(MAX_CANDIDATE_PAYLOAD_BYTES) {
+            Ok(Some(value)) => CandidatePayload::from_service_bytes(value).map_err(Into::into),
+            Ok(None) => Err(TextAcquisitionFailure::Unavailable),
+            Err(styrene_ui_apple_bridge::NativeBridgeFailure::Oversized) => {
+                Err(TextAcquisitionFailure::Oversized)
+            }
+            Err(_) => Err(TextAcquisitionFailure::Unavailable),
+        };
+        std::future::ready(TextAcquisitionCompletion { generation, result })
+    }
+
+    pub fn write_clipboard_text(value: String) -> std::future::Ready<Result<(), PlatformFailure>> {
+        std::future::ready(
+            styrene_ui_apple_bridge::set_clipboard_text(&value)
+                .map_err(|_| failure("ios_clipboard_write_failed", true)),
+        )
+    }
+
     pub fn android_usb_attachments()
     -> std::future::Ready<Result<Vec<AndroidUsbAttachment>, PlatformFailure>> {
         std::future::ready(Ok(Vec::new()))
@@ -863,7 +1261,8 @@ mod native_platform {
 mod native_platform {
     use styrene_ui_platform::{
         AndroidUsbAttachment, AuthorizationState, PermissionKind, PermissionStatus,
-        PlatformFailure, PlatformSnapshot,
+        PlatformFailure, PlatformSnapshot, TextAcquisitionCompletion, TextAcquisitionFailure,
+        TextAcquisitionGeneration,
     };
 
     pub fn prepare_subscription() -> Option<async_channel::Receiver<()>> {
@@ -883,6 +1282,34 @@ mod native_platform {
     pub fn request_notifications() -> std::future::Ready<Result<AuthorizationState, PlatformFailure>>
     {
         std::future::ready(Ok(AuthorizationState::Unavailable))
+    }
+
+    pub fn open_application_settings() -> std::future::Ready<Result<(), PlatformFailure>> {
+        std::future::ready(Err(PlatformFailure {
+            code: "application_settings_unavailable".into(),
+            retryable: false,
+        }))
+    }
+
+    pub fn camera_authorization() -> std::future::Ready<AuthorizationState> {
+        std::future::ready(AuthorizationState::Unavailable)
+    }
+
+    #[allow(dead_code)] // Consumed by the compose integration in the adjacent workflow task.
+    pub fn read_clipboard_text(
+        generation: TextAcquisitionGeneration,
+    ) -> std::future::Ready<TextAcquisitionCompletion> {
+        std::future::ready(TextAcquisitionCompletion {
+            generation,
+            result: Err(TextAcquisitionFailure::Unavailable),
+        })
+    }
+
+    pub fn write_clipboard_text(_: String) -> std::future::Ready<Result<(), PlatformFailure>> {
+        std::future::ready(Err(PlatformFailure {
+            code: "clipboard_write_unavailable".into(),
+            retryable: false,
+        }))
     }
 
     pub fn android_usb_attachments()
@@ -1099,6 +1526,157 @@ enum WebEventKind {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct WebViewPlatformService;
+
+#[derive(Clone, Copy, Debug, Default)]
+#[allow(dead_code)] // Consumed by the compose integration in the adjacent workflow task.
+pub struct NativeClipboardTextReader;
+
+impl ClipboardTextReader for NativeClipboardTextReader {
+    fn read_clipboard_text(
+        &self,
+        generation: TextAcquisitionGeneration,
+    ) -> PlatformFuture<'_, TextAcquisitionCompletion> {
+        Box::pin(async move { native_platform::read_clipboard_text(generation).await })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeClipboardTextWriter;
+
+impl ClipboardTextWriter for NativeClipboardTextWriter {
+    fn write_clipboard_text(
+        &self,
+        value: String,
+    ) -> PlatformFuture<'_, Result<(), PlatformFailure>> {
+        Box::pin(async move { native_platform::write_clipboard_text(value).await })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeApplicationSettingsService;
+
+impl styrene_ui_platform::ApplicationSettingsService for NativeApplicationSettingsService {
+    fn open_application_settings(&self) -> PlatformFuture<'_, Result<(), PlatformFailure>> {
+        Box::pin(async move { native_platform::open_application_settings().await })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeOpaqueDocumentSharer;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeOpaqueDocumentPicker;
+
+impl OpaqueDocumentPicker for NativeOpaqueDocumentPicker {
+    fn pick_document(
+        &self,
+        generation: DocumentRequestGeneration,
+    ) -> PlatformFuture<'_, DocumentPickerCompletion> {
+        Box::pin(async move {
+            #[cfg(target_os = "ios")]
+            let result = {
+                let (sender, receiver) = async_channel::bounded(1);
+                match styrene_ui_apple_bridge::present_identity_backup_picker(
+                    styrene_ui_platform::MAX_OPAQUE_DOCUMENT_BYTES,
+                    move |result| {
+                        let result = result
+                            .map_err(|failure| match failure {
+                                styrene_ui_apple_bridge::NativeDocumentPickerFailure::Cancelled => {
+                                    DocumentPickerFailure::Cancelled
+                                }
+                                styrene_ui_apple_bridge::NativeDocumentPickerFailure::Oversized => {
+                                    DocumentPickerFailure::Oversized
+                                }
+                                styrene_ui_apple_bridge::NativeDocumentPickerFailure::ReadFailed => {
+                                    DocumentPickerFailure::ReadFailed
+                                }
+                                styrene_ui_apple_bridge::NativeDocumentPickerFailure::PresentationUnavailable => {
+                                    DocumentPickerFailure::Unavailable
+                                }
+                            })
+                            .and_then(|bytes| OpaqueDocument::new(bytes).map_err(Into::into));
+                        let _ = sender.try_send(result);
+                    },
+                ) {
+                    Ok(request) => {
+                        let received = tokio::time::timeout(
+                            std::time::Duration::from_mins(5),
+                            receiver.recv(),
+                        )
+                        .await;
+                        drop(request);
+                        match received {
+                            Ok(Ok(result)) => result,
+                            Ok(Err(_)) | Err(_) => Err(DocumentPickerFailure::ReadFailed),
+                        }
+                    }
+                    Err(_) => Err(DocumentPickerFailure::Unavailable),
+                }
+            };
+            #[cfg(target_os = "android")]
+            let result = native_platform::pick_identity_backup()
+                .await
+                .and_then(|bytes| OpaqueDocument::new(bytes).map_err(Into::into));
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            let result = Err(styrene_ui_platform::DocumentPickerFailure::Unavailable);
+            DocumentPickerCompletion { generation, result }
+        })
+    }
+}
+
+impl OpaqueDocumentSharer for NativeOpaqueDocumentSharer {
+    fn present_document_share(
+        &self,
+        generation: DocumentRequestGeneration,
+        document: OpaqueDocument,
+    ) -> PlatformFuture<'_, DocumentShareCompletion> {
+        Box::pin(async move {
+            #[cfg(target_os = "ios")]
+            let result = {
+                let map_error = |error| match error {
+                    styrene_ui_apple_bridge::NativeBridgeFailure::MainThreadUnavailable
+                    | styrene_ui_apple_bridge::NativeBridgeFailure::PresentationUnavailable => {
+                        DocumentShareFailure::Unavailable
+                    }
+                    styrene_ui_apple_bridge::NativeBridgeFailure::MediaTypeUnavailable
+                    | styrene_ui_apple_bridge::NativeBridgeFailure::Oversized
+                    | styrene_ui_apple_bridge::NativeBridgeFailure::WriteFailed => {
+                        DocumentShareFailure::PresentationFailed
+                    }
+                };
+                let (presented, presentation) = async_channel::bounded(1);
+                match styrene_ui_apple_bridge::present_identity_backup(
+                    document.as_bytes(),
+                    move || {
+                        let _ = presented.force_send(());
+                    },
+                ) {
+                    Ok(()) => match tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        presentation.recv(),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => Ok(styrene_ui_platform::DocumentShareOutcome::Presented),
+                        Ok(Err(_)) | Err(_) => {
+                            let _ = styrene_ui_apple_bridge::remove_identity_backup_temp_file();
+                            Err(DocumentShareFailure::PresentationFailed)
+                        }
+                    },
+                    Err(error) => Err(map_error(error)),
+                }
+            };
+            #[cfg(target_os = "android")]
+            let result = native_platform::share_identity_backup(document.into_bytes()).await;
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            let result = {
+                let _ = document;
+                Err(DocumentShareFailure::Unavailable)
+            };
+            DocumentShareCompletion { generation, result }
+        })
+    }
+}
 
 struct WebViewPlatformEventStream {
     eval: document::Eval,
@@ -1368,6 +1946,11 @@ pub async fn request_android_usb_authorization(
     WebViewPlatformService.request_android_usb_authorization(attachment).await
 }
 
+#[cfg(not(feature = "ui-test"))]
+pub async fn camera_authorization() -> AuthorizationState {
+    native_platform::camera_authorization().await
+}
+
 async fn run_platform_subscription(snapshot: &mut Signal<Option<PlatformSnapshot>>) {
     let service = WebViewPlatformService;
     let Ok(mut events) = service.subscribe() else {
@@ -1461,6 +2044,21 @@ mod tests {
         assert_eq!(
             merge_authorization(AuthorizationState::Denied, AuthorizationState::Restricted),
             AuthorizationState::Restricted
+        );
+    }
+
+    #[test]
+    fn android_document_share_statuses_are_typed() {
+        use styrene_ui_platform::{DocumentShareFailure, DocumentShareOutcome};
+
+        assert_eq!(android_policy::document_share_result(0), Ok(DocumentShareOutcome::Presented));
+        assert_eq!(
+            android_policy::document_share_result(1),
+            Err(DocumentShareFailure::Unavailable)
+        );
+        assert_eq!(
+            android_policy::document_share_result(2),
+            Err(DocumentShareFailure::PresentationFailed)
         );
     }
 

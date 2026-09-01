@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "corpus": "styrene-mobile-qr-ingress-v1",
+  "selected_architecture": "system_image_capture_pure_rust_quircs",
+  "decoder": {
+    "crate": "quircs",
+    "version": "0.10.3",
+    "image_crate_version": "0.25.10",
+    "image_formats": ["jpeg", "png"],
+    "image_default_features": false
+  },
+  "limits": {
+    "encoded_image_bytes": 8388608,
+    "image_width": 4096,
+    "image_height": 4096,
+    "decoded_pixels": 16777216,
+    "candidate_payload_bytes": 4096,
+    "decoded_symbols": 1
+  },
+  "privacy": {
+    "retain_encoded_image": false,
+    "retain_grayscale_frame": false,
+    "log_decoded_payload": false,
+    "fixture_images": "generated_in_memory"
+  },
+  "cases": [
+    {
+      "id": "qr.decode.jpeg.canonical",
+      "layer": "decoder",
+      "owner_host": "nucleus",
+      "input": "generated_jpeg_single_canonical_destination",
+      "expected": "candidate",
+      "first_test": "jpeg_single_symbol_returns_bounded_candidate"
+    },
+    {
+      "id": "qr.decode.png.canonical",
+      "layer": "decoder",
+      "owner_host": "nucleus",
+      "input": "generated_png_single_canonical_destination",
+      "expected": "candidate",
+      "first_test": "png_single_symbol_returns_bounded_candidate"
+    },
+    {
+      "id": "qr.decode.no-code",
+      "layer": "decoder",
+      "owner_host": "nucleus",
+      "input": "generated_blank_png",
+      "expected": "no_code",
+      "first_test": "blank_image_returns_no_code"
+    },
+    {
+      "id": "qr.decode.ambiguous",
+      "layer": "decoder",
+      "owner_host": "nucleus",
+      "input": "generated_png_two_symbols",
+      "expected": "ambiguous",
+      "first_test": "multiple_symbols_return_ambiguous"
+    },
+    {
+      "id": "qr.decode.malformed-image",
+      "layer": "decoder",
+      "owner_host": "nucleus",
+      "input": "bounded_non_image_bytes",
+      "expected": "malformed",
+      "first_test": "non_image_bytes_return_malformed"
+    },
+    {
+      "id": "qr.decode.unsupported-format",
+      "layer": "decoder",
+      "owner_host": "nucleus",
+      "input": "generated_gif_single_symbol",
+      "expected": "unsupported",
+      "first_test": "disabled_image_format_returns_unsupported"
+    },
+    {
+      "id": "qr.decode.encoded-oversized",
+      "layer": "decoder",
+      "owner_host": "nucleus",
+      "input": "encoded_bytes_over_limit",
+      "expected": "oversized",
+      "first_test": "encoded_limit_is_checked_before_image_decode"
+    },
+    {
+      "id": "qr.decode.pixel-oversized",
+      "layer": "decoder",
+      "owner_host": "nucleus",
+      "input": "png_dimensions_over_pixel_limit",
+      "expected": "oversized",
+      "first_test": "pixel_limit_is_checked_before_frame_allocation"
+    },
+    {
+      "id": "qr.decode.payload-oversized",
+      "layer": "decoder",
+      "owner_host": "nucleus",
+      "input": "generated_png_payload_over_candidate_limit",
+      "expected": "oversized",
+      "first_test": "decoded_payload_uses_candidate_byte_limit"
+    },
+    {
+      "id": "qr.capture.cancelled",
+      "layer": "platform",
+      "owner_host": "nucleus",
+      "input": "system_picker_cancel",
+      "expected": "cancelled",
+      "first_test": "cancelled_capture_preserves_existing_destination"
+    },
+    {
+      "id": "qr.capture.denied",
+      "layer": "platform",
+      "owner_host": "nucleus",
+      "input": "camera_permission_denied",
+      "expected": "denied",
+      "first_test": "camera_denial_keeps_manual_and_paste_available"
+    },
+    {
+      "id": "qr.capture.stale-generation",
+      "layer": "composition",
+      "owner_host": "nucleus",
+      "input": "completion_from_previous_generation",
+      "expected": "ignored_stale",
+      "first_test": "stale_capture_cannot_replace_current_candidate"
+    },
+    {
+      "id": "qr.compose.backend-validation",
+      "layer": "composition",
+      "owner_host": "cross-repo",
+      "input": "decoded_bounded_noncanonical_text",
+      "expected": "backend_rejected_no_conversation",
+      "first_test": "decoded_text_never_creates_optimistic_product_state"
+    },
+    {
+      "id": "qr.privacy.payload-free-failure",
+      "layer": "privacy",
+      "owner_host": "cross-repo",
+      "input": "decoder_failure_with_sensitive_marker",
+      "expected": "stable_code_only",
+      "first_test": "debug_errors_and_diagnostics_exclude_frames_and_payloads"
+    }
+  ]
+}

@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 dioxus = { workspace = true, features = ["asset", "document", "hooks"] }
+qrcode.workspace = true
 styrene-ui-state.workspace = true
 styrene-ui-platform.workspace = true
 

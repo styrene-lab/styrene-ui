@@ -10,6 +10,17 @@ impl CoreBluetoothGeneration {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub struct CoreBluetoothNusShutdown {
+    generation: CoreBluetoothGeneration,
+}
+
+impl CoreBluetoothNusShutdown {
+    pub(crate) const fn generation(self) -> CoreBluetoothGeneration {
+        self.generation
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CoreBluetoothManagerState {
     Unknown,
@@ -104,6 +115,8 @@ pub struct CoreBluetoothAttemptBoundary {
     write_limit: Option<BleWriteLimit>,
     next_write: u64,
     pending_write: Option<CoreBluetoothWriteToken>,
+    disconnection_observed: bool,
+    shutdown_transferred: bool,
 }
 
 impl CoreBluetoothAttemptBoundary {
@@ -115,6 +128,8 @@ impl CoreBluetoothAttemptBoundary {
             write_limit: None,
             next_write: 1,
             pending_write: None,
+            disconnection_observed: false,
+            shutdown_transferred: false,
         }
     }
 
@@ -130,6 +145,9 @@ impl CoreBluetoothAttemptBoundary {
     ) -> Result<CoreBluetoothApply, CoreBluetoothFailure> {
         if generation != self.generation {
             return Ok(CoreBluetoothApply::IgnoredStale);
+        }
+        if self.phase == CoreBluetoothPhase::Closed {
+            return Err(CoreBluetoothFailure::InvalidPhase);
         }
         if state != CoreBluetoothManagerState::PoweredOn {
             self.phase = CoreBluetoothPhase::WaitingForManager;
@@ -281,16 +299,39 @@ impl CoreBluetoothAttemptBoundary {
             return CoreBluetoothApply::IgnoredStale;
         }
         if self.phase == CoreBluetoothPhase::Closed {
+            self.disconnection_observed = true;
             return CoreBluetoothApply::Applied(Vec::new());
         }
         self.close();
+        self.disconnection_observed = true;
         CoreBluetoothApply::Applied(vec![CoreBluetoothEffect::Disconnected])
+    }
+
+    /// Mint proof that the generation-scoped NUS boundary is closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for stale generations or an active NUS boundary.
+    pub fn shutdown_token(
+        &mut self,
+        generation: CoreBluetoothGeneration,
+    ) -> Result<CoreBluetoothNusShutdown, CoreBluetoothFailure> {
+        if generation != self.generation
+            || self.phase != CoreBluetoothPhase::Closed
+            || !self.disconnection_observed
+            || self.shutdown_transferred
+        {
+            return Err(CoreBluetoothFailure::InvalidPhase);
+        }
+        self.shutdown_transferred = true;
+        Ok(CoreBluetoothNusShutdown { generation })
     }
 
     pub fn close(&mut self) {
         self.phase = CoreBluetoothPhase::Closed;
         self.write_limit = None;
         self.pending_write = None;
+        self.disconnection_observed = false;
     }
 }
 
@@ -454,6 +495,7 @@ mod tests {
     #[test]
     fn disconnect_is_terminal_idempotent_and_rejects_late_callbacks() {
         let mut boundary = ready_boundary(20);
+        assert_eq!(boundary.shutdown_token(CURRENT), Err(CoreBluetoothFailure::InvalidPhase));
         let write = boundary.begin_write(vec![1]).unwrap();
         assert_eq!(boundary.disconnected(STALE), CoreBluetoothApply::IgnoredStale);
         assert_eq!(
@@ -467,5 +509,15 @@ mod tests {
         );
         assert_eq!(boundary.disconnected(CURRENT), CoreBluetoothApply::Applied(Vec::new()));
         assert_eq!(boundary.phase(), CoreBluetoothPhase::Closed);
+        assert_eq!(
+            boundary.shutdown_token(CURRENT),
+            Ok(CoreBluetoothNusShutdown { generation: CURRENT })
+        );
+        assert_eq!(boundary.shutdown_token(CURRENT), Err(CoreBluetoothFailure::InvalidPhase));
+        assert_eq!(boundary.shutdown_token(STALE), Err(CoreBluetoothFailure::InvalidPhase));
+        assert_eq!(
+            boundary.manager_changed(CURRENT, CoreBluetoothManagerState::PoweredOn),
+            Err(CoreBluetoothFailure::InvalidPhase)
+        );
     }
 }

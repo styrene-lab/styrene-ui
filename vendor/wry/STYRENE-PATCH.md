@@ -19,6 +19,16 @@ The activity template also owns the bounded lifetime of Android's dynamic USB
 permission receiver. It validates the callback against the requested device
 name before forwarding the one-shot result to safe application code.
 
+The same activity template exposes Android's system document picker through a
+one-shot URI callback. Product workflow state and document reads remain in
+Rust; the activity owns only intent presentation and result forwarding.
+
+Encrypted identity backup sharing uses the same activity template and an
+exact-path, non-exported content provider. It writes at most 16 MiB to one
+private cache file, presents an `ACTION_SEND` chooser with a read-only URI
+grant, and removes the file on presentation failure, return to the activity,
+activity destruction, or the next activity creation.
+
 The fallback remains unavailable when multiple activities are registered, so
 ambiguous multi-window routing still fails closed. Remove this patch after the
 equivalent behavior is available in the pinned upstream Wry release.

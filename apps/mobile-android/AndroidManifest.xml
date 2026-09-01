@@ -27,6 +27,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar"
         android:usesCleartextTraffic="false">
+        <provider
+            android:name="dev.dioxus.main.IdentityBackupProvider"
+            android:authorities="${applicationId}.identity-backup"
+            android:exported="false"
+            android:grantUriPermissions="true" />
         <activity
             android:name="dev.dioxus.main.MainActivity"
             android:configChanges="density|fontScale|keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
