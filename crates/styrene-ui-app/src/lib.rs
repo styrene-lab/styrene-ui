@@ -12,14 +12,15 @@ use styrene_ui_platform::{
 };
 use styrene_ui_state::{
     BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
-    DestinationEntryConstraint, IdentityCustodyAuthentication, IdentityCustodyAvailability,
-    IdentityCustodyBackend, IdentityCustodyDowngrade, IdentityCustodyProtection,
-    LXMF_DESTINATION_INPUT_MAX_BYTES, LocalAnnounceOutcome, Message, MobileAction,
-    MobileActionKind, MobileFixture, MobileStore, OperationalSummary, PEER_SEARCH_INPUT_MAX_BYTES,
-    Peer, PropagationEvidence, PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState,
-    TargetClass, TransportEvidence, TypedFailure, bounded_destination_input,
-    bounded_peer_search_input, destination_entry_constraint, peer_matches_search,
-    start_conversation_action,
+    DestinationEntryConstraint, IdentityBackupProtection, IdentityCustodyAuthentication,
+    IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
+    IdentityCustodyProtection, IdentityRecoveryFailure, IdentityRecoveryPhase,
+    IdentityRecoveryState, LXMF_DESTINATION_INPUT_MAX_BYTES, LocalAnnounceOutcome, Message,
+    MobileAction, MobileActionKind, MobileFixture, MobileStore, OperationalSummary,
+    PEER_SEARCH_INPUT_MAX_BYTES, Peer, PropagationEvidence, PropagationUpdate, RuntimeBoundary,
+    SessionPhase, SyncState, TargetClass, TransportEvidence, TypedFailure,
+    bounded_destination_input, bounded_peer_search_input, destination_entry_constraint,
+    peer_matches_search, start_conversation_action,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -557,6 +558,10 @@ pub fn MobileShell(
     #[props(default)] identity_copy_succeeded: bool,
     #[props(default)] identity_copy_failure: Option<String>,
     #[props(default)] identity_copy: Option<EventHandler<String>>,
+    #[props(default)] identity_recovery: IdentityRecoveryState,
+    #[props(default)] identity_backup: Option<EventHandler<IdentityBackupProtection>>,
+    #[props(default)] identity_restore_select: Option<EventHandler<()>>,
+    #[props(default)] identity_restore: Option<EventHandler<IdentityBackupProtection>>,
     #[props(default)] application_settings_busy: bool,
     #[props(default)] application_settings_failure: Option<String>,
     #[props(default)] open_application_settings: Option<EventHandler<()>>,
@@ -1309,6 +1314,13 @@ pub fn MobileShell(
                             }
                         }
                     }
+                    IdentityRecoveryPanel {
+                        state: identity_recovery,
+                        enabled: live_actions_enabled,
+                        backup: identity_backup,
+                        restore_select: identity_restore_select,
+                        restore: identity_restore,
+                    }
                 }
                 article {
                     id: "mobile.permissions",
@@ -1514,6 +1526,231 @@ fn OperationalSummaryPanel(summary: OperationalSummary) -> Element {
 }
 
 const IDENTITY_DISPLAY_NAME_MAX_CHARS: usize = 64;
+
+fn form_text(event: &FormEvent, name: &str) -> String {
+    match event.data().get_first(name) {
+        Some(FormValue::Text(value)) => value,
+        Some(FormValue::File(_)) | None => String::new(),
+    }
+}
+
+fn recovery_failure_message(failure: IdentityRecoveryFailure) -> &'static str {
+    match failure {
+        IdentityRecoveryFailure::ProtectionRequired => "Enter a recovery passphrase.",
+        IdentityRecoveryFailure::ProtectionMismatch => {
+            "The passphrase confirmation does not match."
+        }
+        IdentityRecoveryFailure::ProtectionTooLarge => {
+            "The recovery passphrase exceeds the supported size."
+        }
+        IdentityRecoveryFailure::ArtifactTooLarge => {
+            "The selected backup exceeds the supported size."
+        }
+        IdentityRecoveryFailure::InvalidBackup => {
+            "The selected file is not a supported Styrene identity backup."
+        }
+        IdentityRecoveryFailure::AuthenticationFailed => {
+            "The backup could not be authenticated with that passphrase."
+        }
+        IdentityRecoveryFailure::CustodyUnavailable => {
+            "Identity custody is unavailable for this recovery operation."
+        }
+        IdentityRecoveryFailure::IdentityConflict => {
+            "The backup conflicts with identity custody already on this device."
+        }
+        IdentityRecoveryFailure::UnsupportedBackend => {
+            "Portable recovery is unavailable for the active custody backend."
+        }
+        IdentityRecoveryFailure::PickerCancelled => "Backup selection was cancelled.",
+        IdentityRecoveryFailure::PickerUnavailable => {
+            "Backup selection is unavailable on this device."
+        }
+        IdentityRecoveryFailure::PickerReadFailed => "The selected backup could not be read.",
+        IdentityRecoveryFailure::ShareUnavailable => "The system share service is unavailable.",
+        IdentityRecoveryFailure::SharePresentationFailed => {
+            "The system share sheet could not be presented."
+        }
+        IdentityRecoveryFailure::SessionUnavailable => "The mobile session is unavailable.",
+    }
+}
+
+#[component]
+pub fn IdentityRecoveryPanel(
+    state: IdentityRecoveryState,
+    enabled: bool,
+    #[props(default)] backup: Option<EventHandler<IdentityBackupProtection>>,
+    #[props(default)] restore_select: Option<EventHandler<()>>,
+    #[props(default)] restore: Option<EventHandler<IdentityBackupProtection>>,
+) -> Element {
+    let mut local_failure = use_signal(|| None::<IdentityRecoveryFailure>);
+    let mut backup_form_epoch = use_signal(|| 0_u64);
+    let mut restore_form_epoch = use_signal(|| 0_u64);
+    let busy = matches!(
+        state.phase,
+        IdentityRecoveryPhase::Exporting
+            | IdentityRecoveryPhase::Sharing
+            | IdentityRecoveryPhase::Selecting
+            | IdentityRecoveryPhase::Restoring
+    );
+    let backup_enabled = enabled && backup.is_some() && !busy;
+    let restore_enabled = enabled && state.restore_available && restore.is_some() && !busy;
+    let failure = local_failure().or(state.failure);
+
+    rsx! {
+        section {
+            id: "mobile.identity-recovery",
+            class: "identity-recovery",
+            "aria-labelledby": "mobile.identity-recovery-heading",
+            "data-phase": format!("{:?}", state.phase).to_ascii_lowercase(),
+            h4 { id: "mobile.identity-recovery-heading", "Encrypted recovery" }
+            p {
+                class: "field-hint",
+                "Create a passphrase-protected portable identity backup. The passphrase cannot be recovered by Styrene."
+            }
+            form {
+                key: "backup-{backup_form_epoch}",
+                id: "mobile.identity-backup-form",
+                class: "identity-recovery-form",
+                onsubmit: move |event| {
+                    event.prevent_default();
+                    local_failure.set(None);
+                    let protection = form_text(&event, "backup-protection");
+                    let confirmation = form_text(&event, "backup-protection-confirmation");
+                    if protection != confirmation {
+                        backup_form_epoch += 1;
+                        local_failure.set(Some(IdentityRecoveryFailure::ProtectionMismatch));
+                        return;
+                    }
+                    match IdentityBackupProtection::new(protection) {
+                        Ok(protection) if backup_enabled => {
+                            backup_form_epoch += 1;
+                            if let Some(backup) = backup {
+                                backup.call(protection);
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(failure) => {
+                            backup_form_epoch += 1;
+                            local_failure.set(Some(failure));
+                        }
+                    }
+                },
+                label { r#for: "mobile.identity-backup-protection", "Backup passphrase" }
+                input {
+                    id: "mobile.identity-backup-protection",
+                    name: "backup-protection",
+                    r#type: "password",
+                    autocomplete: "new-password",
+                    required: true,
+                    disabled: !backup_enabled,
+                    "aria-describedby": "mobile.identity-recovery-status",
+                }
+                label { r#for: "mobile.identity-backup-protection-confirmation", "Confirm backup passphrase" }
+                input {
+                    id: "mobile.identity-backup-protection-confirmation",
+                    name: "backup-protection-confirmation",
+                    r#type: "password",
+                    autocomplete: "new-password",
+                    required: true,
+                    disabled: !backup_enabled,
+                    "aria-describedby": "mobile.identity-recovery-status",
+                }
+                button {
+                    id: "mobile.identity-backup",
+                    class: "secondary-action",
+                    r#type: "submit",
+                    disabled: !backup_enabled,
+                    "aria-describedby": "mobile.identity-recovery-status",
+                    if matches!(state.phase, IdentityRecoveryPhase::Exporting | IdentityRecoveryPhase::Sharing) {
+                        "Preparing encrypted backup"
+                    } else {
+                        "Create encrypted backup"
+                    }
+                }
+            }
+            if state.restore_available {
+                div { class: "identity-restore-actions",
+                    button {
+                        id: "mobile.identity-restore-select",
+                        class: "secondary-action",
+                        r#type: "button",
+                        disabled: !enabled || restore_select.is_none() || busy,
+                        onclick: move |_| {
+                            local_failure.set(None);
+                            if let Some(restore_select) = restore_select {
+                                restore_select.call(());
+                            }
+                        },
+                        "Choose encrypted backup"
+                    }
+                    form {
+                        key: "restore-{restore_form_epoch}",
+                        id: "mobile.identity-restore-form",
+                        class: "identity-recovery-form",
+                        onsubmit: move |event| {
+                            event.prevent_default();
+                            local_failure.set(None);
+                            match IdentityBackupProtection::new(form_text(&event, "restore-protection")) {
+                                Ok(protection) if restore_enabled => {
+                                    restore_form_epoch += 1;
+                                    if let Some(restore) = restore {
+                                        restore.call(protection);
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(failure) => {
+                                    restore_form_epoch += 1;
+                                    local_failure.set(Some(failure));
+                                }
+                            }
+                        },
+                        label { r#for: "mobile.identity-restore-protection", "Restore passphrase" }
+                        input {
+                            id: "mobile.identity-restore-protection",
+                            name: "restore-protection",
+                            r#type: "password",
+                            autocomplete: "current-password",
+                            required: true,
+                            disabled: !restore_enabled,
+                            "aria-describedby": "mobile.identity-recovery-status",
+                        }
+                        button {
+                            id: "mobile.identity-restore",
+                            class: "secondary-action",
+                            r#type: "submit",
+                            disabled: !restore_enabled,
+                            "aria-describedby": "mobile.identity-recovery-status",
+                            if state.phase == IdentityRecoveryPhase::Restoring { "Restoring identity" } else { "Restore identity" }
+                        }
+                    }
+                }
+            } else {
+                p {
+                    class: "field-hint",
+                    "Restore is available before this device creates an identity. Existing identity custody is never replaced."
+                }
+            }
+            p {
+                id: "mobile.identity-recovery-status",
+                class: if failure.is_some() { "field-error" } else { "field-hint" },
+                role: "status",
+                "aria-live": "polite",
+                "data-failure": failure.map(IdentityRecoveryFailure::code),
+                if let Some(failure) = failure {
+                    {recovery_failure_message(failure)}
+                } else if state.phase == IdentityRecoveryPhase::SharePresented {
+                    "The encrypted backup is ready in the system share sheet. Saving or sharing is not yet confirmed."
+                } else if state.phase == IdentityRecoveryPhase::Restored {
+                    "The encrypted backup was restored before identity startup."
+                } else if !enabled {
+                    "Encrypted recovery is unavailable in this view."
+                } else {
+                    "Backup contents and passphrases are not retained in workflow status or diagnostics."
+                }
+            }
+        }
+    }
+}
 
 #[component]
 fn IdentityDisplayNameEditor(
