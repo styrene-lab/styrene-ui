@@ -45,10 +45,11 @@ steps. XCTest verifies the rendered custody projection and public identity at
 the required checkpoints. It does not perform package installation or device
 reset operations.
 
-Use `testPhysicalRestoredIdentityCustody` after an in-place package upgrade.
-Inject the retained first-launch destination as `STYRENE_EXPECTED_IDENTITY` in
-the test-runner environment. The value is public identity metadata. It is not a
-secret or a private key.
+Use `testPhysicalRestoredIdentityCustody` after the host-managed normal restart
+and again after the in-place package upgrade. Inject the retained first-launch
+destination as `STYRENE_EXPECTED_IDENTITY` in the test-runner environment for
+both runs. The value is public identity metadata. It is not a secret or a
+private key.
 
 The tests do not establish a pass claim by their presence. Retain the signed
 application digest, source revisions, host class, OS version, package versions,
