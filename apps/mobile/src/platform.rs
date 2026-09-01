@@ -2,15 +2,17 @@ use dioxus::prelude::*;
 use serde::Deserialize;
 #[cfg(target_os = "ios")]
 use styrene_ui_platform::DocumentPickerFailure;
+#[cfg(not(target_os = "android"))]
+use styrene_ui_platform::DocumentShareFailure;
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
     AuthorizationState, ClipboardTextReader, ClipboardTextWriter, Contrast,
-    DocumentPickerCompletion, DocumentRequestGeneration, DocumentShareCompletion,
-    DocumentShareFailure, KeyboardGeometry, MotionPreference, OpaqueDocument, OpaqueDocumentPicker,
-    OpaqueDocumentSharer, PermissionKind, PermissionStatus, PlatformApplyResult, PlatformChange,
-    PlatformEvent, PlatformEventStream, PlatformFailure, PlatformFuture, PlatformGeometry,
-    PlatformInsets, PlatformService, PlatformSnapshot, PlatformState, TextAcquisitionCompletion,
-    TextAcquisitionGeneration, TextScale, WindowClass, WindowMetrics,
+    DocumentPickerCompletion, DocumentRequestGeneration, DocumentShareCompletion, KeyboardGeometry,
+    MotionPreference, OpaqueDocument, OpaqueDocumentPicker, OpaqueDocumentSharer, PermissionKind,
+    PermissionStatus, PlatformApplyResult, PlatformChange, PlatformEvent, PlatformEventStream,
+    PlatformFailure, PlatformFuture, PlatformGeometry, PlatformInsets, PlatformService,
+    PlatformSnapshot, PlatformState, TextAcquisitionCompletion, TextAcquisitionGeneration,
+    TextScale, WindowClass, WindowMetrics,
 };
 
 #[cfg(any(test, target_os = "android"))]
@@ -59,6 +61,17 @@ mod android_policy {
             (NotDetermined, _) | (_, NotDetermined) => NotDetermined,
             (Unavailable, _) | (_, Unavailable) => Unavailable,
             (Granted, Granted) => Granted,
+        }
+    }
+
+    pub const fn document_share_result(
+        status: i32,
+    ) -> Result<styrene_ui_platform::DocumentShareOutcome, styrene_ui_platform::DocumentShareFailure>
+    {
+        match status {
+            0 => Ok(styrene_ui_platform::DocumentShareOutcome::Presented),
+            1 => Err(styrene_ui_platform::DocumentShareFailure::Unavailable),
+            _ => Err(styrene_ui_platform::DocumentShareFailure::PresentationFailed),
         }
     }
 }
@@ -332,6 +345,28 @@ mod native_platform {
             DocumentRead::Oversized => Err(DocumentPickerFailure::Oversized),
             DocumentRead::InvalidType => Err(DocumentPickerFailure::ReadFailed),
         }
+    }
+
+    pub async fn share_identity_backup(
+        document: Vec<u8>,
+    ) -> Result<styrene_ui_platform::DocumentShareOutcome, styrene_ui_platform::DocumentShareFailure>
+    {
+        if document.len() > MAX_OPAQUE_DOCUMENT_BYTES {
+            return Err(styrene_ui_platform::DocumentShareFailure::PresentationFailed);
+        }
+        let status = dispatch_query(move |env, activity| {
+            let document = env.byte_array_from_slice(&document)?;
+            env.call_method(
+                activity,
+                "presentIdentityBackup",
+                "([B)I",
+                &[JValue::Object(&document)],
+            )?
+            .i()
+        })
+        .await
+        .map_err(|_| styrene_ui_platform::DocumentShareFailure::Unavailable)?;
+        super::android_policy::document_share_result(status)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -1617,7 +1652,9 @@ impl OpaqueDocumentSharer for NativeOpaqueDocumentSharer {
                     Err(error) => Err(map_error(error)),
                 }
             };
-            #[cfg(not(target_os = "ios"))]
+            #[cfg(target_os = "android")]
+            let result = native_platform::share_identity_backup(document.into_bytes()).await;
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             let result = {
                 let _ = document;
                 Err(DocumentShareFailure::Unavailable)
@@ -1988,6 +2025,21 @@ mod tests {
         assert_eq!(
             merge_authorization(AuthorizationState::Denied, AuthorizationState::Restricted),
             AuthorizationState::Restricted
+        );
+    }
+
+    #[test]
+    fn android_document_share_statuses_are_typed() {
+        use styrene_ui_platform::{DocumentShareFailure, DocumentShareOutcome};
+
+        assert_eq!(android_policy::document_share_result(0), Ok(DocumentShareOutcome::Presented));
+        assert_eq!(
+            android_policy::document_share_result(1),
+            Err(DocumentShareFailure::Unavailable)
+        );
+        assert_eq!(
+            android_policy::document_share_result(2),
+            Err(DocumentShareFailure::PresentationFailed)
         );
     }
 
