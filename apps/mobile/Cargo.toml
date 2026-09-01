@@ -20,15 +20,15 @@ styrene-ui-platform.workspace = true
 styrene-ui-state.workspace = true
 
 [target.'cfg(any(target_os = "ios", target_os = "macos"))'.dependencies]
-styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "899da81302c5f4e92f60a2fdaf396c26e813ba76" }
-styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "899da81302c5f4e92f60a2fdaf396c26e813ba76", default-features = false, features = ["bundled-sqlite", "mobile-keychain"] }
+styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f0359c92ba9f6d63ce248bc97617fc3115a0f3c3" }
+styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f0359c92ba9f6d63ce248bc97617fc3115a0f3c3", default-features = false, features = ["bundled-sqlite", "mobile-keychain"] }
 tokio.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "=0.21.1"
 manganis = { version = "=0.8.0-alpha.1" }
-styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "899da81302c5f4e92f60a2fdaf396c26e813ba76" }
-styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "899da81302c5f4e92f60a2fdaf396c26e813ba76", default-features = false, features = ["bundled-sqlite", "mobile-android-keystore"] }
+styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f0359c92ba9f6d63ce248bc97617fc3115a0f3c3" }
+styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f0359c92ba9f6d63ce248bc97617fc3115a0f3c3", default-features = false, features = ["bundled-sqlite", "mobile-android-keystore"] }
 tokio.workspace = true
 wry = { version = "=0.55.1", default-features = false }
 

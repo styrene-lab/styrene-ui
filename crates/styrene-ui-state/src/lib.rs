@@ -765,6 +765,19 @@ pub struct MessageDetails {
     pub stamp_cost: Option<u32>,
     pub delivery_evidence: Vec<MessageDeliveryObservation>,
     pub retry_eligible: Option<bool>,
+    pub retry_ineligibility_reason: Option<MessageRetryIneligibilityReason>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageRetryIneligibilityReason {
+    Inbound,
+    MissingOutboundRoute,
+    LifecycleState,
+    CanonicalWireUnavailable,
+    AttemptLimitReached,
+    #[default]
+    Unknown,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

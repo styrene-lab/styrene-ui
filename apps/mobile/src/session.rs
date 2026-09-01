@@ -12,6 +12,7 @@ use styrene_ipc::types::{
     IdentityCustodyDowngrade as BackendCustodyDowngrade,
     IdentityCustodyFailureCode as BackendCustodyFailureCode, IdentityCustodyInfo,
     IdentityCustodyProtection as BackendCustodyProtection, MessageInfo, MessageLifecycleState,
+    MessageRetryIneligibilityReason as BackendRetryIneligibilityReason,
 };
 use styrene_ui_platform::AndroidUsbAttachment;
 use styrene_ui_state::{
@@ -21,11 +22,11 @@ use styrene_ui_state::{
     IdentityCustodyProtection, Message, MessageAttachment, MessageAttachmentTransfer,
     MessageAttempt, MessageAuthentication, MessageDeliveryKind, MessageDeliveryObservation,
     MessageDeliveryState, MessageDetails, MessageInterfaceObservation, MessageLifecycle,
-    MessagePropagationCorrelation, MessageRouteObservation, MessageRouteOutcome, MessageStampState,
-    MobileAction, MobileActionKind, MobileFixture, Peer, PeerSource, PersistenceState, Profile,
-    Propagation, PropagationCandidate, PropagationEvidence, PropagationPolicy, PropagationProgress,
-    PropagationUpdate, Session, SessionPhase, SessionRuntime, SyncState, TransportEvidence,
-    TypedFailure,
+    MessagePropagationCorrelation, MessageRetryIneligibilityReason, MessageRouteObservation,
+    MessageRouteOutcome, MessageStampState, MobileAction, MobileActionKind, MobileFixture, Peer,
+    PeerSource, PersistenceState, Profile, Propagation, PropagationCandidate, PropagationEvidence,
+    PropagationPolicy, PropagationProgress, PropagationUpdate, Session, SessionPhase,
+    SessionRuntime, SyncState, TransportEvidence, TypedFailure,
 };
 use styrened::mobile::{
     IdentityBackend, MobileBearerKind, MobileBearerReason, MobileBearerState, MobileConfig,
@@ -1004,7 +1005,29 @@ fn project_message_details(message: &MessageInfo) -> MessageDetails {
                 progress: evidence.progress,
             })
             .collect(),
-        retry_eligible: None,
+        retry_eligible: message.retry_eligible,
+        retry_ineligibility_reason: message.retry_ineligibility_reason.map(project_retry_reason),
+    }
+}
+
+fn project_retry_reason(
+    reason: BackendRetryIneligibilityReason,
+) -> MessageRetryIneligibilityReason {
+    match reason {
+        BackendRetryIneligibilityReason::Inbound => MessageRetryIneligibilityReason::Inbound,
+        BackendRetryIneligibilityReason::MissingOutboundRoute => {
+            MessageRetryIneligibilityReason::MissingOutboundRoute
+        }
+        BackendRetryIneligibilityReason::LifecycleState => {
+            MessageRetryIneligibilityReason::LifecycleState
+        }
+        BackendRetryIneligibilityReason::CanonicalWireUnavailable => {
+            MessageRetryIneligibilityReason::CanonicalWireUnavailable
+        }
+        BackendRetryIneligibilityReason::AttemptLimitReached => {
+            MessageRetryIneligibilityReason::AttemptLimitReached
+        }
+        _ => MessageRetryIneligibilityReason::Unknown,
     }
 }
 
@@ -1330,6 +1353,38 @@ fn failed_update(generation: u64, code: &str, _message: String) -> SessionUpdate
 mod tests {
     use super::*;
 
+    const PRODUCT_HANDOFF: &str =
+        include_str!("../../../tests/fixtures/mobile-product-handoff-v1/message.json");
+
+    fn validated_handoff_message(value: &serde_json::Value) -> Result<MessageInfo, String> {
+        if value["schema_version"] != 1
+            || value["corpus"] != "styrene-mobile-product-handoff-v1"
+            || value["authority"]["repository"] != "https://github.com/styrene-lab/styrene-rs.git"
+            || value["authority"]["source_revision"] != "0d9dc04cab795f23f791278b019fe4c28430ab6f"
+        {
+            return Err("invalid immutable backend authority".into());
+        }
+        let message = value.get("message").ok_or("message is required")?;
+        let authoritative_fields = value["authoritative_fields"]
+            .as_array()
+            .ok_or("authoritative_fields must be an array")?;
+        for pointer in authoritative_fields {
+            let pointer = pointer.as_str().ok_or("authoritative field must be a string")?;
+            if message.pointer(pointer).is_none() {
+                return Err(format!("missing authoritative field {pointer}"));
+            }
+        }
+        let message: MessageInfo = serde_json::from_value(message.clone())
+            .map_err(|error| format!("invalid typed backend message: {error}"))?;
+        if message.retry_eligible != Some(false)
+            || message.requested_delivery_method.as_deref() != Some("propagated")
+            || message.actual_delivery_method.as_deref() != Some("direct")
+        {
+            return Err("authoritative delivery facts were altered or synthesized".into());
+        }
+        Ok(message)
+    }
+
     #[test]
     fn initial_projection_is_live_starting_state() {
         let update = MobileSession::starting_update();
@@ -1441,6 +1496,48 @@ mod tests {
         assert_eq!(projected.persistence, PersistenceState::Unknown);
         assert_eq!(projected.delivery, DeliveryEvidence::Delivered);
         assert!(projected.failure.is_none());
+    }
+
+    #[test]
+    fn immutable_backend_handoff_projects_without_dropping_or_synthesizing_evidence() {
+        let value: serde_json::Value =
+            serde_json::from_str(PRODUCT_HANDOFF).expect("handoff fixture must be JSON");
+        let projected = project_message(
+            validated_handoff_message(&value).expect("handoff fixture must preserve authority"),
+        );
+
+        assert!(projected.details.projection_complete);
+        assert_eq!(projected.details.requested_delivery_method.as_deref(), Some("propagated"));
+        assert_eq!(projected.details.actual_delivery_method.as_deref(), Some("direct"));
+        assert_eq!(projected.details.retry_eligible, Some(false));
+        assert_eq!(
+            projected.details.retry_ineligibility_reason,
+            Some(MessageRetryIneligibilityReason::AttemptLimitReached)
+        );
+        assert_eq!(projected.details.attempts[0].bearer.as_deref(), Some("tcp"));
+        assert_eq!(projected.details.attempts[0].route.outcome, MessageRouteOutcome::Observed);
+        assert_eq!(projected.details.propagation_correlations[0].state, "accepted");
+        assert_eq!(projected.details.delivery_evidence[0].state, MessageDeliveryState::Completed);
+        assert_eq!(projected.delivery, DeliveryEvidence::Delivered);
+    }
+
+    #[test]
+    fn immutable_backend_handoff_rejects_authority_mutations() {
+        let canonical: serde_json::Value =
+            serde_json::from_str(PRODUCT_HANDOFF).expect("handoff fixture must be JSON");
+        let mut dropped = canonical.clone();
+        dropped["message"].as_object_mut().unwrap().remove("actual_delivery_method");
+        assert!(
+            validated_handoff_message(&dropped)
+                .unwrap_err()
+                .contains("missing authoritative field")
+        );
+
+        let mut synthesized = canonical;
+        synthesized["message"]["retry_eligible"] = serde_json::Value::Bool(true);
+        assert!(
+            validated_handoff_message(&synthesized).unwrap_err().contains("altered or synthesized")
+        );
     }
 
     #[test]
