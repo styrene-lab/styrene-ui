@@ -40,6 +40,9 @@ static CONFIGURATION_CHANGED_HANDLER: Lazy<Mutex<Option<Box<dyn Fn() + Send + 's
 static USB_PERMISSION_RESULT_HANDLER: Lazy<
   Mutex<Option<Box<dyn Fn(String, bool) + Send + 'static>>>,
 > = Lazy::new(|| Mutex::new(None));
+static DOCUMENT_PICKER_RESULT_HANDLER: Lazy<
+  Mutex<Option<Box<dyn Fn(Option<String>) + Send + 'static>>>,
+> = Lazy::new(|| Mutex::new(None));
 const MAIN_PIPE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Context<'a, 'b> {
@@ -582,4 +585,23 @@ where
 /// Clears the pending Android USB permission callback.
 pub fn clear_usb_permission_result_handler() {
   *USB_PERMISSION_RESULT_HANDLER.lock().unwrap() = None;
+}
+
+pub(crate) fn document_picker_result(uri: Option<String>) {
+  if let Some(handler) = DOCUMENT_PICKER_RESULT_HANDLER.lock().unwrap().take() {
+    handler(uri);
+  }
+}
+
+/// Sets the one-shot callback for an Android document picker result.
+pub fn set_document_picker_result_handler<F>(handler: F)
+where
+  F: Fn(Option<String>) + Send + 'static,
+{
+  *DOCUMENT_PICKER_RESULT_HANDLER.lock().unwrap() = Some(Box::new(handler));
+}
+
+/// Clears the pending Android document picker callback.
+pub fn clear_document_picker_result_handler() {
+  *DOCUMENT_PICKER_RESULT_HANDLER.lock().unwrap() = None;
 }

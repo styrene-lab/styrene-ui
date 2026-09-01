@@ -52,6 +52,7 @@ impl fmt::Debug for IdentityBackupProtection {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IdentityRecoveryPhase {
     Idle,
+    Creating,
     Exporting,
     Sharing,
     SharePresented,

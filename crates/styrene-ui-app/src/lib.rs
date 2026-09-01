@@ -1575,6 +1575,150 @@ fn recovery_failure_message(failure: IdentityRecoveryFailure) -> &'static str {
 }
 
 #[component]
+pub fn IdentityBootstrap(
+    generation: u64,
+    state: IdentityRecoveryState,
+    create: EventHandler<()>,
+    restore_select: EventHandler<()>,
+    restore: EventHandler<IdentityBackupProtection>,
+) -> Element {
+    let mut local_failure = use_signal(|| None::<IdentityRecoveryFailure>);
+    let mut restore_form_epoch = use_signal(|| 0_u64);
+    let busy = matches!(
+        state.phase,
+        IdentityRecoveryPhase::Creating
+            | IdentityRecoveryPhase::Selecting
+            | IdentityRecoveryPhase::Restoring
+    );
+    let failure = local_failure().or(state.failure);
+
+    rsx! {
+        main {
+            id: "mobile.identity-bootstrap",
+            class: "mobile-shell identity-bootstrap",
+            "data-generation": generation.to_string(),
+            "aria-labelledby": "mobile.identity-bootstrap-heading",
+            h1 { id: "mobile.identity-bootstrap-heading", "Set up your identity" }
+            p {
+                "No identity is stored on this device. Choose how to continue before Styrene starts networking."
+            }
+            section {
+                class: "surface-card settings-card",
+                "aria-labelledby": "mobile.identity-create-heading",
+                h2 { id: "mobile.identity-create-heading", "Create a new identity" }
+                p { "This creates new platform-protected identity custody on this device." }
+                form {
+                    id: "mobile.identity-create-form",
+                    onsubmit: move |event| {
+                        event.prevent_default();
+                        if !busy {
+                            create.call(());
+                        }
+                    },
+                    label {
+                        input {
+                            id: "mobile.identity-create-confirmation",
+                            name: "create-confirmation",
+                            r#type: "checkbox",
+                            required: true,
+                            disabled: busy,
+                        }
+                        " I understand this creates a new identity instead of restoring an existing one."
+                    }
+                    button {
+                        id: "mobile.identity-create",
+                        class: "primary-action",
+                        r#type: "submit",
+                        disabled: busy,
+                        if state.phase == IdentityRecoveryPhase::Creating {
+                            "Creating identity"
+                        } else {
+                            "Create new identity"
+                        }
+                    }
+                }
+            }
+            section {
+                class: "surface-card settings-card",
+                "aria-labelledby": "mobile.identity-restore-heading",
+                h2 { id: "mobile.identity-restore-heading", "Restore an identity" }
+                p { "Select one encrypted Styrene identity backup (.stid), then enter its passphrase." }
+                button {
+                    id: "mobile.identity-restore-select",
+                    class: "secondary-action",
+                    r#type: "button",
+                    disabled: busy,
+                    onclick: move |_| {
+                        local_failure.set(None);
+                        restore_select.call(());
+                    },
+                    if state.phase == IdentityRecoveryPhase::Selecting {
+                        "Choosing encrypted backup"
+                    } else {
+                        "Choose encrypted backup"
+                    }
+                }
+                if state.restore_available {
+                    form {
+                        key: "restore-{restore_form_epoch}",
+                        id: "mobile.identity-restore-form",
+                        class: "identity-recovery-form",
+                        onsubmit: move |event| {
+                            event.prevent_default();
+                            local_failure.set(None);
+                            match IdentityBackupProtection::new(form_text(&event, "restore-protection")) {
+                                Ok(protection) if !busy => {
+                                    restore_form_epoch += 1;
+                                    restore.call(protection);
+                                }
+                                Ok(_) => {}
+                                Err(next) => {
+                                    restore_form_epoch += 1;
+                                    local_failure.set(Some(next));
+                                }
+                            }
+                        },
+                        label { r#for: "mobile.identity-restore-protection", "Restore passphrase" }
+                        input {
+                            id: "mobile.identity-restore-protection",
+                            name: "restore-protection",
+                            r#type: "password",
+                            autocomplete: "current-password",
+                            required: true,
+                            disabled: busy,
+                            "aria-describedby": "mobile.identity-bootstrap-status",
+                        }
+                        button {
+                            id: "mobile.identity-restore",
+                            class: "primary-action",
+                            r#type: "submit",
+                            disabled: busy,
+                            if state.phase == IdentityRecoveryPhase::Restoring {
+                                "Restoring identity"
+                            } else {
+                                "Restore identity"
+                            }
+                        }
+                    }
+                }
+            }
+            p {
+                id: "mobile.identity-bootstrap-status",
+                class: if failure.is_some() { "field-error" } else { "field-hint" },
+                role: "status",
+                "aria-live": "polite",
+                "data-failure": failure.map(IdentityRecoveryFailure::code),
+                if let Some(failure) = failure {
+                    {recovery_failure_message(failure)}
+                } else {
+                    "Backup contents and passphrases are not retained in workflow status or diagnostics."
+                }
+            }
+        }
+    }
+}
+
+#[component]
 pub fn IdentityRecoveryPanel(
     state: IdentityRecoveryState,
     enabled: bool,

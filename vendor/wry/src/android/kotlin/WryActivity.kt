@@ -24,6 +24,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 
 private val ACTIVITY_ID_KEY = "__wryActivityId"
+private const val IDENTITY_DOCUMENT_REQUEST = 0x53544944
 
 object WryLifecycleObserver : DefaultLifecycleObserver {
     override fun onCreate(owner: LifecycleOwner) {
@@ -170,6 +171,34 @@ abstract class WryActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         Rust.onNewIntent(intent)
+    }
+
+    fun requestIdentityBackupDocument(): Boolean {
+        return try {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/octet-stream"
+            }
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, IDENTITY_DOCUMENT_REQUEST)
+            true
+        } catch (_: RuntimeException) {
+            false
+        }
+    }
+
+    @Deprecated("Deprecated in Android")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != IDENTITY_DOCUMENT_REQUEST) {
+            return
+        }
+        val uri = data?.data
+        if (resultCode == RESULT_OK && uri != null) {
+            Rust.onDocumentPickerResult(uri.toString(), false)
+        } else {
+            Rust.onDocumentPickerResult("", true)
+        }
     }
 
     fun requestUsbPermission(device: UsbDevice, action: String): Boolean {
