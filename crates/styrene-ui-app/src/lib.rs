@@ -5,10 +5,11 @@ use std::collections::HashMap;
 use dioxus::prelude::*;
 use qrcode::{Color, QrCode};
 use styrene_ui_platform::{
-    AndroidUsbAttachment, Appearance, ApplicationLifecycle, AuthorizationState, BleAdapterState,
-    BleControlDisabledReason, BleControlFailure, BleControlPhase, BleControlState, BlePeripheralId,
-    Contrast, KeyboardGeometry, MAX_QR_ENCODED_IMAGE_BYTES, MotionPreference, PermissionKind,
-    PlatformInsets, PlatformSnapshot, TextAcquisitionFailure, TextScale, WindowClass,
+    AndroidUsbAttachment, AppLockPolicy, Appearance, ApplicationLifecycle, AuthorizationState,
+    BleAdapterState, BleControlDisabledReason, BleControlFailure, BleControlPhase, BleControlState,
+    BlePeripheralId, Contrast, KeyboardGeometry, MAX_QR_ENCODED_IMAGE_BYTES, MotionPreference,
+    PermissionKind, PlatformInsets, PlatformSnapshot, TextAcquisitionFailure, TextScale,
+    WindowClass,
 };
 use styrene_ui_state::{
     BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
@@ -574,6 +575,8 @@ pub fn MobileShell(
     #[props(default)] application_settings_busy: bool,
     #[props(default)] application_settings_failure: Option<String>,
     #[props(default)] open_application_settings: Option<EventHandler<()>>,
+    #[props(default)] app_lock_policy: Option<AppLockPolicy>,
+    #[props(default)] app_lock_policy_change: Option<EventHandler<AppLockPolicy>>,
 ) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let store = MobileStore::new(fixture.clone());
@@ -1403,6 +1406,31 @@ pub fn MobileShell(
                                 "System Settings could not be opened ({failure})."
                             }
                         }
+                    }
+                }
+                if target == TargetClass::Ios && let Some(policy) = app_lock_policy {
+                    article {
+                        id: "mobile.app-lock",
+                        class: "surface-card settings-card",
+                        h3 { "App Lock" }
+                        p { class: "field-hint", "Controls access to the app. Identity custody remains protected separately by the iOS Keychain." }
+                        label { r#for: "mobile.app-lock-policy", "Require Face ID or device passcode" }
+                        select {
+                            id: "mobile.app-lock-policy",
+                            value: policy.as_str(),
+                            disabled: app_lock_policy_change.is_none(),
+                            onchange: move |event| {
+                                if let Some(policy) = AppLockPolicy::parse(&event.value())
+                                    && let Some(handler) = app_lock_policy_change
+                                {
+                                    handler.call(policy);
+                                }
+                            },
+                            option { value: AppLockPolicy::EveryLaunch.as_str(), "Every app launch" }
+                            option { value: AppLockPolicy::OncePerBoot.as_str(), "Once after device reboot" }
+                            option { value: AppLockPolicy::Off.as_str(), "Off" }
+                        }
+                        p { class: "field-hint", "A system passcode is the fallback when Face ID is unavailable." }
                     }
                 }
                 article {

@@ -21,6 +21,35 @@ pub enum DeviceAuthenticationOutcome {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AppLockPolicy {
+    #[default]
+    EveryLaunch,
+    OncePerBoot,
+    Off,
+}
+
+impl AppLockPolicy {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::EveryLaunch => "every_launch",
+            Self::OncePerBoot => "once_per_boot",
+            Self::Off => "off",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "every_launch" => Some(Self::EveryLaunch),
+            "once_per_boot" => Some(Self::OncePerBoot),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WindowClass {
     Compact,
@@ -346,4 +375,17 @@ pub trait PlatformService {
         &self,
         attachment: AndroidUsbAttachment,
     ) -> PlatformFuture<'_, Result<AuthorizationState, PlatformFailure>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppLockPolicy;
+
+    #[test]
+    fn app_lock_policy_values_round_trip() {
+        for policy in [AppLockPolicy::EveryLaunch, AppLockPolicy::OncePerBoot, AppLockPolicy::Off] {
+            assert_eq!(AppLockPolicy::parse(policy.as_str()), Some(policy));
+        }
+        assert_eq!(AppLockPolicy::parse("unknown"), None);
+    }
 }

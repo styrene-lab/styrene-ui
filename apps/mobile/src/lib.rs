@@ -16,7 +16,7 @@ use styrene_ui_platform::{
     any(target_os = "android", target_os = "macos"),
     not(feature = "ui-test")
 ))]
-use styrene_ui_platform::{BleAdapterState, BleControlFailure, PermissionKind};
+use styrene_ui_platform::{AppLockPolicy, BleAdapterState, BleControlFailure, PermissionKind};
 use styrene_ui_state::{
     IdentityRecoveryFailure, IdentityRecoveryPhase, IdentityRecoveryState, TargetClass,
 };
@@ -120,6 +120,14 @@ pub fn App() -> Element {
     let mut identity_copy_completion = use_signal(|| None::<IdentityCopyCompletion>);
     let mut identity_recovery = use_signal(IdentityRecoveryState::default);
     let mut selected_identity_backup = use_signal(|| None::<OpaqueDocument>);
+    #[cfg(all(target_os = "ios", not(feature = "ui-test")))]
+    let mut app_lock_policy = use_signal(styrene_ui_apple_bridge::app_lock_policy);
+    #[cfg(all(
+        not(target_os = "ios"),
+        any(target_os = "android", target_os = "macos"),
+        not(feature = "ui-test")
+    ))]
+    let mut app_lock_policy = use_signal(|| AppLockPolicy::Off);
     #[cfg(all(
         any(target_os = "android", target_os = "ios", target_os = "macos"),
         not(feature = "ui-test")
@@ -397,6 +405,12 @@ pub fn App() -> Element {
                 ble_controls,
                 back_navigation: BackNavigation::web_history(),
                 action_sink: move |action| session.read().dispatch(action),
+                app_lock_policy: cfg!(target_os = "ios").then_some(*app_lock_policy.read()),
+                app_lock_policy_change: move |policy| {
+                    #[cfg(target_os = "ios")]
+                    styrene_ui_apple_bridge::store_app_lock_policy(policy);
+                    app_lock_policy.set(policy);
+                },
                 android_usb_attachments: usb_attachments.read().clone(),
                 android_usb_authorization: *usb_authorization.read(),
                 android_usb_failure: usb_failure.read().clone(),
