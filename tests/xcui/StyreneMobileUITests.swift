@@ -220,10 +220,80 @@ final class StyreneMobileUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Scan for RNodes"].isHittable)
     }
 
+    func testPhysicalIdentityCustodySurvivesTerminationAndRestart() throws {
+        guard ProcessInfo.processInfo.environment["STYRENE_CUSTODY_ACCEPTANCE"] == "1" else {
+            throw XCTSkip("Requires an installed live package on a physical device.")
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "io.styrene.mesh")
+        app.activate()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+
+        let firstIdentity = try openAndReadKeychainCustody(in: app)
+        let firstScreenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        firstScreenshot.name = "physical-keychain-custody-first-launch"
+        firstScreenshot.lifetime = .keepAlways
+        add(firstScreenshot)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+
+        let restoredIdentity = try openAndReadKeychainCustody(in: app)
+        XCTAssertEqual(restoredIdentity, firstIdentity)
+        let restoredScreenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        restoredScreenshot.name = "physical-keychain-custody-restored"
+        restoredScreenshot.lifetime = .keepAlways
+        add(restoredScreenshot)
+    }
+
+    func testPhysicalRestoredIdentityCustody() throws {
+        guard ProcessInfo.processInfo.environment["STYRENE_CUSTODY_ACCEPTANCE"] == "1" else {
+            throw XCTSkip("Requires an installed live package on a physical device.")
+        }
+        guard let expectedIdentity = ProcessInfo.processInfo.environment["STYRENE_EXPECTED_IDENTITY"] else {
+            throw XCTSkip("Requires the retained first-launch public identity.")
+        }
+
+        let app = XCUIApplication(bundleIdentifier: "io.styrene.mesh")
+        app.activate()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+
+        let restoredIdentity = try openAndReadKeychainCustody(in: app)
+        XCTAssertEqual(restoredIdentity, expectedIdentity)
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = "physical-keychain-custody-restored"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     private func connectedStatus(in app: XCUIApplication) -> XCUIElement {
         app.descendants(matching: .any)
             .matching(NSPredicate(format: "label ==[c] 'Bluetooth RNode bearer connected'"))
             .firstMatch
+    }
+
+    private func openAndReadKeychainCustody(in app: XCUIApplication) throws -> String {
+        let more = app.buttons["More"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        more.tap()
+
+        XCTAssertTrue(app.staticTexts["Identity custody"].waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(app.staticTexts.matching(
+            NSPredicate(format: "label == %@", "Apple Keychain")
+        ).count, 2)
+        XCTAssertTrue(app.staticTexts["Platform protected"].exists)
+        XCTAssertTrue(app.staticTexts["Device authentication"].exists)
+        XCTAssertTrue(app.staticTexts["Available"].exists)
+        XCTAssertTrue(app.staticTexts["None"].exists)
+
+        let identity = app.staticTexts.matching(
+            NSPredicate(format: "label MATCHES %@", "^[0-9a-f]{32}$")
+        ).firstMatch
+        XCTAssertTrue(identity.waitForExistence(timeout: 5))
+        let value = identity.label
+        XCTAssertNotNil(value.range(of: "^[0-9a-f]{32}$", options: .regularExpression))
+        return value
     }
 
     private func launchFixture() -> XCUIApplication {
