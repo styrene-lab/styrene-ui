@@ -4,13 +4,18 @@ use std::task::{Context, Poll, Waker};
 
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
-    AuthorizationState, ClipboardTextReader, ClipboardTextWriter, Contrast, EdgeInsets,
-    KeyboardGeometry, MAX_CANDIDATE_PAYLOAD_BYTES, MockClipboardTextReader,
-    MockClipboardTextWriter, MockQrDestinationScanner, MockTextAcquisitionResponse,
-    MotionPreference, PermissionKind, PermissionStatus, PlatformApplyResult, PlatformChange,
-    PlatformEvent, PlatformFailure, PlatformGeometry, PlatformInsets, PlatformSnapshot,
-    PlatformState, QrDestinationScanner, TextAcquisitionCompletion, TextAcquisitionFailure,
-    TextAcquisitionGeneration, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
+    AuthorizationState, ClipboardTextReader, ClipboardTextWriter, Contrast,
+    DocumentPickerCompletion, DocumentPickerFailure, DocumentRequestGeneration,
+    DocumentShareFailure, DocumentShareOutcome, EdgeInsets, KeyboardGeometry,
+    MAX_CANDIDATE_PAYLOAD_BYTES, MAX_OPAQUE_DOCUMENT_BYTES, MockClipboardTextReader,
+    MockClipboardTextWriter, MockDocumentPickerResponse, MockDocumentShareResponse,
+    MockOpaqueDocumentPicker, MockOpaqueDocumentSharer, MockQrDestinationScanner,
+    MockTextAcquisitionResponse, MotionPreference, OpaqueDocument, OpaqueDocumentError,
+    OpaqueDocumentPicker, OpaqueDocumentSharer, PermissionKind, PermissionStatus,
+    PlatformApplyResult, PlatformChange, PlatformEvent, PlatformFailure, PlatformGeometry,
+    PlatformInsets, PlatformSnapshot, PlatformState, QrDestinationScanner,
+    TextAcquisitionCompletion, TextAcquisitionFailure, TextAcquisitionGeneration, TextScale,
+    TextScaleCategory, WindowClass, WindowMetrics,
 };
 
 fn ready<T>(future: impl Future<Output = T>) -> T {
@@ -299,4 +304,99 @@ fn candidate_payload_bound_is_utf8_bytes_and_accepts_the_exact_limit() {
         styrene_ui_platform::CandidatePayload::new(multibyte),
         Err(styrene_ui_platform::CandidatePayloadError::Oversized)
     );
+}
+
+#[test]
+fn opaque_document_is_byte_bounded_and_debug_redacted() {
+    let secret = b"encrypted-secret-document".to_vec();
+    let document = OpaqueDocument::new(secret.clone()).expect("bounded document");
+    let debug = format!("{document:?}");
+
+    assert_eq!(document.as_bytes(), secret);
+    assert!(!debug.contains("encrypted-secret-document"));
+    assert!(debug.contains("[REDACTED]"));
+    assert!(debug.contains(&format!("len: {}", secret.len())));
+    assert!(OpaqueDocument::new(vec![0; MAX_OPAQUE_DOCUMENT_BYTES]).is_ok());
+    assert_eq!(
+        OpaqueDocument::new(vec![0; MAX_OPAQUE_DOCUMENT_BYTES + 1]),
+        Err(OpaqueDocumentError::Oversized)
+    );
+}
+
+#[test]
+fn document_picker_mock_types_failures_and_preserves_generation() {
+    let picker = MockOpaqueDocumentPicker::new([
+        MockDocumentPickerResponse::Cancelled,
+        MockDocumentPickerResponse::Unavailable,
+        MockDocumentPickerResponse::ReadFailed,
+        MockDocumentPickerResponse::DocumentBytes(vec![0; MAX_OPAQUE_DOCUMENT_BYTES + 1]),
+        MockDocumentPickerResponse::DocumentBytes(vec![0xff, 0x00, 0x81]),
+    ]);
+    let expected = [
+        Err(DocumentPickerFailure::Cancelled),
+        Err(DocumentPickerFailure::Unavailable),
+        Err(DocumentPickerFailure::ReadFailed),
+        Err(DocumentPickerFailure::Oversized),
+    ];
+
+    for (value, expected) in expected.into_iter().enumerate() {
+        let generation = DocumentRequestGeneration::new(value as u64 + 30);
+        let completion = ready(picker.pick_document(generation));
+        assert_eq!(completion.generation, generation);
+        assert_eq!(completion.result, expected);
+    }
+
+    let completion = ready(picker.pick_document(DocumentRequestGeneration::new(34)));
+    assert_eq!(completion.result.expect("opaque bytes").into_bytes(), [0xff, 0x00, 0x81]);
+    let exhausted = ready(picker.pick_document(DocumentRequestGeneration::new(35)));
+    assert_eq!(exhausted.result, Err(DocumentPickerFailure::Unavailable));
+}
+
+#[test]
+fn document_completions_reject_stale_request_generations() {
+    let current = DocumentRequestGeneration::new(42);
+    let stale_pick = DocumentPickerCompletion {
+        generation: DocumentRequestGeneration::new(41),
+        result: Err(DocumentPickerFailure::ReadFailed),
+    };
+    let matching_pick = DocumentPickerCompletion {
+        generation: current,
+        result: Err(DocumentPickerFailure::Cancelled),
+    };
+
+    assert_eq!(stale_pick.into_result_for(current), None);
+    assert_eq!(matching_pick.into_result_for(current), Some(Err(DocumentPickerFailure::Cancelled)));
+
+    let stale_share = styrene_ui_platform::DocumentShareCompletion {
+        generation: DocumentRequestGeneration::new(41),
+        result: Ok(DocumentShareOutcome::Presented),
+    };
+    assert_eq!(stale_share.into_result_for(current), None);
+}
+
+#[test]
+fn document_share_mock_reports_presentation_not_completed_sharing() {
+    let sharer = MockOpaqueDocumentSharer::new([
+        MockDocumentShareResponse::Presented,
+        MockDocumentShareResponse::PresentationFailed,
+        MockDocumentShareResponse::Unavailable,
+    ]);
+    let document = OpaqueDocument::new(vec![0x01, 0x02]).expect("bounded document");
+
+    let presented =
+        ready(sharer.present_document_share(DocumentRequestGeneration::new(50), document.clone()));
+    assert_eq!(presented.result, Ok(DocumentShareOutcome::Presented));
+
+    let failed =
+        ready(sharer.present_document_share(DocumentRequestGeneration::new(51), document.clone()));
+    assert_eq!(failed.result, Err(DocumentShareFailure::PresentationFailed));
+
+    let unavailable =
+        ready(sharer.present_document_share(DocumentRequestGeneration::new(52), document.clone()));
+    assert_eq!(unavailable.result, Err(DocumentShareFailure::Unavailable));
+
+    let exhausted =
+        ready(sharer.present_document_share(DocumentRequestGeneration::new(53), document));
+    assert_eq!(exhausted.result, Err(DocumentShareFailure::Unavailable));
+    assert_eq!(sharer.presentations().len(), 4);
 }

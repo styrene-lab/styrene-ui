@@ -1541,7 +1541,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1723,7 +1723,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1911,6 +1911,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -3310,7 +3320,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4421,7 +4431,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4915,7 +4925,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 [[package]]
 name = "styrene-a2a"
 version = "0.1.2"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "a2a-lf",
  "chrono",
@@ -4930,7 +4940,7 @@ dependencies = [
 [[package]]
 name = "styrene-content"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "blake3",
  "ciborium",
@@ -4967,13 +4977,14 @@ dependencies = [
 [[package]]
 name = "styrene-identity"
 version = "0.3.2"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "android-keyring",
  "argon2",
  "async-trait",
  "base64",
  "chacha20poly1305",
+ "core-foundation",
  "ed25519-dalek",
  "hex",
  "hkdf",
@@ -4981,6 +4992,7 @@ dependencies = [
  "minicbor",
  "rand_core 0.6.4",
  "security-framework",
+ "security-framework-sys",
  "sha2",
  "subtle",
  "thiserror 2.0.20",
@@ -4991,7 +5003,7 @@ dependencies = [
 [[package]]
 name = "styrene-interop-runner"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "clap",
  "hex",
@@ -5004,7 +5016,7 @@ dependencies = [
 [[package]]
 name = "styrene-ipc"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "async-trait",
  "serde",
@@ -5016,7 +5028,7 @@ dependencies = [
 [[package]]
 name = "styrene-ipc-server"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "async-trait",
  "base64",
@@ -5035,7 +5047,7 @@ dependencies = [
 [[package]]
 name = "styrene-ipc-wire"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "rmp-serde",
  "rmpv",
@@ -5046,7 +5058,7 @@ dependencies = [
 [[package]]
 name = "styrene-lxmf"
 version = "0.1.1"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -5066,7 +5078,7 @@ dependencies = [
 [[package]]
 name = "styrene-mesh"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "ciborium",
  "hex",
@@ -5082,7 +5094,7 @@ dependencies = [
 [[package]]
 name = "styrene-micron"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 
 [[package]]
 name = "styrene-mobile"
@@ -5128,7 +5140,7 @@ dependencies = [
 [[package]]
 name = "styrene-rbac"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -5140,7 +5152,7 @@ dependencies = [
 [[package]]
 name = "styrene-rnode-firmware"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "ed25519-dalek",
  "serde",
@@ -5152,7 +5164,7 @@ dependencies = [
 [[package]]
 name = "styrene-rns"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "aes",
  "bzip2",
@@ -5181,7 +5193,7 @@ dependencies = [
 [[package]]
 name = "styrene-services"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -5236,7 +5248,7 @@ dependencies = [
 [[package]]
 name = "styrened"
 version = "0.3.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=e70c3d6cb140cf5427fc912b32acc318981eaee8#e70c3d6cb140cf5427fc912b32acc318981eaee8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5244,6 +5256,7 @@ dependencies = [
  "ciborium",
  "clap",
  "dirs",
+ "fs2",
  "hex",
  "hkdf",
  "hmac",
@@ -5437,10 +5450,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6160,7 +6173,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
