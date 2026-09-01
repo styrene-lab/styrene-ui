@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use styrene_ui_app::{
-    BackNavigation, Composer, IdentityQrCode, IdentityRecoveryPanel, LocalAnnounceStatus,
-    MobileShell, NewMessageForm, PropagationPanel,
+    BackNavigation, Composer, IdentityBootstrap, IdentityQrCode, IdentityRecoveryPanel,
+    LocalAnnounceStatus, MobileShell, NewMessageForm, PropagationPanel,
 };
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
@@ -75,6 +75,23 @@ fn RecoveryShell(state: IdentityRecoveryState) -> Element {
 
 fn render_recovery(state: IdentityRecoveryState) -> String {
     dioxus_ssr::render_element(rsx! { RecoveryShell { state } })
+}
+
+#[component]
+fn BootstrapShell(state: IdentityRecoveryState) -> Element {
+    rsx! {
+        IdentityBootstrap {
+            generation: 7,
+            state,
+            create: move |()| {},
+            restore_select: move |()| {},
+            restore: move |_protection| {},
+        }
+    }
+}
+
+fn render_bootstrap(state: IdentityRecoveryState) -> String {
+    dioxus_ssr::render_element(rsx! { BootstrapShell { state } })
 }
 
 #[component]
@@ -451,6 +468,39 @@ fn encrypted_recovery_uses_password_inputs_and_safe_presentation_state() {
     assert!(markup.contains("Restore is available before this device creates an identity"));
     assert!(!markup.contains(marker));
     assert!(!markup.contains("mobile.identity-restore-form"));
+}
+
+#[test]
+fn absent_identity_requires_explicit_create_or_restore_before_startup() {
+    let marker = "never-render-this-artifact-or-passphrase";
+    let markup = render_bootstrap(IdentityRecoveryState::default());
+
+    assert!(markup.contains("id=\"mobile.identity-bootstrap\""));
+    assert!(markup.contains("data-generation=\"7\""));
+    assert!(markup.contains("before Styrene starts networking"));
+    assert!(markup.contains("id=\"mobile.identity-create-confirmation\""));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.identity-create-confirmation").contains("required")
+    );
+    assert!(markup.contains("id=\"mobile.identity-create\""));
+    assert!(markup.contains("id=\"mobile.identity-restore-select\""));
+    assert!(!markup.contains("id=\"mobile.identity-restore-form\""));
+    assert!(!markup.contains(marker));
+}
+
+#[test]
+fn selected_bootstrap_document_enables_only_transient_password_restore() {
+    let markup = render_bootstrap(IdentityRecoveryState {
+        phase: IdentityRecoveryPhase::Idle,
+        failure: Some(IdentityRecoveryFailure::AuthenticationFailed),
+        restore_available: true,
+    });
+
+    assert!(markup.contains("id=\"mobile.identity-restore-form\""));
+    assert!(markup.contains("type=\"password\""));
+    assert!(markup.contains("autocomplete=\"current-password\""));
+    assert!(markup.contains("data-failure=\"authentication_failed\""));
+    assert!(!markup.contains("value="));
 }
 
 #[test]

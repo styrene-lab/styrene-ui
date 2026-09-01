@@ -1,14 +1,16 @@
 use dioxus::prelude::*;
 use serde::Deserialize;
+#[cfg(target_os = "ios")]
+use styrene_ui_platform::DocumentPickerFailure;
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
     AuthorizationState, ClipboardTextReader, ClipboardTextWriter, Contrast,
-    DocumentRequestGeneration, DocumentShareCompletion, DocumentShareFailure, KeyboardGeometry,
-    MotionPreference, OpaqueDocument, OpaqueDocumentSharer, PermissionKind, PermissionStatus,
-    PlatformApplyResult, PlatformChange, PlatformEvent, PlatformEventStream, PlatformFailure,
-    PlatformFuture, PlatformGeometry, PlatformInsets, PlatformService, PlatformSnapshot,
-    PlatformState, TextAcquisitionCompletion, TextAcquisitionGeneration, TextScale, WindowClass,
-    WindowMetrics,
+    DocumentPickerCompletion, DocumentRequestGeneration, DocumentShareCompletion,
+    DocumentShareFailure, KeyboardGeometry, MotionPreference, OpaqueDocument, OpaqueDocumentPicker,
+    OpaqueDocumentSharer, PermissionKind, PermissionStatus, PlatformApplyResult, PlatformChange,
+    PlatformEvent, PlatformEventStream, PlatformFailure, PlatformFuture, PlatformGeometry,
+    PlatformInsets, PlatformService, PlatformSnapshot, PlatformState, TextAcquisitionCompletion,
+    TextAcquisitionGeneration, TextScale, WindowClass, WindowMetrics,
 };
 
 #[cfg(any(test, target_os = "android"))]
@@ -102,17 +104,25 @@ mod native_platform {
         atomic::{AtomicBool, AtomicU64, Ordering},
     };
     use styrene_ui_platform::{
-        AndroidUsbAttachment, AuthorizationState, CandidatePayload, MAX_CANDIDATE_PAYLOAD_BYTES,
-        PermissionKind, PermissionStatus, PlatformFailure, PlatformSnapshot,
-        TextAcquisitionCompletion, TextAcquisitionFailure, TextAcquisitionGeneration, TextScale,
+        AndroidUsbAttachment, AuthorizationState, CandidatePayload, DocumentPickerFailure,
+        MAX_CANDIDATE_PAYLOAD_BYTES, MAX_OPAQUE_DOCUMENT_BYTES, PermissionKind, PermissionStatus,
+        PlatformFailure, PlatformSnapshot, TextAcquisitionCompletion, TextAcquisitionFailure,
+        TextAcquisitionGeneration, TextScale,
     };
 
     static PERMISSION_REQUEST_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static DOCUMENT_REQUEST_ACTIVE: AtomicBool = AtomicBool::new(false);
     static USB_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 
     enum ClipboardRead {
         Payload(Vec<u8>),
         Oversized,
+    }
+
+    enum DocumentRead {
+        Bytes(Vec<u8>),
+        Oversized,
+        InvalidType,
     }
 
     struct PermissionRequestGuard;
@@ -283,6 +293,168 @@ mod native_platform {
 
     pub async fn write_clipboard_text(value: String) -> Result<(), PlatformFailure> {
         dispatch_query(move |env, activity| set_clipboard_text(env, activity, &value)).await
+    }
+
+    pub async fn pick_identity_backup() -> Result<Vec<u8>, DocumentPickerFailure> {
+        DOCUMENT_REQUEST_ACTIVE
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| DocumentPickerFailure::Unavailable)?;
+        let (sender, receiver) = async_channel::bounded(1);
+        wry::set_document_picker_result_handler(move |uri| {
+            let _ = sender.try_send(uri);
+        });
+        let Ok(started) = dispatch_query(|env, activity| {
+            env.call_method(activity, "requestIdentityBackupDocument", "()Z", &[])?.z()
+        })
+        .await
+        else {
+            wry::clear_document_picker_result_handler();
+            DOCUMENT_REQUEST_ACTIVE.store(false, Ordering::Release);
+            return Err(DocumentPickerFailure::Unavailable);
+        };
+        if !started {
+            wry::clear_document_picker_result_handler();
+            DOCUMENT_REQUEST_ACTIVE.store(false, Ordering::Release);
+            return Err(DocumentPickerFailure::Unavailable);
+        }
+        let selected = tokio::time::timeout(std::time::Duration::from_mins(5), receiver.recv())
+            .await
+            .map_err(|_| DocumentPickerFailure::ReadFailed)
+            .and_then(|result| result.map_err(|_| DocumentPickerFailure::ReadFailed));
+        wry::clear_document_picker_result_handler();
+        DOCUMENT_REQUEST_ACTIVE.store(false, Ordering::Release);
+        let uri = selected?.ok_or(DocumentPickerFailure::Cancelled)?;
+        match dispatch_query(move |env, activity| read_document_uri(env, activity, &uri))
+            .await
+            .map_err(|_| DocumentPickerFailure::ReadFailed)?
+        {
+            DocumentRead::Bytes(bytes) => Ok(bytes),
+            DocumentRead::Oversized => Err(DocumentPickerFailure::Oversized),
+            DocumentRead::InvalidType => Err(DocumentPickerFailure::ReadFailed),
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn read_document_uri(
+        env: &mut JNIEnv<'_>,
+        activity: &JObject<'_>,
+        uri: &str,
+    ) -> jni::errors::Result<DocumentRead> {
+        let uri = env.new_string(uri)?;
+        let uri = env
+            .call_static_method(
+                "android/net/Uri",
+                "parse",
+                "(Ljava/lang/String;)Landroid/net/Uri;",
+                &[JValue::Object(&uri)],
+            )?
+            .l()?;
+        let resolver = env
+            .call_method(
+                activity,
+                "getContentResolver",
+                "()Landroid/content/ContentResolver;",
+                &[],
+            )?
+            .l()?;
+        let projection = env.new_object_array(2, "java/lang/String", JObject::null())?;
+        let display_name = env.new_string("_display_name")?;
+        let size = env.new_string("_size")?;
+        env.set_object_array_element(&projection, 0, &display_name)?;
+        env.set_object_array_element(&projection, 1, &size)?;
+        let cursor = env
+            .call_method(
+                &resolver,
+                "query",
+                "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;",
+                &[
+                    JValue::Object(&uri),
+                    JValue::Object(&projection),
+                    JValue::Object(&JObject::null()),
+                    JValue::Object(&JObject::null()),
+                    JValue::Object(&JObject::null()),
+                ],
+            )?
+            .l()?;
+        if cursor.is_null() || !env.call_method(&cursor, "moveToFirst", "()Z", &[])?.z()? {
+            return Ok(DocumentRead::InvalidType);
+        }
+        let name_index = env
+            .call_method(
+                &cursor,
+                "getColumnIndex",
+                "(Ljava/lang/String;)I",
+                &[JValue::Object(&display_name)],
+            )?
+            .i()?;
+        let size_index = env
+            .call_method(
+                &cursor,
+                "getColumnIndex",
+                "(Ljava/lang/String;)I",
+                &[JValue::Object(&size)],
+            )?
+            .i()?;
+        let name = if name_index >= 0 {
+            env.call_method(
+                &cursor,
+                "getString",
+                "(I)Ljava/lang/String;",
+                &[JValue::Int(name_index)],
+            )?
+            .l()?
+        } else {
+            JObject::null()
+        };
+        let declared_size = if size_index >= 0 {
+            env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(size_index)])?.j()?
+        } else {
+            -1
+        };
+        let _ = env.call_method(&cursor, "close", "()V", &[]);
+        if name.is_null()
+            || !env
+                .get_string(&JString::from(name))?
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .ends_with(".stid")
+        {
+            return Ok(DocumentRead::InvalidType);
+        }
+        if declared_size > i64::try_from(MAX_OPAQUE_DOCUMENT_BYTES).unwrap_or(i64::MAX) {
+            return Ok(DocumentRead::Oversized);
+        }
+        let stream = env
+            .call_method(
+                &resolver,
+                "openInputStream",
+                "(Landroid/net/Uri;)Ljava/io/InputStream;",
+                &[JValue::Object(&uri)],
+            )?
+            .l()?;
+        if stream.is_null() {
+            return Ok(DocumentRead::InvalidType);
+        }
+        let buffer = env.new_byte_array(8192)?;
+        let mut bytes = Vec::with_capacity(
+            usize::try_from(declared_size.max(0)).unwrap_or(0).min(MAX_OPAQUE_DOCUMENT_BYTES),
+        );
+        loop {
+            let read =
+                env.call_method(&stream, "read", "([B)I", &[JValue::Object(&buffer)])?.i()?;
+            if read < 0 {
+                break;
+            }
+            let read = usize::try_from(read).map_err(|_| invalid_arguments())?;
+            if bytes.len().saturating_add(read) > MAX_OPAQUE_DOCUMENT_BYTES {
+                let _ = env.call_method(&stream, "close", "()V", &[]);
+                return Ok(DocumentRead::Oversized);
+            }
+            let chunk = env.convert_byte_array(&buffer)?;
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        env.call_method(&stream, "close", "()V", &[])?.v()?;
+        Ok(DocumentRead::Bytes(bytes))
     }
 
     async fn request_and_observe(
@@ -1342,6 +1514,66 @@ impl styrene_ui_platform::ApplicationSettingsService for NativeApplicationSettin
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeOpaqueDocumentSharer;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativeOpaqueDocumentPicker;
+
+impl OpaqueDocumentPicker for NativeOpaqueDocumentPicker {
+    fn pick_document(
+        &self,
+        generation: DocumentRequestGeneration,
+    ) -> PlatformFuture<'_, DocumentPickerCompletion> {
+        Box::pin(async move {
+            #[cfg(target_os = "ios")]
+            let result = {
+                let (sender, receiver) = async_channel::bounded(1);
+                match styrene_ui_apple_bridge::present_identity_backup_picker(
+                    styrene_ui_platform::MAX_OPAQUE_DOCUMENT_BYTES,
+                    move |result| {
+                        let result = result
+                            .map_err(|failure| match failure {
+                                styrene_ui_apple_bridge::NativeDocumentPickerFailure::Cancelled => {
+                                    DocumentPickerFailure::Cancelled
+                                }
+                                styrene_ui_apple_bridge::NativeDocumentPickerFailure::Oversized => {
+                                    DocumentPickerFailure::Oversized
+                                }
+                                styrene_ui_apple_bridge::NativeDocumentPickerFailure::ReadFailed => {
+                                    DocumentPickerFailure::ReadFailed
+                                }
+                                styrene_ui_apple_bridge::NativeDocumentPickerFailure::PresentationUnavailable => {
+                                    DocumentPickerFailure::Unavailable
+                                }
+                            })
+                            .and_then(|bytes| OpaqueDocument::new(bytes).map_err(Into::into));
+                        let _ = sender.try_send(result);
+                    },
+                ) {
+                    Ok(request) => {
+                        let received = tokio::time::timeout(
+                            std::time::Duration::from_mins(5),
+                            receiver.recv(),
+                        )
+                        .await;
+                        drop(request);
+                        match received {
+                            Ok(Ok(result)) => result,
+                            Ok(Err(_)) | Err(_) => Err(DocumentPickerFailure::ReadFailed),
+                        }
+                    }
+                    Err(_) => Err(DocumentPickerFailure::Unavailable),
+                }
+            };
+            #[cfg(target_os = "android")]
+            let result = native_platform::pick_identity_backup()
+                .await
+                .and_then(|bytes| OpaqueDocument::new(bytes).map_err(Into::into));
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            let result = Err(styrene_ui_platform::DocumentPickerFailure::Unavailable);
+            DocumentPickerCompletion { generation, result }
+        })
+    }
+}
 
 impl OpaqueDocumentSharer for NativeOpaqueDocumentSharer {
     fn present_document_share(

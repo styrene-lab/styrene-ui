@@ -6,7 +6,7 @@ use std::time::Duration;
 use async_channel::{Receiver, Sender};
 use styrene_ipc::DaemonIdentity;
 use styrene_ipc::types::{
-    IdentityCustodyAuthentication as BackendCustodyAuthentication,
+    IdentityBackupImport, IdentityCustodyAuthentication as BackendCustodyAuthentication,
     IdentityCustodyAvailability as BackendCustodyAvailability,
     IdentityCustodyBackend as BackendCustodyBackend,
     IdentityCustodyDowngrade as BackendCustodyDowngrade,
@@ -32,12 +32,12 @@ use styrene_ui_state::{
 };
 use styrened::mobile::{
     IdentityBackend, MobileBearerKind, MobileBearerReason, MobileBearerState, MobileConfig,
-    MobileConnectionPhase, MobileDeliveryMethod, MobileIdentityRecoveryError,
-    MobileInterfaceConfig, MobileNode, MobilePeerAspect, MobilePropagationReadiness,
-    MobilePropagationSnapshot, MobilePropagationSyncState, MobilePropagationTerminalOutcome,
-    MobilePropagationTriggerSource, MobileRuntimeState, MobileSendRequest, MobileStateEvent,
-    MobileStateSubscription, MobileStateSubscriptionError, MobileUsbFallbackDisposition,
-    persist_mobile_tcp_endpoint,
+    MobileConnectionPhase, MobileDeliveryMethod, MobileIdentityPresence,
+    MobileIdentityRecoveryError, MobileInterfaceConfig, MobileNode, MobilePeerAspect,
+    MobilePropagationReadiness, MobilePropagationSnapshot, MobilePropagationSyncState,
+    MobilePropagationTerminalOutcome, MobilePropagationTriggerSource, MobileRuntimeState,
+    MobileSendRequest, MobileStateEvent, MobileStateSubscription, MobileStateSubscriptionError,
+    MobileUsbFallbackDisposition, persist_mobile_tcp_endpoint,
 };
 #[cfg(target_os = "android")]
 use styrened::mobile::{
@@ -51,7 +51,8 @@ const SUBSCRIPTION_RETRY_DELAY: Duration = Duration::from_millis(250);
 #[derive(Clone)]
 pub struct MobileSession {
     actions: Sender<MobileAction>,
-    updates: Receiver<SessionUpdate>,
+    updates: Receiver<SessionView>,
+    bootstrap_requests: Sender<BootstrapRequest>,
     usb_fallbacks: Sender<UsbFallbackRequest>,
     usb_connections: Sender<UsbConnectionRequest>,
     usb_probes: Sender<UsbProbeRequest>,
@@ -66,13 +67,31 @@ pub struct SessionUpdate {
     pub propagation: PropagationUpdate,
 }
 
+#[derive(Clone, Debug)]
+pub enum SessionView {
+    Inspecting,
+    Bootstrap { generation: u64 },
+    Running(SessionUpdate),
+    Failed(SessionUpdate),
+}
+
+impl SessionView {
+    pub const fn generation(&self) -> Option<u64> {
+        match self {
+            Self::Inspecting => None,
+            Self::Bootstrap { generation } => Some(*generation),
+            Self::Running(update) | Self::Failed(update) => Some(update.fixture.generation),
+        }
+    }
+}
+
 struct SessionOwner {
     generation: u64,
     backend_generation: u64,
     config: MobileConfig,
     node: Arc<MobileNode>,
     state_events: MobileStateSubscription,
-    updates: Sender<SessionUpdate>,
+    updates: Sender<SessionView>,
     usb_worker: Option<UsbWorker>,
 }
 
@@ -93,6 +112,25 @@ struct BackupExportRequest {
     generation: u64,
     protection: Vec<u8>,
     response: Sender<Result<OpaqueDocument, IdentityRecoveryFailure>>,
+}
+
+enum BootstrapRequestKind {
+    Create,
+    Restore { document: OpaqueDocument, protection: Vec<u8> },
+}
+
+struct BootstrapRequest {
+    generation: u64,
+    kind: BootstrapRequestKind,
+    response: Sender<Result<(), IdentityRecoveryFailure>>,
+}
+
+impl Drop for BootstrapRequestKind {
+    fn drop(&mut self) {
+        if let Self::Restore { protection, .. } = self {
+            protection.fill(0);
+        }
+    }
 }
 
 impl Drop for BackupExportRequest {
@@ -123,6 +161,7 @@ impl MobileSession {
     pub fn start() -> Self {
         let (actions, action_receiver) = async_channel::bounded(ACTION_CAPACITY);
         let (update_sender, updates) = async_channel::bounded(1);
+        let (bootstrap_requests, bootstrap_request_receiver) = async_channel::bounded(1);
         let (usb_fallbacks, usb_fallback_receiver) = async_channel::bounded(1);
         let (usb_connections, usb_connection_receiver) = async_channel::bounded(1);
         let (usb_probes, usb_probe_receiver) = async_channel::bounded(1);
@@ -134,6 +173,7 @@ impl MobileSession {
             thread::Builder::new().name("styrene-mobile-session".into()).spawn(move || {
                 run_owner(
                     action_receiver,
+                    bootstrap_request_receiver,
                     usb_fallback_receiver,
                     usb_connection_receiver,
                     usb_probe_receiver,
@@ -144,15 +184,16 @@ impl MobileSession {
                 );
             })
         {
-            let _ = startup_failures.force_send(failed_update(
+            let _ = startup_failures.force_send(SessionView::Failed(failed_update(
                 1,
                 "session_thread_start_failed",
                 error.to_string(),
-            ));
+            )));
         }
         Self {
             actions,
             updates,
+            bootstrap_requests,
             usb_fallbacks,
             usb_connections,
             usb_probes,
@@ -166,8 +207,41 @@ impl MobileSession {
         let _ = self.actions.try_send(action);
     }
 
-    pub async fn next_update(&self) -> Option<SessionUpdate> {
+    pub async fn next_update(&self) -> Option<SessionView> {
         self.updates.recv().await.ok()
+    }
+
+    pub async fn confirm_identity_creation(
+        &self,
+        generation: u64,
+    ) -> Result<(), IdentityRecoveryFailure> {
+        self.request_bootstrap(generation, BootstrapRequestKind::Create).await
+    }
+
+    pub async fn restore_identity(
+        &self,
+        generation: u64,
+        document: OpaqueDocument,
+        protection: IdentityBackupProtection,
+    ) -> Result<(), IdentityRecoveryFailure> {
+        self.request_bootstrap(
+            generation,
+            BootstrapRequestKind::Restore { document, protection: protection.into_bytes() },
+        )
+        .await
+    }
+
+    async fn request_bootstrap(
+        &self,
+        generation: u64,
+        kind: BootstrapRequestKind,
+    ) -> Result<(), IdentityRecoveryFailure> {
+        let (response, result) = async_channel::bounded(1);
+        self.bootstrap_requests
+            .send(BootstrapRequest { generation, kind, response })
+            .await
+            .map_err(|_| IdentityRecoveryFailure::SessionUnavailable)?;
+        result.recv().await.map_err(|_| IdentityRecoveryFailure::SessionUnavailable)?
     }
 
     pub async fn request_android_usb_fallback(&self) -> Result<(), String> {
@@ -248,34 +322,35 @@ impl MobileSession {
             .map_err(|_| "mobile session closed before publishing its backend node".into())
     }
 
-    pub fn starting_update() -> SessionUpdate {
-        let mut update = failed_update(1, "starting", String::new());
-        update.fixture.id = "embedded-live-starting".into();
-        update.fixture.session.runtime = SessionRuntime::Stopped;
-        update.fixture.session.phase = SessionPhase::Starting;
-        update.fixture.session.failure = None;
-        update
+    pub const fn starting_view() -> SessionView {
+        SessionView::Inspecting
     }
 }
 
 fn run_owner(
     actions: Receiver<MobileAction>,
+    bootstrap_requests: Receiver<BootstrapRequest>,
     usb_fallbacks: Receiver<UsbFallbackRequest>,
     usb_connections: Receiver<UsbConnectionRequest>,
     usb_probes: Receiver<UsbProbeRequest>,
     backup_exports: Receiver<BackupExportRequest>,
     #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
-    updates: Sender<SessionUpdate>,
+    updates: Sender<SessionView>,
 ) {
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(runtime) => runtime,
         Err(error) => {
-            let _ = updates.force_send(failed_update(1, "runtime_start_failed", error.to_string()));
+            let _ = updates.force_send(SessionView::Failed(failed_update(
+                1,
+                "runtime_start_failed",
+                error.to_string(),
+            )));
             return;
         }
     };
     runtime.block_on(owner_loop(
         actions,
+        bootstrap_requests,
         usb_fallbacks,
         usb_connections,
         usb_probes,
@@ -288,45 +363,25 @@ fn run_owner(
 
 async fn owner_loop(
     actions: Receiver<MobileAction>,
+    bootstrap_requests: Receiver<BootstrapRequest>,
     usb_fallbacks: Receiver<UsbFallbackRequest>,
     usb_connections: Receiver<UsbConnectionRequest>,
     usb_probes: Receiver<UsbProbeRequest>,
     backup_exports: Receiver<BackupExportRequest>,
     #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
-    updates: Sender<SessionUpdate>,
+    updates: Sender<SessionView>,
 ) {
     let generation = 1;
-    let config = match mobile_config(DEFAULT_ENDPOINT) {
-        Ok(config) => config,
-        Err(error) => {
-            let _ =
-                updates.force_send(failed_update(generation, "platform_paths_unavailable", error));
-            return;
-        }
-    };
-    let node = match MobileNode::boot(config.clone()).await {
-        Ok(node) => Arc::new(node),
-        Err(error) => {
-            let _ = updates.force_send(failed_update(
-                generation,
-                "embedded_start_failed",
-                error.to_string(),
-            ));
-            return;
-        }
-    };
-    let state_events = node.subscribe_state_events();
-    #[cfg(target_os = "ios")]
-    let _ = backend_nodes.try_send(Arc::clone(&node));
-    let backend_generation = node.session_snapshot().await.generation;
-    let mut owner = SessionOwner {
+    let Some(mut owner) = prepare_owner(
         generation,
-        backend_generation,
-        config,
-        node,
-        state_events,
+        bootstrap_requests,
+        #[cfg(target_os = "ios")]
+        backend_nodes,
         updates,
-        usb_worker: None,
+    )
+    .await
+    else {
+        return;
     };
     publish_snapshot(&owner.node, owner.generation, owner.backend_generation, &owner.updates).await;
 
@@ -389,6 +444,103 @@ async fn owner_loop(
             }
         }
     }
+}
+
+async fn prepare_owner(
+    generation: u64,
+    bootstrap_requests: Receiver<BootstrapRequest>,
+    #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
+    updates: Sender<SessionView>,
+) -> Option<SessionOwner> {
+    let config = match mobile_config(DEFAULT_ENDPOINT) {
+        Ok(config) => config,
+        Err(error) => {
+            let _ = updates.force_send(SessionView::Failed(failed_update(
+                generation,
+                "platform_paths_unavailable",
+                error,
+            )));
+            return None;
+        }
+    };
+    let presence = match MobileNode::identity_presence(&config).await {
+        Ok(presence) => presence,
+        Err(error) => {
+            let _ = updates.force_send(SessionView::Failed(failed_update(
+                generation,
+                "identity_presence_failed",
+                error.to_string(),
+            )));
+            return None;
+        }
+    };
+    let pending_response = if presence == MobileIdentityPresence::Absent {
+        let _ = updates.force_send(SessionView::Bootstrap { generation });
+        loop {
+            let Ok(request) = bootstrap_requests.recv().await else {
+                return None;
+            };
+            if request.generation != generation {
+                let _ = request.response.try_send(Err(IdentityRecoveryFailure::SessionUnavailable));
+                continue;
+            }
+            if let BootstrapRequestKind::Restore { document, protection } = &request.kind {
+                let mut import = IdentityBackupImport::default();
+                import.encrypted_bytes = document.clone().into_bytes();
+                if let Err(error) =
+                    MobileNode::restore_identity_before_boot(&config, import, protection).await
+                {
+                    let _ = request.response.try_send(Err(identity_recovery_failure(error)));
+                    continue;
+                }
+                if MobileNode::identity_presence(&config).await
+                    != Ok(MobileIdentityPresence::Present)
+                {
+                    let _ =
+                        request.response.try_send(Err(IdentityRecoveryFailure::CustodyUnavailable));
+                    let _ = updates.force_send(SessionView::Failed(failed_update(
+                        generation,
+                        "identity_restore_verification_failed",
+                        String::new(),
+                    )));
+                    return None;
+                }
+            }
+            break Some(request.response.clone());
+        }
+    } else {
+        None
+    };
+    let node = match MobileNode::boot(config.clone()).await {
+        Ok(node) => Arc::new(node),
+        Err(error) => {
+            if let Some(response) = pending_response {
+                let _ = response.try_send(Err(IdentityRecoveryFailure::SessionUnavailable));
+            }
+            let _ = updates.force_send(SessionView::Failed(failed_update(
+                generation,
+                "embedded_start_failed",
+                error.to_string(),
+            )));
+            return None;
+        }
+    };
+    if let Some(response) = pending_response {
+        let _ = response.try_send(Ok(()));
+    }
+    let state_events = node.subscribe_state_events();
+    #[cfg(target_os = "ios")]
+    let _ = backend_nodes.try_send(Arc::clone(&node));
+    let backend_generation = node.session_snapshot().await.generation;
+    Some(SessionOwner {
+        generation,
+        backend_generation,
+        config,
+        node,
+        state_events,
+        updates,
+        usb_worker: None,
+    })
 }
 
 const fn identity_recovery_failure(error: MobileIdentityRecoveryError) -> IdentityRecoveryFailure {
@@ -570,11 +722,11 @@ impl SessionOwner {
             let replacement = match MobileNode::boot(self.config.clone()).await {
                 Ok(replacement) => replacement,
                 Err(error) => {
-                    let _ = self.updates.force_send(failed_update(
+                    let _ = self.updates.force_send(SessionView::Failed(failed_update(
                         self.generation,
                         "embedded_restart_failed",
                         error.to_string(),
-                    ));
+                    )));
                     return false;
                 }
             };
@@ -852,10 +1004,10 @@ async fn publish_snapshot(
     node: &MobileNode,
     generation: u64,
     backend_generation: u64,
-    updates: &Sender<SessionUpdate>,
+    updates: &Sender<SessionView>,
 ) {
     if let Ok(update) = project(node, generation, backend_generation).await {
-        let _ = updates.force_send(update);
+        let _ = updates.force_send(SessionView::Running(update));
     }
 }
 
@@ -863,12 +1015,12 @@ async fn publish_snapshot_with_failure(
     node: &MobileNode,
     generation: u64,
     backend_generation: u64,
-    updates: &Sender<SessionUpdate>,
+    updates: &Sender<SessionView>,
     failure: TypedFailure,
 ) {
     if let Ok(mut update) = project(node, generation, backend_generation).await {
         update.fixture.session.failure = Some(failure);
-        let _ = updates.force_send(update);
+        let _ = updates.force_send(SessionView::Running(update));
     }
 }
 
@@ -1524,14 +1676,35 @@ mod tests {
     }
 
     #[test]
-    fn initial_projection_is_live_starting_state() {
-        let update = MobileSession::starting_update();
+    fn initial_view_inspects_custody_without_publishing_a_fixture() {
+        let view = MobileSession::starting_view();
 
-        assert_eq!(update.fixture.profile, Profile::Live);
-        assert_eq!(update.fixture.session.runtime, SessionRuntime::Stopped);
-        assert_eq!(update.fixture.session.phase, SessionPhase::Starting);
-        assert!(update.fixture.session.failure.is_none());
-        assert!(update.fixture.session.custody.is_none());
+        assert!(matches!(view, SessionView::Inspecting));
+        assert_eq!(view.generation(), None);
+    }
+
+    #[test]
+    fn bootstrap_generation_is_explicit_and_stale_views_do_not_match() {
+        let view = SessionView::Bootstrap { generation: 7 };
+
+        assert_eq!(view.generation(), Some(7));
+        assert_ne!(view.generation(), Some(8));
+    }
+
+    #[test]
+    fn backend_restore_failures_remain_typed_for_bootstrap_ui() {
+        assert_eq!(
+            identity_recovery_failure(MobileIdentityRecoveryError::AuthenticationFailed),
+            IdentityRecoveryFailure::AuthenticationFailed
+        );
+        assert_eq!(
+            identity_recovery_failure(MobileIdentityRecoveryError::InvalidBackup),
+            IdentityRecoveryFailure::InvalidBackup
+        );
+        assert_eq!(
+            identity_recovery_failure(MobileIdentityRecoveryError::IdentityConflict),
+            IdentityRecoveryFailure::IdentityConflict
+        );
     }
 
     #[test]

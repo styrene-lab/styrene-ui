@@ -19,6 +19,10 @@ The activity template also owns the bounded lifetime of Android's dynamic USB
 permission receiver. It validates the callback against the requested device
 name before forwarding the one-shot result to safe application code.
 
+The same activity template exposes Android's system document picker through a
+one-shot URI callback. Product workflow state and document reads remain in
+Rust; the activity owns only intent presentation and result forwarding.
+
 The fallback remains unavailable when multiple activities are registered, so
 ambiguous multi-window routing still fails closed. Remove this patch after the
 equivalent behavior is available in the pinned upstream Wry release.
