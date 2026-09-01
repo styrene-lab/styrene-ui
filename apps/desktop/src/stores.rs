@@ -213,7 +213,7 @@ impl DomainStores {
         }
         let message = message.into();
         tracing::warn!(target: "dx::session", error_bytes = message.len(), "backend session failed");
-        let message = "backend session unavailable".to_string();
+        let message = session_failure_message(&message).to_string();
         self.runtime.connected = false;
         self.runtime.connection_mode = format!("failed: {message}");
         let state = DataState::Error { message };
@@ -226,6 +226,15 @@ impl DomainStores {
         self.propagation.standard_state = state.clone();
         self.content.state = state.clone();
         self.scenario.state = state;
+        self.push_activity(state::ActivityEntry {
+            timestamp: now(),
+            severity: state::ActivitySeverity::Error,
+            kind: "session",
+            summary: self.runtime.connection_mode.clone(),
+            entity: None,
+            correlation_id: None,
+            provenance: "local frontend".into(),
+        });
     }
 
     pub fn resolve_message(
@@ -1335,6 +1344,29 @@ fn classify_fleet_error(error: &str) -> FleetJobState {
     }
 }
 
+fn session_failure_message(error: &str) -> &'static str {
+    let error = error.to_ascii_lowercase();
+    if error.contains("no such file") || error.contains("not found") {
+        "daemon socket not found"
+    } else if error.contains("permission denied") || error.contains("unauthorized") {
+        "daemon socket access denied"
+    } else if error.contains("connection refused") {
+        "daemon refused the connection"
+    } else if error.contains("not responsive")
+        || error.contains("timeout")
+        || error.contains("timed out")
+    {
+        "daemon did not complete session negotiation"
+    } else if error.contains("generation")
+        || error.contains("protocol")
+        || error.contains("version")
+    {
+        "daemon session is incompatible"
+    } else {
+        "backend session unavailable"
+    }
+}
+
 fn activity_entry(event: &DaemonEvent) -> state::ActivityEntry {
     let (severity, kind, summary, entity) = match event {
         DaemonEvent::Connected => {
@@ -1834,6 +1866,34 @@ mod tests {
             state::AppRoute::System,
         ] {
             assert!(matches!(stores.route_state(&route, capabilities), DataState::Error { .. }));
+        }
+        assert_eq!(stores.runtime.connection_mode, "failed: backend session unavailable");
+        assert_eq!(stores.activity.entries.len(), 1);
+        assert_eq!(stores.activity.entries[0].summary, "failed: backend session unavailable");
+    }
+
+    #[test]
+    fn live_session_failures_are_actionable_and_redacted() {
+        for (raw, expected) in [
+            ("connect: No such file or directory (os error 2)", "daemon socket not found"),
+            ("connect: Permission denied; token=secret", "daemon socket access denied"),
+            ("connect: Connection refused (os error 61)", "daemon refused the connection"),
+            (
+                "rpc timeout; /Users/operator/private.sock",
+                "daemon did not complete session negotiation",
+            ),
+            ("event connection did not report a generation", "daemon session is incompatible"),
+        ] {
+            let mut stores = DomainStores::default();
+            stores.begin_session("Live", ConnectionGeneration(3));
+            stores.fail_session(ConnectionGeneration(3), raw);
+
+            assert_eq!(stores.runtime.connection_mode, format!("failed: {expected}"));
+            assert_eq!(stores.activity.entries.len(), 1);
+            assert_eq!(stores.activity.entries[0].summary, format!("failed: {expected}"));
+            let visible = format!("{:?}{:?}", stores.runtime, stores.activity.entries);
+            assert!(!visible.contains("token=secret"));
+            assert!(!visible.contains("/Users/operator"));
         }
     }
 

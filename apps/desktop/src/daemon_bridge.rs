@@ -1397,20 +1397,28 @@ pub(crate) async fn connect_ipc(
         return Err("daemon not responsive".into());
     }
 
-    let (tx, rx) = mpsc::channel(512);
+    let identity = initial.identity().await.ok();
+    let status = initial.status().await.ok();
+    let devices = initial.devices().await.unwrap_or_default();
+    let paths = initial.path_table().await.ok();
+    // Connected and EventGeneration are also sent before the receiver is returned.
+    let initial_event_count = 2
+        + usize::from(identity.is_some())
+        + usize::from(status.is_some())
+        + devices.len()
+        + usize::from(paths.is_some());
+    let (tx, rx) = mpsc::channel(event_channel_capacity(initial_event_count));
     let _ = tx.send(DaemonEvent::Connected).await;
-    if let Ok(info) = initial.identity().await {
+    if let Some(info) = identity {
         let _ = tx.send(DaemonEvent::Identity(info)).await;
     }
-    if let Ok(status) = initial.status().await {
+    if let Some(status) = status {
         let _ = tx.send(DaemonEvent::Status(status)).await;
     }
-    if let Ok(devices) = initial.devices().await {
-        for device in devices {
-            let _ = tx.send(DaemonEvent::PeerDiscovered(device)).await;
-        }
+    for device in devices {
+        let _ = tx.send(DaemonEvent::PeerDiscovered(device)).await;
     }
-    if let Ok(paths) = initial.path_table().await {
+    if let Some(paths) = paths {
         let _ = tx.send(DaemonEvent::PathTable(paths)).await;
     }
 
@@ -1433,6 +1441,10 @@ pub(crate) async fn connect_ipc(
     spawn_poller(open_bridge(socket_path).await?, broker.clone(), tx, broker.metrics.clone());
 
     Ok((broker, rx))
+}
+
+fn event_channel_capacity(initial_event_count: usize) -> usize {
+    512.max(initial_event_count)
 }
 
 pub(crate) async fn connect_embedded(
@@ -2216,6 +2228,13 @@ mod tests {
 
     fn frame(msg_type: MessageType, request_id: [u8; REQUEST_ID_SIZE]) -> Frame {
         Frame { msg_type, request_id, payload: HashMap::new() }
+    }
+
+    #[test]
+    fn startup_channel_holds_high_cardinality_snapshot_before_consumer_starts() {
+        assert_eq!(event_channel_capacity(4), 512);
+        // Connected, identity, status, 1,425 peers, paths, and event generation.
+        assert_eq!(event_channel_capacity(1_430), 1_430);
     }
 
     #[test]
