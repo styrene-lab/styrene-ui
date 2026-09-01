@@ -1680,6 +1680,146 @@ mod tests {
 
     const PRODUCT_HANDOFF: &str =
         include_str!("../../../tests/fixtures/mobile-product-handoff-v1/message.json");
+    const DESTINATION_CONVERGENCE: &str =
+        include_str!("../../../tests/fixtures/mobile-destination-convergence-v1/corpus.json");
+
+    struct ScratchRoot(PathBuf);
+
+    impl ScratchRoot {
+        fn create(label: &str) -> Self {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default();
+            let root = std::env::temp_dir()
+                .join("styrene-mobile-tests")
+                .join(format!("{label}-{}-{unique}", std::process::id()));
+            std::fs::create_dir_all(&root).expect("create scratch root");
+            Self(root)
+        }
+
+        fn config(&self) -> MobileConfig {
+            MobileConfig {
+                config_dir: self.0.join("config"),
+                data_dir: self.0.join("data"),
+                hub_address: None,
+                hub_delivery_hash: None,
+                display_name: None,
+                identity_backend: IdentityBackend::PlaintextFile,
+                interfaces: Vec::new(),
+                enable_rnode_channel: false,
+            }
+        }
+    }
+
+    impl Drop for ScratchRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn corpus_candidate_action(ingress: &str, raw: &str) -> Option<MobileActionKind> {
+        use styrene_ui_state::{bounded_destination_input, start_conversation_action};
+
+        if ingress == "discovered" {
+            return Some(MobileActionKind::StartConversation { peer_hash: raw.to_owned() });
+        }
+        start_conversation_action(1, &bounded_destination_input(raw)).map(|action| action.kind)
+    }
+
+    async fn assert_single_shell(node: &MobileNode, canonical: &str, context: &str) {
+        let page = node.conversation_page(16, None).await.expect("conversation page");
+        assert_eq!(page.conversations.len(), 1, "{context} changed the conversation count");
+        assert_eq!(page.conversations[0].peer_hash, canonical, "{context}");
+        assert_eq!(page.conversations[0].message_count, 0, "{context} fabricated messages");
+        assert!(
+            node.list_contacts().await.expect("contacts").is_empty(),
+            "{context} created a contact"
+        );
+    }
+
+    #[test]
+    fn destination_convergence_reaches_one_backend_conversation_from_every_ingress_path() {
+        let corpus: serde_json::Value =
+            serde_json::from_str(DESTINATION_CONVERGENCE).expect("corpus must deserialize");
+        assert_eq!(corpus["schema_version"], 1);
+        assert_eq!(corpus["corpus"], "styrene-mobile-destination-convergence-v1");
+        assert_eq!(
+            corpus["authority"]["repository"],
+            "https://github.com/styrene-lab/styrene-rs.git"
+        );
+        let canonical = corpus["canonical_peer_hash"].as_str().expect("canonical peer hash");
+        let converging = corpus["converging_candidates"].as_array().expect("converging");
+        let rejected = corpus["rejected_candidates"].as_array().expect("rejected");
+        assert_eq!(converging.len(), 4);
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        let scratch = ScratchRoot::create("destination-convergence");
+        let config = scratch.config();
+
+        runtime.block_on(async {
+            let node = MobileNode::boot(config.clone()).await.expect("boot embedded backend");
+            assert!(node.conversation_page(16, None).await.unwrap().conversations.is_empty());
+
+            for candidate in converging {
+                let id = candidate["id"].as_str().unwrap();
+                let ingress = candidate["ingress"].as_str().unwrap();
+                let raw = candidate["raw"].as_str().unwrap();
+                let submitted = candidate["submitted"].as_str().unwrap();
+                let action = corpus_candidate_action(ingress, raw)
+                    .unwrap_or_else(|| panic!("{id} was blocked before dispatch"));
+                assert_eq!(
+                    action,
+                    MobileActionKind::StartConversation { peer_hash: submitted.to_owned() },
+                    "{id}"
+                );
+                execute_action(&node, action)
+                    .await
+                    .unwrap_or_else(|failure| panic!("{id} failed: {failure:?}"));
+                assert_single_shell(&node, canonical, id).await;
+            }
+
+            for candidate in rejected {
+                let id = candidate["id"].as_str().unwrap();
+                let ingress = candidate["ingress"].as_str().unwrap();
+                let raw = candidate["raw"].as_str().unwrap();
+                let dispatch = candidate["ui_dispatch"].as_str().unwrap();
+                match corpus_candidate_action(ingress, raw) {
+                    Some(action) => {
+                        assert!(
+                            matches!(dispatch, "forwarded" | "trimmed_before_dispatch"),
+                            "{id} was dispatched despite {dispatch}"
+                        );
+                        let result = execute_action(&node, action).await;
+                        if dispatch == "forwarded" {
+                            let failure = result.expect_err("backend must reject forwarded input");
+                            assert_eq!(failure.code, "conversation_start_failed", "{id}");
+                            assert!(!failure.retryable, "{id} was reported retryable");
+                        } else {
+                            result.unwrap_or_else(|failure| panic!("{id} failed: {failure:?}"));
+                        }
+                    }
+                    None => assert!(
+                        dispatch.starts_with("blocked_"),
+                        "{id} was blocked despite {dispatch}"
+                    ),
+                }
+                assert!(
+                    node.start_conversation(raw).await.is_err(),
+                    "{id} raw value was accepted by the backend"
+                );
+                assert_single_shell(&node, canonical, id).await;
+            }
+            node.shutdown().await.expect("shutdown");
+
+            let reopened = MobileNode::boot(config).await.expect("reboot embedded backend");
+            assert_single_shell(&reopened, canonical, "restart").await;
+            reopened.shutdown().await.expect("shutdown");
+        });
+    }
 
     fn validated_handoff_message(value: &serde_json::Value) -> Result<MessageInfo, String> {
         if value["schema_version"] != 1
