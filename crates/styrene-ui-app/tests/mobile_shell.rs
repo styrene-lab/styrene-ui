@@ -408,6 +408,18 @@ fn public_identity_copy_reports_success_and_failure_without_changing_the_value()
 }
 
 #[test]
+fn public_identity_actions_are_unavailable_without_a_backend_destination() {
+    let mut fixture = fixture("canonical-peer-discovery");
+    fixture.session.identity_hash.clear();
+    let markup = render_identity_actions(fixture);
+
+    assert!(opening_tag_with_id(&markup, "mobile.identity-copy").contains("disabled"));
+    assert!(opening_tag_with_id(&markup, "mobile.identity-show-qr").contains("disabled"));
+    assert!(markup.contains("Public destination is not available yet."));
+    assert!(!markup.contains("id=\"mobile.identity-qr\""));
+}
+
+#[test]
 fn every_fixture_renders_the_shared_accessibility_contract_for_both_targets() {
     let corpus: MobileMinimumCorpus =
         serde_json::from_str(FIXTURES).expect("mobile minimum fixture must deserialize");

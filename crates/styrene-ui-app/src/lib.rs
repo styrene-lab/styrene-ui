@@ -580,7 +580,10 @@ pub fn MobileShell(
     let new_message_key =
         format!("{}:{}", fixture.generation, clipboard_candidate.as_deref().unwrap_or_default());
     let public_destination = fixture.session.identity_hash.clone();
-    let identity_copy_enabled = identity_copy.is_some() && !identity_copy_busy;
+    let public_destination_available = !public_destination.is_empty();
+    let identity_copy_enabled =
+        public_destination_available && identity_copy.is_some() && !identity_copy_busy;
+    let identity_qr_visible = public_destination_available && identity_qr_open();
 
     let active_destination = *destination.read();
     let selected_hash = selected_peer
@@ -1223,10 +1226,15 @@ pub fn MobileShell(
                             id: "mobile.identity-show-qr",
                             class: "secondary-action",
                             r#type: "button",
-                            "aria-expanded": identity_qr_open().to_string(),
+                            "aria-expanded": identity_qr_visible.to_string(),
                             "aria-controls": "mobile.identity-qr",
-                            onclick: move |_| identity_qr_open.toggle(),
-                            if identity_qr_open() { "Hide QR" } else { "Show QR" }
+                            disabled: !public_destination_available,
+                            onclick: move |_| {
+                                if public_destination_available {
+                                    identity_qr_open.toggle();
+                                }
+                            },
+                            if identity_qr_visible { "Hide QR" } else { "Show QR" }
                         }
                     }
                     p {
@@ -1237,11 +1245,13 @@ pub fn MobileShell(
                             "Public destination was not copied ({failure})."
                         } else if identity_copy_succeeded {
                             "Public destination copied."
+                        } else if !public_destination_available {
+                            "Public destination is not available yet."
                         } else {
                             "Copy shares only the public LXMF destination."
                         }
                     }
-                    if identity_qr_open() {
+                    if identity_qr_visible {
                         IdentityQrCode { value: public_destination.clone() }
                     }
                     if let Some(custody) = &fixture.session.custody {
