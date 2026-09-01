@@ -4908,8 +4908,8 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "styrene-a2a"
-version = "0.1.1"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+version = "0.1.2"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "a2a-lf",
  "chrono",
@@ -4924,7 +4924,7 @@ dependencies = [
 [[package]]
 name = "styrene-content"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "blake3",
  "ciborium",
@@ -4961,7 +4961,7 @@ dependencies = [
 [[package]]
 name = "styrene-identity"
 version = "0.3.2"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "android-keyring",
  "argon2",
@@ -4985,7 +4985,7 @@ dependencies = [
 [[package]]
 name = "styrene-interop-runner"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "clap",
  "hex",
@@ -4998,7 +4998,7 @@ dependencies = [
 [[package]]
 name = "styrene-ipc"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "async-trait",
  "serde",
@@ -5010,7 +5010,7 @@ dependencies = [
 [[package]]
 name = "styrene-ipc-server"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "async-trait",
  "base64",
@@ -5020,15 +5020,27 @@ dependencies = [
  "serde",
  "serde_json",
  "styrene-ipc",
+ "styrene-ipc-wire",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
 ]
 
 [[package]]
+name = "styrene-ipc-wire"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+dependencies = [
+ "rmp-serde",
+ "rmpv",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "styrene-lxmf"
 version = "0.1.1"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -5048,7 +5060,7 @@ dependencies = [
 [[package]]
 name = "styrene-mesh"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "ciborium",
  "hex",
@@ -5064,7 +5076,7 @@ dependencies = [
 [[package]]
 name = "styrene-micron"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 
 [[package]]
 name = "styrene-mobile"
@@ -5110,7 +5122,7 @@ dependencies = [
 [[package]]
 name = "styrene-rbac"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -5120,9 +5132,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-rnode-firmware"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
+dependencies = [
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "styrene-rns"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "aes",
  "bzip2",
@@ -5151,7 +5175,7 @@ dependencies = [
 [[package]]
 name = "styrene-services"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -5205,7 +5229,7 @@ dependencies = [
 [[package]]
 name = "styrened"
 version = "0.3.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=899da81302c5f4e92f60a2fdaf396c26e813ba76#899da81302c5f4e92f60a2fdaf396c26e813ba76"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f0359c92ba9f6d63ce248bc97617fc3115a0f3c3#f0359c92ba9f6d63ce248bc97617fc3115a0f3c3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5236,6 +5260,7 @@ dependencies = [
  "styrene-mesh",
  "styrene-micron",
  "styrene-rbac",
+ "styrene-rnode-firmware",
  "styrene-rns",
  "styrene-services",
  "subtle",

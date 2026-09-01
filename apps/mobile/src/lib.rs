@@ -344,13 +344,16 @@ mod tests {
 
     use super::*;
 
-    const BACKEND_REVISION: &str = "899da81302c5f4e92f60a2fdaf396c26e813ba76";
+    const BACKEND_REVISION: &str = "f0359c92ba9f6d63ce248bc97617fc3115a0f3c3";
+    const MINIMUM_FIXTURE_REVISION: &str = "899da81302c5f4e92f60a2fdaf396c26e813ba76";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
     const FIXTURE_PROVENANCE: &str =
         include_str!("../../../tests/fixtures/mobile-minimum-v1/README.md");
     const APPLICATION_PROVENANCE: &str =
         include_str!("../../../tests/fixtures/mobile-application-parity-v1/README.md");
+    const HANDOFF_PROVENANCE: &str =
+        include_str!("../../../tests/fixtures/mobile-product-handoff-v1/README.md");
     const PARITY_CONTRACT: &str = include_str!("../../../docs/parity-corpus.md");
 
     #[test]
@@ -377,8 +380,10 @@ mod tests {
     fn workspace_and_corpora_share_the_backend_contract() {
         assert!(WORKSPACE_MANIFEST.contains("resolver = \"3\""));
         assert!(WORKSPACE_MANIFEST.contains("edition = \"2024\""));
+        assert_eq!(WORKSPACE_MANIFEST.matches(BACKEND_REVISION).count(), 6);
         assert_eq!(MOBILE_MANIFEST.matches(BACKEND_REVISION).count(), 4);
-        assert!(FIXTURE_PROVENANCE.contains(BACKEND_REVISION));
+        assert!(FIXTURE_PROVENANCE.contains(MINIMUM_FIXTURE_REVISION));
+        assert!(HANDOFF_PROVENANCE.contains(BACKEND_REVISION));
         assert!(APPLICATION_PROVENANCE.contains("Source baseline revision:"));
         assert!(APPLICATION_PROVENANCE.contains("before using the UI copy as revision-locked"));
         assert!(PARITY_CONTRACT.contains("current integration baseline revision"));
