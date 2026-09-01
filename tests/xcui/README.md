@@ -41,3 +41,40 @@ Identity, Interfaces, Mail Sync, and new-message entry captures.
 
 Review the result attachments for identity, destination, message, and network
 data before publishing. An accessibility snapshot is not VoiceOver evidence.
+
+## Physical Custody Handoff
+
+The physical custody tests are disabled by default. Run them only on
+`Chriss-MacBook-Pro` against a signed, preinstalled live package. Do not use the
+fixture feature for these tests.
+
+The host runner must inject `STYRENE_CUSTODY_ACCEPTANCE=1` into the test-runner
+environment. A clean-install or clean-data step is external to XCTest and must
+occur before
+`testPhysicalIdentityCustodySurvivesTerminationAndRestart`. The test retains
+screenshots and verifies these public facts:
+
+- requested and active storage are `Apple Keychain`.
+- protection is `Platform protected`.
+- authentication is `Device authentication`.
+- availability is `Available` and downgrade is `None`.
+- the 32-hex public destination is unchanged after termination and relaunch.
+
+The assigned host runner owns the destructive reset, baseline installation,
+normal restart, explicit forced termination, in-place upgrade, and relaunch
+steps. XCTest verifies the rendered custody projection and public identity at
+the required checkpoints. It does not perform package installation or device
+reset operations.
+
+Use `testPhysicalRestoredIdentityCustody` after the host-managed normal restart
+and again after the in-place package upgrade. Inject the retained first-launch
+destination as `STYRENE_EXPECTED_IDENTITY` in the test-runner environment for
+both runs. The value is public identity metadata. It is not a secret or a
+private key.
+
+The tests do not establish a pass claim by their presence. Retain the signed
+application digest, source revisions, host class, OS version, package versions,
+test result bundle, and screenshots for each executed handoff. Do not commit
+device identifiers, signing identifiers, provisioning data, or local paths.
+Android custody execution remains assigned to `nucleus` and requires its own
+packaged runner.
