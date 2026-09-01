@@ -1914,6 +1914,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "fs_extra"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1950,6 +1960,19 @@ name = "futures-io"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53c0fa8157de1303bfffdaa1cc2a673bfffb60102f76b0ef4441659124373fed"
+
+[[package]]
+name = "futures-lite"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f78e10609fe0e0b3f4157ffab1876319b5b0db102a2c60dc4626306dc46b44ad"
+dependencies = [
+ "fastrand",
+ "futures-core",
+ "futures-io",
+ "parking",
+ "pin-project-lite",
+]
 
 [[package]]
 name = "futures-macro"
@@ -2437,7 +2460,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core",
+ "windows-core 0.62.2",
 ]
 
 [[package]]
@@ -2909,9 +2932,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libredox"
-version = "0.1.21"
+version = "0.1.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7955dfc218a8afb29dfeffd540e3a6e96baeb94fe7138228dd7cc6937fbbf96"
+checksum = "8d8f1ea3f21fd3405dcaf6c9b5c1630af9afc422d9073ea39c5f6d6c772e08ed"
 dependencies = [
  "libc",
 ]
@@ -3079,9 +3102,9 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "memfd"
-version = "0.6.5"
+version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ad38eb12aea514a0466ea40a80fd8cc83637065948eb4a426e4aa46261175227"
+checksum = "57804b2c9b69967f1536a56f86297e367a33b19e98852ed624b84551cdbc0d90"
 dependencies = [
  "rustix",
 ]
@@ -4087,10 +4110,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+
+[[package]]
 name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
+
+[[package]]
+name = "quircs"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d71dee9e56835add6f9c26227e6c690b19eda9414f5affc666c3ec833ba140dc"
+dependencies = [
+ "num-derive",
+ "num-traits",
+ "thiserror 2.0.20",
+]
 
 [[package]]
 name = "quote"
@@ -4818,9 +4858,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.15.2"
+version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
+checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
 
 [[package]]
 name = "socket2"
@@ -4907,7 +4947,7 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 [[package]]
 name = "styrene-a2a"
 version = "0.1.2"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "a2a-lf",
  "chrono",
@@ -4922,7 +4962,7 @@ dependencies = [
 [[package]]
 name = "styrene-content"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "blake3",
  "ciborium",
@@ -4959,13 +4999,14 @@ dependencies = [
 [[package]]
 name = "styrene-identity"
 version = "0.3.2"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "android-keyring",
  "argon2",
  "async-trait",
  "base64",
  "chacha20poly1305",
+ "core-foundation",
  "ed25519-dalek",
  "hex",
  "hkdf",
@@ -4973,6 +5014,7 @@ dependencies = [
  "minicbor",
  "rand_core 0.6.4",
  "security-framework",
+ "security-framework-sys",
  "sha2",
  "subtle",
  "thiserror 2.0.20",
@@ -4983,7 +5025,7 @@ dependencies = [
 [[package]]
 name = "styrene-interop-runner"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "clap",
  "hex",
@@ -4996,7 +5038,7 @@ dependencies = [
 [[package]]
 name = "styrene-ipc"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "async-trait",
  "serde",
@@ -5008,7 +5050,7 @@ dependencies = [
 [[package]]
 name = "styrene-ipc-server"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "async-trait",
  "base64",
@@ -5018,15 +5060,27 @@ dependencies = [
  "serde",
  "serde_json",
  "styrene-ipc",
+ "styrene-ipc-wire",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
 ]
 
 [[package]]
+name = "styrene-ipc-wire"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
+dependencies = [
+ "rmp-serde",
+ "rmpv",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "styrene-lxmf"
 version = "0.1.1"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "base64",
  "ed25519-dalek",
@@ -5046,7 +5100,7 @@ dependencies = [
 [[package]]
 name = "styrene-mesh"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "ciborium",
  "hex",
@@ -5062,7 +5116,7 @@ dependencies = [
 [[package]]
 name = "styrene-micron"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 
 [[package]]
 name = "styrene-mobile"
@@ -5108,7 +5162,7 @@ dependencies = [
 [[package]]
 name = "styrene-rbac"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "ed25519-dalek",
  "hex",
@@ -5118,9 +5172,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-rnode-firmware"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
+dependencies = [
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "styrene-rns"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "aes",
  "bzip2",
@@ -5149,7 +5215,7 @@ dependencies = [
 [[package]]
 name = "styrene-services"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -5167,6 +5233,7 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "dioxus-ssr",
+ "qrcode",
  "serde_json",
  "styrene-ui-platform",
  "styrene-ui-state",
@@ -5178,6 +5245,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "block2",
+ "futures-lite",
  "objc2",
  "objc2-av-foundation",
  "objc2-core-bluetooth",
@@ -5191,6 +5259,13 @@ dependencies = [
 [[package]]
 name = "styrene-ui-platform"
 version = "0.1.0"
+dependencies = [
+ "image",
+ "qrcode",
+ "quircs",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "styrene-ui-state"
@@ -5203,7 +5278,7 @@ dependencies = [
 [[package]]
 name = "styrened"
 version = "0.3.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=300cf8b8c36555d40aa6d5a51068b5af96131ce7#300cf8b8c36555d40aa6d5a51068b5af96131ce7"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=23beb83dbed95165347debdaabb1a672febfdc92#23beb83dbed95165347debdaabb1a672febfdc92"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5211,6 +5286,7 @@ dependencies = [
  "ciborium",
  "clap",
  "dirs",
+ "fs2",
  "hex",
  "hkdf",
  "hmac",
@@ -5234,6 +5310,7 @@ dependencies = [
  "styrene-mesh",
  "styrene-micron",
  "styrene-rbac",
+ "styrene-rnode-firmware",
  "styrene-rns",
  "styrene-services",
  "subtle",
@@ -5374,7 +5451,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "windows",
- "windows-core",
+ "windows-core 0.61.2",
  "windows-version",
  "x11-dl",
 ]
@@ -6071,7 +6148,7 @@ dependencies = [
  "webview2-com-macros",
  "webview2-com-sys",
  "windows",
- "windows-core",
+ "windows-core 0.61.2",
  "windows-implement",
  "windows-interface",
 ]
@@ -6095,7 +6172,7 @@ checksum = "381336cfffd772377d291702245447a5251a2ffa5bad679c99e61bc48bacbf9c"
 dependencies = [
  "thiserror 2.0.20",
  "windows",
- "windows-core",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -6142,7 +6219,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9babd3a767a4c1aef6900409f85f5d53ce2544ccdfaa86dad48c91782c6d6893"
 dependencies = [
  "windows-collections",
- "windows-core",
+ "windows-core 0.61.2",
  "windows-future",
  "windows-link 0.1.3",
  "windows-numerics",
@@ -6154,7 +6231,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3beeceb5e5cfd9eb1d76b381630e82c4241ccd0d27f1a39ed41b2760b255c5e8"
 dependencies = [
- "windows-core",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -6166,8 +6243,21 @@ dependencies = [
  "windows-implement",
  "windows-interface",
  "windows-link 0.1.3",
- "windows-result",
- "windows-strings",
+ "windows-result 0.3.4",
+ "windows-strings 0.4.2",
+]
+
+[[package]]
+name = "windows-core"
+version = "0.62.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b8e83a14d34d0623b51dce9581199302a221863196a1dde71a7663a4c2be9deb"
+dependencies = [
+ "windows-implement",
+ "windows-interface",
+ "windows-link 0.2.1",
+ "windows-result 0.4.1",
+ "windows-strings 0.5.1",
 ]
 
 [[package]]
@@ -6176,7 +6266,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc6a41e98427b19fe4b73c550f060b59fa592d7d686537eebf9385621bfbad8e"
 dependencies = [
- "windows-core",
+ "windows-core 0.61.2",
  "windows-link 0.1.3",
  "windows-threading",
 ]
@@ -6221,7 +6311,7 @@ version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9150af68066c4c5c07ddc0ce30421554771e528bde427614c61038bc2c92c2b1"
 dependencies = [
- "windows-core",
+ "windows-core 0.61.2",
  "windows-link 0.1.3",
 ]
 
@@ -6235,12 +6325,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows-result"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7781fa89eaf60850ac3d2da7af8e5242a5ea78d1a11c49bf2910bb5a73853eb5"
+dependencies = [
+ "windows-link 0.2.1",
+]
+
+[[package]]
 name = "windows-strings"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56e6c93f3a0c3b36176cb1327a4958a0353d5d166c2a35cb268ace15e91d3b57"
 dependencies = [
  "windows-link 0.1.3",
+]
+
+[[package]]
+name = "windows-strings"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7837d08f69c77cf6b07689544538e017c1bfcf57e34b4c0ff58e6c2cd3b37091"
+dependencies = [
+ "windows-link 0.2.1",
 ]
 
 [[package]]
@@ -6502,7 +6610,7 @@ dependencies = [
  "webkit2gtk-sys",
  "webview2-com",
  "windows",
- "windows-core",
+ "windows-core 0.61.2",
  "windows-version",
 ]
 

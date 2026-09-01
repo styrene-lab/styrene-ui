@@ -1,10 +1,32 @@
+use std::future::Future;
+use std::pin::pin;
+use std::task::{Context, Poll, Waker};
+
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
-    AuthorizationState, Contrast, EdgeInsets, KeyboardGeometry, MotionPreference, PermissionKind,
-    PermissionStatus, PlatformApplyResult, PlatformChange, PlatformEvent, PlatformGeometry,
-    PlatformInsets, PlatformSnapshot, PlatformState, TextScale, TextScaleCategory, WindowClass,
-    WindowMetrics,
+    AuthorizationState, ClipboardTextReader, ClipboardTextWriter, Contrast,
+    DocumentPickerCompletion, DocumentPickerFailure, DocumentRequestGeneration,
+    DocumentShareFailure, DocumentShareOutcome, EdgeInsets, KeyboardGeometry,
+    MAX_CANDIDATE_PAYLOAD_BYTES, MAX_OPAQUE_DOCUMENT_BYTES, MockClipboardTextReader,
+    MockClipboardTextWriter, MockDocumentPickerResponse, MockDocumentShareResponse,
+    MockOpaqueDocumentPicker, MockOpaqueDocumentSharer, MockQrDestinationScanner,
+    MockTextAcquisitionResponse, MotionPreference, OpaqueDocument, OpaqueDocumentError,
+    OpaqueDocumentPicker, OpaqueDocumentSharer, PermissionKind, PermissionStatus,
+    PlatformApplyResult, PlatformChange, PlatformEvent, PlatformFailure, PlatformGeometry,
+    PlatformInsets, PlatformSnapshot, PlatformState, QrDestinationScanner,
+    TextAcquisitionCompletion, TextAcquisitionFailure, TextAcquisitionGeneration, TextScale,
+    TextScaleCategory, WindowClass, WindowMetrics,
 };
+
+fn ready<T>(future: impl Future<Output = T>) -> T {
+    let mut future = pin!(future);
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(value) => value,
+        Poll::Pending => panic!("deterministic platform mock unexpectedly returned pending"),
+    }
+}
 
 fn snapshot(generation: u64, sequence: u64) -> PlatformSnapshot {
     PlatformSnapshot {
@@ -164,4 +186,228 @@ fn authoritative_resync_accepts_native_changes_at_equal_web_sequence() {
     );
     assert_eq!(state.snapshot(), &native_update);
     assert_eq!(state.replace_resynced_snapshot(snapshot(4, 8)), PlatformApplyResult::IgnoredStale);
+}
+
+#[test]
+fn clipboard_mock_types_boundary_failures_and_preserves_generation() {
+    let oversized = vec![b'x'; MAX_CANDIDATE_PAYLOAD_BYTES + 1];
+    let reader = MockClipboardTextReader::new([
+        MockTextAcquisitionResponse::Denied,
+        MockTextAcquisitionResponse::Restricted,
+        MockTextAcquisitionResponse::Unavailable,
+        MockTextAcquisitionResponse::Cancelled,
+        MockTextAcquisitionResponse::ServiceBytes(oversized),
+        MockTextAcquisitionResponse::ServiceBytes(vec![0xff]),
+        MockTextAcquisitionResponse::ServiceBytes(b"not-validated-by-platform".to_vec()),
+    ]);
+
+    let expected = [
+        Err(TextAcquisitionFailure::Denied),
+        Err(TextAcquisitionFailure::Restricted),
+        Err(TextAcquisitionFailure::Unavailable),
+        Err(TextAcquisitionFailure::Cancelled),
+        Err(TextAcquisitionFailure::Oversized),
+        Err(TextAcquisitionFailure::Malformed),
+    ];
+    for (value, expected) in expected.into_iter().enumerate() {
+        let generation = TextAcquisitionGeneration::new(value as u64 + 10);
+        let completion = ready(reader.read_clipboard_text(generation));
+        assert_eq!(completion.generation, generation);
+        assert_eq!(completion.result, expected);
+    }
+
+    let completion = ready(reader.read_clipboard_text(TextAcquisitionGeneration::new(16)));
+    assert_eq!(completion.result.unwrap().as_str(), "not-validated-by-platform");
+}
+
+#[test]
+fn clipboard_writer_preserves_the_exact_public_value_and_typed_failure() {
+    let writer = MockClipboardTextWriter::new([
+        Ok(()),
+        Err(PlatformFailure { code: "clipboard_denied".into(), retryable: false }),
+    ]);
+    let public_destination = "e01b09b22ccc4e2755d29eead962677b";
+
+    assert_eq!(ready(writer.write_clipboard_text(public_destination.into())), Ok(()));
+    assert_eq!(
+        ready(writer.write_clipboard_text(public_destination.into())),
+        Err(PlatformFailure { code: "clipboard_denied".into(), retryable: false })
+    );
+    assert_eq!(writer.writes(), [public_destination, public_destination]);
+}
+
+#[test]
+fn qr_mock_reports_cancellation_and_success_without_destination_validation() {
+    let oversized = vec![b'x'; MAX_CANDIDATE_PAYLOAD_BYTES + 1];
+    let scanner = MockQrDestinationScanner::new([
+        MockTextAcquisitionResponse::Denied,
+        MockTextAcquisitionResponse::Restricted,
+        MockTextAcquisitionResponse::Unavailable,
+        MockTextAcquisitionResponse::ServiceBytes(oversized),
+        MockTextAcquisitionResponse::ServiceBytes(vec![0xff]),
+        MockTextAcquisitionResponse::Cancelled,
+        MockTextAcquisitionResponse::ServiceBytes(Vec::new()),
+    ]);
+
+    let expected = [
+        TextAcquisitionFailure::Denied,
+        TextAcquisitionFailure::Restricted,
+        TextAcquisitionFailure::Unavailable,
+        TextAcquisitionFailure::Oversized,
+        TextAcquisitionFailure::Malformed,
+    ];
+    for (value, expected) in expected.into_iter().enumerate() {
+        let completion = ready(
+            scanner
+                .scan_qr_destination(TextAcquisitionGeneration::new(value as u64 + 21), Vec::new()),
+        );
+        assert_eq!(completion.result, Err(expected));
+    }
+
+    let cancelled =
+        ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(26), Vec::new()));
+    assert_eq!(cancelled.generation.value(), 26);
+    assert_eq!(cancelled.result, Err(TextAcquisitionFailure::Cancelled));
+
+    let candidate =
+        ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(27), Vec::new()));
+    assert_eq!(candidate.result.unwrap().as_str(), "");
+
+    let exhausted =
+        ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(28), Vec::new()));
+    assert_eq!(exhausted.result, Err(TextAcquisitionFailure::Unavailable));
+}
+
+#[test]
+fn text_acquisition_completion_rejects_stale_generation() {
+    let current = TextAcquisitionGeneration::new(12);
+    let stale = TextAcquisitionCompletion {
+        generation: TextAcquisitionGeneration::new(11),
+        result: Err(TextAcquisitionFailure::Denied),
+    };
+    let matching = TextAcquisitionCompletion {
+        generation: current,
+        result: Err(TextAcquisitionFailure::Cancelled),
+    };
+
+    assert_eq!(stale.into_result_for(current), None);
+    assert_eq!(matching.into_result_for(current), Some(Err(TextAcquisitionFailure::Cancelled)));
+
+    let typed_stale = TextAcquisitionCompletion {
+        generation: TextAcquisitionGeneration::new(11),
+        result: Err(TextAcquisitionFailure::Denied),
+    };
+    assert_eq!(typed_stale.into_typed_result_for(current), Err(TextAcquisitionFailure::Stale));
+}
+
+#[test]
+fn candidate_payload_bound_is_utf8_bytes_and_accepts_the_exact_limit() {
+    let exact = "x".repeat(MAX_CANDIDATE_PAYLOAD_BYTES);
+    let multibyte = "\u{1f642}".repeat(MAX_CANDIDATE_PAYLOAD_BYTES / 4 + 1);
+
+    assert_eq!(
+        styrene_ui_platform::CandidatePayload::new(exact.clone())
+            .expect("exact byte boundary")
+            .into_string(),
+        exact
+    );
+    assert_eq!(
+        styrene_ui_platform::CandidatePayload::new(multibyte),
+        Err(styrene_ui_platform::CandidatePayloadError::Oversized)
+    );
+}
+
+#[test]
+fn opaque_document_is_byte_bounded_and_debug_redacted() {
+    let secret = b"encrypted-secret-document".to_vec();
+    let document = OpaqueDocument::new(secret.clone()).expect("bounded document");
+    let debug = format!("{document:?}");
+
+    assert_eq!(document.as_bytes(), secret);
+    assert!(!debug.contains("encrypted-secret-document"));
+    assert!(debug.contains("[REDACTED]"));
+    assert!(debug.contains(&format!("len: {}", secret.len())));
+    assert!(OpaqueDocument::new(vec![0; MAX_OPAQUE_DOCUMENT_BYTES]).is_ok());
+    assert_eq!(
+        OpaqueDocument::new(vec![0; MAX_OPAQUE_DOCUMENT_BYTES + 1]),
+        Err(OpaqueDocumentError::Oversized)
+    );
+}
+
+#[test]
+fn document_picker_mock_types_failures_and_preserves_generation() {
+    let picker = MockOpaqueDocumentPicker::new([
+        MockDocumentPickerResponse::Cancelled,
+        MockDocumentPickerResponse::Unavailable,
+        MockDocumentPickerResponse::ReadFailed,
+        MockDocumentPickerResponse::DocumentBytes(vec![0; MAX_OPAQUE_DOCUMENT_BYTES + 1]),
+        MockDocumentPickerResponse::DocumentBytes(vec![0xff, 0x00, 0x81]),
+    ]);
+    let expected = [
+        Err(DocumentPickerFailure::Cancelled),
+        Err(DocumentPickerFailure::Unavailable),
+        Err(DocumentPickerFailure::ReadFailed),
+        Err(DocumentPickerFailure::Oversized),
+    ];
+
+    for (value, expected) in expected.into_iter().enumerate() {
+        let generation = DocumentRequestGeneration::new(value as u64 + 30);
+        let completion = ready(picker.pick_document(generation));
+        assert_eq!(completion.generation, generation);
+        assert_eq!(completion.result, expected);
+    }
+
+    let completion = ready(picker.pick_document(DocumentRequestGeneration::new(34)));
+    assert_eq!(completion.result.expect("opaque bytes").into_bytes(), [0xff, 0x00, 0x81]);
+    let exhausted = ready(picker.pick_document(DocumentRequestGeneration::new(35)));
+    assert_eq!(exhausted.result, Err(DocumentPickerFailure::Unavailable));
+}
+
+#[test]
+fn document_completions_reject_stale_request_generations() {
+    let current = DocumentRequestGeneration::new(42);
+    let stale_pick = DocumentPickerCompletion {
+        generation: DocumentRequestGeneration::new(41),
+        result: Err(DocumentPickerFailure::ReadFailed),
+    };
+    let matching_pick = DocumentPickerCompletion {
+        generation: current,
+        result: Err(DocumentPickerFailure::Cancelled),
+    };
+
+    assert_eq!(stale_pick.into_result_for(current), None);
+    assert_eq!(matching_pick.into_result_for(current), Some(Err(DocumentPickerFailure::Cancelled)));
+
+    let stale_share = styrene_ui_platform::DocumentShareCompletion {
+        generation: DocumentRequestGeneration::new(41),
+        result: Ok(DocumentShareOutcome::Presented),
+    };
+    assert_eq!(stale_share.into_result_for(current), None);
+}
+
+#[test]
+fn document_share_mock_reports_presentation_not_completed_sharing() {
+    let sharer = MockOpaqueDocumentSharer::new([
+        MockDocumentShareResponse::Presented,
+        MockDocumentShareResponse::PresentationFailed,
+        MockDocumentShareResponse::Unavailable,
+    ]);
+    let document = OpaqueDocument::new(vec![0x01, 0x02]).expect("bounded document");
+
+    let presented =
+        ready(sharer.present_document_share(DocumentRequestGeneration::new(50), document.clone()));
+    assert_eq!(presented.result, Ok(DocumentShareOutcome::Presented));
+
+    let failed =
+        ready(sharer.present_document_share(DocumentRequestGeneration::new(51), document.clone()));
+    assert_eq!(failed.result, Err(DocumentShareFailure::PresentationFailed));
+
+    let unavailable =
+        ready(sharer.present_document_share(DocumentRequestGeneration::new(52), document.clone()));
+    assert_eq!(unavailable.result, Err(DocumentShareFailure::Unavailable));
+
+    let exhausted =
+        ready(sharer.present_document_share(DocumentRequestGeneration::new(53), document));
+    assert_eq!(exhausted.result, Err(DocumentShareFailure::Unavailable));
+    assert_eq!(sharer.presentations().len(), 4);
 }

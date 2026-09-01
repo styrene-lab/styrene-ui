@@ -363,14 +363,16 @@ pub(crate) mod android;
 pub use crate::android::android_setup;
 #[cfg(target_os = "android")]
 pub use crate::android::{
-  clear_usb_permission_result_handler, set_configuration_changed_handler,
+  clear_document_picker_result_handler, clear_usb_permission_result_handler,
+  set_configuration_changed_handler, set_document_picker_result_handler,
   set_usb_permission_result_handler, try_dispatch,
 };
 #[cfg(target_os = "android")]
 pub mod prelude {
   pub use crate::android::{
-    binding::*, clear_usb_permission_result_handler, dispatch, find_class,
-    set_configuration_changed_handler, set_usb_permission_result_handler, try_dispatch, Context,
+    binding::*, clear_document_picker_result_handler, clear_usb_permission_result_handler,
+    dispatch, find_class, set_configuration_changed_handler, set_document_picker_result_handler,
+    set_usb_permission_result_handler, try_dispatch, Context,
   };
   pub use tao_macros::{android_fn, generate_package_name};
 }

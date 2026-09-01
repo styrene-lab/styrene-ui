@@ -1,11 +1,15 @@
 use dioxus::prelude::*;
-use styrene_ui_app::{BackNavigation, MobileShell};
+use styrene_ui_app::{BackNavigation, IdentityBootstrap, MobileShell, QrImageCapture};
+use styrene_ui_platform::ClipboardTextWriter;
 #[cfg(all(
     any(target_os = "android", target_os = "ios", target_os = "macos"),
     not(feature = "ui-test")
 ))]
 use styrene_ui_platform::{
-    AndroidUsbAttachment, AuthorizationState, BleControlPhase, BleControlState,
+    AndroidUsbAttachment, ApplicationSettingsService, AuthorizationState, BleControlPhase,
+    BleControlState, ClipboardTextReader, DocumentPickerFailure, DocumentRequestGeneration,
+    DocumentShareFailure, DocumentShareOutcome, OpaqueDocument, OpaqueDocumentPicker,
+    OpaqueDocumentSharer, QrDestinationScanner, TextAcquisitionFailure, TextAcquisitionGeneration,
 };
 #[cfg(all(
     not(target_os = "ios"),
@@ -13,7 +17,9 @@ use styrene_ui_platform::{
     not(feature = "ui-test")
 ))]
 use styrene_ui_platform::{BleAdapterState, BleControlFailure, PermissionKind};
-use styrene_ui_state::TargetClass;
+use styrene_ui_state::{
+    IdentityRecoveryFailure, IdentityRecoveryPhase, IdentityRecoveryState, TargetClass,
+};
 #[cfg(any(
     test,
     feature = "ui-test",
@@ -61,6 +67,31 @@ fn target_class() -> TargetClass {
     if cfg!(target_os = "android") { TargetClass::Android } else { TargetClass::Ios }
 }
 
+const fn cancelled_qr_capture_failure(
+    authorization: styrene_ui_platform::AuthorizationState,
+) -> TextAcquisitionFailure {
+    match authorization {
+        styrene_ui_platform::AuthorizationState::Denied => TextAcquisitionFailure::Denied,
+        styrene_ui_platform::AuthorizationState::Restricted => TextAcquisitionFailure::Restricted,
+        styrene_ui_platform::AuthorizationState::Unavailable => TextAcquisitionFailure::Unavailable,
+        styrene_ui_platform::AuthorizationState::NotDetermined
+        | styrene_ui_platform::AuthorizationState::Granted => TextAcquisitionFailure::Cancelled,
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IdentityCopyCompletion {
+    generation: u64,
+    destination: String,
+    failure: Option<String>,
+}
+
+impl IdentityCopyCompletion {
+    fn is_for(&self, generation: u64, destination: &str) -> bool {
+        self.generation == generation && self.destination == destination
+    }
+}
+
 #[cfg(any(
     test,
     feature = "ui-test",
@@ -85,6 +116,10 @@ fn bootstrap_fixture() -> MobileFixture {
 pub fn App() -> Element {
     platform::use_back_navigation();
     let platform_snapshot = platform::use_platform_snapshot();
+    let mut identity_copy_busy = use_signal(|| false);
+    let mut identity_copy_completion = use_signal(|| None::<IdentityCopyCompletion>);
+    let mut identity_recovery = use_signal(IdentityRecoveryState::default);
+    let mut selected_identity_backup = use_signal(|| None::<OpaqueDocument>);
     #[cfg(all(
         any(target_os = "android", target_os = "ios", target_os = "macos"),
         not(feature = "ui-test")
@@ -104,6 +139,24 @@ pub fn App() -> Element {
         use_signal(|| None::<AndroidUsbAttachment>),
         use_signal(|| None::<String>),
     );
+    #[cfg(all(
+        any(target_os = "android", target_os = "ios", target_os = "macos"),
+        not(feature = "ui-test")
+    ))]
+    let (mut clipboard_candidate, mut clipboard_failure, mut clipboard_busy) =
+        (use_signal(|| None::<String>), use_signal(|| None::<String>), use_signal(|| false));
+    #[cfg(all(
+        any(target_os = "android", target_os = "ios", target_os = "macos"),
+        not(feature = "ui-test")
+    ))]
+    let (mut qr_failure, mut qr_busy, mut acquisition_generation) =
+        (use_signal(|| None::<String>), use_signal(|| false), use_signal(|| 0_u64));
+    #[cfg(all(
+        any(target_os = "android", target_os = "ios", target_os = "macos"),
+        not(feature = "ui-test")
+    ))]
+    let (mut application_settings_busy, mut application_settings_failure) =
+        (use_signal(|| false), use_signal(|| None::<String>));
 
     #[cfg(all(target_os = "android", not(feature = "ui-test")))]
     use_future(move || async move {
@@ -130,7 +183,7 @@ pub fn App() -> Element {
     ))]
     {
         let session = use_signal(session::MobileSession::start);
-        let mut update = use_signal(session::MobileSession::starting_update);
+        let mut update = use_signal(session::MobileSession::starting_view);
         #[cfg(target_os = "ios")]
         let ble_host = use_signal(ios_ble::IosBleHost::new);
         #[cfg(target_os = "ios")]
@@ -163,7 +216,123 @@ pub fn App() -> Element {
                 }
             });
         }
-        let current = update.read().clone();
+        let current_view = update.read().clone();
+        let current = match current_view {
+            session::SessionView::Inspecting => {
+                return rsx! {
+                    main {
+                        id: "mobile.identity-inspection",
+                        class: "mobile-shell identity-bootstrap",
+                        "aria-busy": "true",
+                        h1 { "Checking identity custody" }
+                        p { role: "status", "Styrene has not started networking." }
+                    }
+                };
+            }
+            session::SessionView::Bootstrap { generation } => {
+                return rsx! {
+                    IdentityBootstrap {
+                        generation,
+                        state: *identity_recovery.read(),
+                        create: move |()| {
+                            if matches!(identity_recovery.read().phase, IdentityRecoveryPhase::Restoring) {
+                                return;
+                            }
+                            selected_identity_backup.set(None);
+                            identity_recovery.set(IdentityRecoveryState {
+                                phase: IdentityRecoveryPhase::Creating,
+                                failure: None,
+                                restore_available: false,
+                            });
+                            let session = session.read().clone();
+                            spawn(async move {
+                                if let Err(failure) = session.confirm_identity_creation(generation).await
+                                    && matches!(*update.read(), session::SessionView::Bootstrap { generation: current } if current == generation)
+                                {
+                                    identity_recovery.set(IdentityRecoveryState {
+                                        phase: IdentityRecoveryPhase::Idle,
+                                        failure: Some(failure),
+                                        restore_available: selected_identity_backup.read().is_some(),
+                                    });
+                                }
+                            });
+                        },
+                        restore_select: move |()| {
+                            if matches!(identity_recovery.read().phase, IdentityRecoveryPhase::Selecting | IdentityRecoveryPhase::Restoring) {
+                                return;
+                            }
+                            identity_recovery.set(IdentityRecoveryState {
+                                phase: IdentityRecoveryPhase::Selecting,
+                                failure: None,
+                                restore_available: false,
+                            });
+                            selected_identity_backup.set(None);
+                            spawn(async move {
+                                let request_generation = DocumentRequestGeneration::new(generation);
+                                let picker = platform::NativeOpaqueDocumentPicker;
+                                let completion = picker.pick_document(request_generation).await;
+                                if !matches!(*update.read(), session::SessionView::Bootstrap { generation: current } if current == generation) {
+                                    return;
+                                }
+                                let state = match completion.into_result_for(request_generation) {
+                                    Some(Ok(document)) => {
+                                        selected_identity_backup.set(Some(document));
+                                        IdentityRecoveryState {
+                                            phase: IdentityRecoveryPhase::Idle,
+                                            failure: None,
+                                            restore_available: true,
+                                        }
+                                    }
+                                    Some(Err(failure)) => IdentityRecoveryState {
+                                        phase: IdentityRecoveryPhase::Idle,
+                                        failure: Some(match failure {
+                                            DocumentPickerFailure::Cancelled => IdentityRecoveryFailure::PickerCancelled,
+                                            DocumentPickerFailure::Oversized => IdentityRecoveryFailure::ArtifactTooLarge,
+                                            DocumentPickerFailure::Unavailable => IdentityRecoveryFailure::PickerUnavailable,
+                                            DocumentPickerFailure::ReadFailed => IdentityRecoveryFailure::PickerReadFailed,
+                                        }),
+                                        restore_available: false,
+                                    },
+                                    None => return,
+                                };
+                                identity_recovery.set(state);
+                            });
+                        },
+                        restore: move |protection| {
+                            let Some(document) = selected_identity_backup.write().take() else {
+                                identity_recovery.set(IdentityRecoveryState {
+                                    phase: IdentityRecoveryPhase::Idle,
+                                    failure: Some(IdentityRecoveryFailure::PickerReadFailed),
+                                    restore_available: false,
+                                });
+                                return;
+                            };
+                            identity_recovery.set(IdentityRecoveryState {
+                                phase: IdentityRecoveryPhase::Restoring,
+                                failure: None,
+                                restore_available: false,
+                            });
+                            let session = session.read().clone();
+                            spawn(async move {
+                                if let Err(failure) = session.restore_identity(generation, document, protection).await
+                                    && matches!(*update.read(), session::SessionView::Bootstrap { generation: current } if current == generation)
+                                {
+                                    identity_recovery.set(IdentityRecoveryState {
+                                        phase: IdentityRecoveryPhase::Idle,
+                                        failure: Some(failure),
+                                        restore_available: false,
+                                    });
+                                }
+                            });
+                        },
+                    }
+                };
+            }
+            session::SessionView::Running(current) | session::SessionView::Failed(current) => {
+                current
+            }
+        };
+        let current_generation = current.fixture.generation;
         let current_platform = platform_snapshot.read().clone();
         #[cfg(not(target_os = "ios"))]
         let bluetooth_permission = current_platform
@@ -209,6 +378,15 @@ pub fn App() -> Element {
             *usb_authorization.read() == Some(AuthorizationState::Granted)
                 && selected.as_ref().is_some_and(|selected| attachments.contains(selected))
         };
+        let current_destination = current.fixture.session.identity_hash.clone();
+        let visible_copy_completion = identity_copy_completion
+            .read()
+            .clone()
+            .filter(|completion| completion.is_for(current_generation, &current_destination));
+        let identity_copy_succeeded =
+            visible_copy_completion.as_ref().is_some_and(|completion| completion.failure.is_none());
+        let identity_copy_failure =
+            visible_copy_completion.and_then(|completion| completion.failure);
 
         return rsx! {
             MobileShell {
@@ -320,6 +498,188 @@ pub fn App() -> Element {
                     #[cfg(target_os = "ios")]
                     ble_host.read().forget();
                 },
+                clipboard_candidate: clipboard_candidate.read().clone(),
+                clipboard_failure: clipboard_failure.read().clone(),
+                clipboard_busy: *clipboard_busy.read(),
+                clipboard_read: move |()| {
+                    if *clipboard_busy.read() {
+                        return;
+                    }
+                    clipboard_busy.set(true);
+                    clipboard_failure.set(None);
+                    let generation_value = acquisition_generation().wrapping_add(1);
+                    acquisition_generation.set(generation_value);
+                    let generation = TextAcquisitionGeneration::new(generation_value);
+                    spawn(async move {
+                        let reader = platform::NativeClipboardTextReader;
+                        let completion = reader.read_clipboard_text(generation).await;
+                        let active = TextAcquisitionGeneration::new(acquisition_generation());
+                        if update.read().generation() == Some(current_generation)
+                            && let Some(result) = completion.into_result_for(active)
+                        {
+                            match result {
+                                Ok(candidate) => {
+                                    clipboard_candidate.set(Some(candidate.into_string()));
+                                }
+                                Err(error) => {
+                                    clipboard_failure.set(Some(error.code().into()));
+                                }
+                            }
+                        }
+                        clipboard_busy.set(false);
+                    });
+                },
+                qr_failure: qr_failure.read().clone(),
+                qr_busy: *qr_busy.read(),
+                qr_capture: move |capture: QrImageCapture| {
+                    if *qr_busy.read() {
+                        return;
+                    }
+                    qr_busy.set(true);
+                    qr_failure.set(None);
+                    let generation_value = acquisition_generation().wrapping_add(1);
+                    acquisition_generation.set(generation_value);
+                    let generation = TextAcquisitionGeneration::new(generation_value);
+                    spawn(async move {
+                        let result = match capture {
+                            QrImageCapture::EncodedImage(encoded_image) => {
+                                let scanner = styrene_ui_platform::ImageQrDestinationScanner;
+                                scanner.scan_qr_destination(generation, encoded_image).await.result
+                            }
+                            QrImageCapture::Failure(TextAcquisitionFailure::Cancelled) => {
+                                Err(cancelled_qr_capture_failure(
+                                    platform::camera_authorization().await,
+                                ))
+                            }
+                            QrImageCapture::Failure(failure) => Err(failure),
+                        };
+                        let active = TextAcquisitionGeneration::new(acquisition_generation());
+                        let completion = styrene_ui_platform::TextAcquisitionCompletion {
+                            generation,
+                            result,
+                        };
+                        if update.read().generation() == Some(current_generation) {
+                            match completion.into_typed_result_for(active) {
+                                Ok(candidate) => {
+                                    clipboard_candidate.set(Some(candidate.into_string()));
+                                }
+                                Err(TextAcquisitionFailure::Cancelled | TextAcquisitionFailure::Stale) => {}
+                                Err(error) => {
+                                    qr_failure.set(Some(error.code().into()));
+                                }
+                            }
+                        }
+                        qr_busy.set(false);
+                    });
+                },
+                identity_copy_busy: *identity_copy_busy.read(),
+                identity_copy_succeeded,
+                identity_copy_failure,
+                identity_copy: move |value: String| {
+                    if *identity_copy_busy.read() {
+                        return;
+                    }
+                    identity_copy_busy.set(true);
+                    identity_copy_completion.set(None);
+                    spawn(async move {
+                        let writer = platform::NativeClipboardTextWriter;
+                        let destination = value.clone();
+                        let failure = writer.write_clipboard_text(value).await.err().map(|error| error.code);
+                        identity_copy_completion.set(Some(IdentityCopyCompletion {
+                            generation: current_generation,
+                            destination,
+                            failure,
+                        }));
+                        identity_copy_busy.set(false);
+                    });
+                },
+                identity_recovery: *identity_recovery.read(),
+                identity_backup: move |protection| {
+                    if matches!(
+                        identity_recovery.read().phase,
+                        IdentityRecoveryPhase::Exporting | IdentityRecoveryPhase::Sharing
+                    ) {
+                        return;
+                    }
+                    identity_recovery.set(IdentityRecoveryState {
+                        phase: IdentityRecoveryPhase::Exporting,
+                        failure: None,
+                        restore_available: false,
+                    });
+                    let session = session.read().clone();
+                    spawn(async move {
+                        let document = match session
+                            .export_portable_identity_backup(current_generation, protection)
+                            .await
+                        {
+                            Ok(document) => document,
+                            Err(failure) => {
+                                if update.read().generation() != Some(current_generation) {
+                                    return;
+                                }
+                                identity_recovery.set(IdentityRecoveryState {
+                                    phase: IdentityRecoveryPhase::Idle,
+                                    failure: Some(failure),
+                                    restore_available: false,
+                                });
+                                return;
+                            }
+                        };
+                        if update.read().generation() != Some(current_generation) {
+                            return;
+                        }
+                        identity_recovery.set(IdentityRecoveryState {
+                            phase: IdentityRecoveryPhase::Sharing,
+                            failure: None,
+                            restore_available: false,
+                        });
+                        let generation = DocumentRequestGeneration::new(current_generation);
+                        let sharer = platform::NativeOpaqueDocumentSharer;
+                        let completion = sharer.present_document_share(generation, document).await;
+                        if update.read().generation() != Some(current_generation) {
+                            return;
+                        }
+                        let state = match completion.into_result_for(generation) {
+                            Some(Ok(DocumentShareOutcome::Presented)) => IdentityRecoveryState {
+                                phase: IdentityRecoveryPhase::SharePresented,
+                                failure: None,
+                                restore_available: false,
+                            },
+                            Some(Err(DocumentShareFailure::Unavailable)) => IdentityRecoveryState {
+                                phase: IdentityRecoveryPhase::Idle,
+                                failure: Some(IdentityRecoveryFailure::ShareUnavailable),
+                                restore_available: false,
+                            },
+                            Some(Err(DocumentShareFailure::PresentationFailed)) => {
+                                IdentityRecoveryState {
+                                    phase: IdentityRecoveryPhase::Idle,
+                                    failure: Some(
+                                        IdentityRecoveryFailure::SharePresentationFailed,
+                                    ),
+                                    restore_available: false,
+                                }
+                            }
+                            None => return,
+                        };
+                        identity_recovery.set(state);
+                    });
+                },
+                application_settings_busy: *application_settings_busy.read(),
+                application_settings_failure: application_settings_failure.read().clone(),
+                open_application_settings: move |()| {
+                    if *application_settings_busy.read() {
+                        return;
+                    }
+                    application_settings_busy.set(true);
+                    application_settings_failure.set(None);
+                    spawn(async move {
+                        let service = platform::NativeApplicationSettingsService;
+                        if let Err(error) = service.open_application_settings().await {
+                            application_settings_failure.set(Some(error.code));
+                        }
+                        application_settings_busy.set(false);
+                    });
+                },
             }
         };
     }
@@ -328,12 +688,47 @@ pub fn App() -> Element {
         feature = "ui-test",
         not(any(target_os = "android", target_os = "ios", target_os = "macos"))
     ))]
-    rsx! {
+    {
+        let fixture = bootstrap_fixture();
+        let current_generation = fixture.generation;
+        let current_destination = fixture.session.identity_hash.clone();
+        let visible_copy_completion = identity_copy_completion
+            .read()
+            .clone()
+            .filter(|completion| completion.is_for(current_generation, &current_destination));
+        let identity_copy_succeeded =
+            visible_copy_completion.as_ref().is_some_and(|completion| completion.failure.is_none());
+        let identity_copy_failure =
+            visible_copy_completion.and_then(|completion| completion.failure);
+
+        rsx! {
         MobileShell {
             target: target_class(),
-            fixture: bootstrap_fixture(),
+            fixture,
             platform_snapshot: platform_snapshot.read().clone(),
             back_navigation: BackNavigation::web_history(),
+            identity_copy_busy: *identity_copy_busy.read(),
+            identity_copy_succeeded,
+            identity_copy_failure,
+            identity_copy: move |value: String| {
+                if *identity_copy_busy.read() {
+                    return;
+                }
+                identity_copy_busy.set(true);
+                identity_copy_completion.set(None);
+                spawn(async move {
+                    let writer = platform::NativeClipboardTextWriter;
+                    let destination = value.clone();
+                    let failure = writer.write_clipboard_text(value).await.err().map(|error| error.code);
+                    identity_copy_completion.set(Some(IdentityCopyCompletion {
+                        generation: current_generation,
+                        destination,
+                        failure,
+                    }));
+                    identity_copy_busy.set(false);
+                });
+            },
+        }
         }
     }
 }
@@ -344,13 +739,56 @@ mod tests {
 
     use super::*;
 
-    const BACKEND_REVISION: &str = "899da81302c5f4e92f60a2fdaf396c26e813ba76";
+    #[test]
+    fn identity_copy_completion_is_bound_to_generation_and_destination() {
+        let completion =
+            IdentityCopyCompletion { generation: 7, destination: "aabbccdd".into(), failure: None };
+
+        assert!(completion.is_for(7, "aabbccdd"));
+        assert!(!completion.is_for(8, "aabbccdd"));
+        assert!(!completion.is_for(7, "eeff0011"));
+    }
+
+    #[test]
+    fn qr_capture_cancellation_preserves_typed_permission_outcomes() {
+        use styrene_ui_platform::AuthorizationState;
+
+        assert_eq!(
+            cancelled_qr_capture_failure(AuthorizationState::Denied),
+            TextAcquisitionFailure::Denied
+        );
+        assert_eq!(
+            cancelled_qr_capture_failure(AuthorizationState::Restricted),
+            TextAcquisitionFailure::Restricted
+        );
+        assert_eq!(
+            cancelled_qr_capture_failure(AuthorizationState::Unavailable),
+            TextAcquisitionFailure::Unavailable
+        );
+        assert_eq!(
+            cancelled_qr_capture_failure(AuthorizationState::Granted),
+            TextAcquisitionFailure::Cancelled
+        );
+        assert_eq!(
+            cancelled_qr_capture_failure(AuthorizationState::NotDetermined),
+            TextAcquisitionFailure::Cancelled
+        );
+    }
+
+    const BACKEND_REVISION: &str = "23beb83dbed95165347debdaabb1a672febfdc92";
+    const MINIMUM_FIXTURE_REVISION: &str = "899da81302c5f4e92f60a2fdaf396c26e813ba76";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
     const FIXTURE_PROVENANCE: &str =
         include_str!("../../../tests/fixtures/mobile-minimum-v1/README.md");
     const APPLICATION_PROVENANCE: &str =
         include_str!("../../../tests/fixtures/mobile-application-parity-v1/README.md");
+    const HANDOFF_PROVENANCE: &str =
+        include_str!("../../../tests/fixtures/mobile-product-handoff-v1/README.md");
+    const INTEGRATION_CORPUS: &str =
+        include_str!("../../../tests/fixtures/mobile-integration-v1/corpus.json");
+    const INTEGRATION_PROVENANCE: &str =
+        include_str!("../../../tests/fixtures/mobile-integration-v1/README.md");
     const PARITY_CONTRACT: &str = include_str!("../../../docs/parity-corpus.md");
 
     #[test]
@@ -377,10 +815,27 @@ mod tests {
     fn workspace_and_corpora_share_the_backend_contract() {
         assert!(WORKSPACE_MANIFEST.contains("resolver = \"3\""));
         assert!(WORKSPACE_MANIFEST.contains("edition = \"2024\""));
+        assert_eq!(WORKSPACE_MANIFEST.matches(BACKEND_REVISION).count(), 6);
         assert_eq!(MOBILE_MANIFEST.matches(BACKEND_REVISION).count(), 4);
-        assert!(FIXTURE_PROVENANCE.contains(BACKEND_REVISION));
-        assert!(APPLICATION_PROVENANCE.contains(BACKEND_REVISION));
-        assert!(PARITY_CONTRACT.contains(BACKEND_REVISION));
+        assert!(FIXTURE_PROVENANCE.contains(MINIMUM_FIXTURE_REVISION));
+        assert!(HANDOFF_PROVENANCE.contains(BACKEND_REVISION));
+        assert!(INTEGRATION_PROVENANCE.contains("0bcf5843208a9a2578836e26b4ac4e23a0f7b4e7"));
+        let integration: serde_json::Value =
+            serde_json::from_str(INTEGRATION_CORPUS).expect("integration corpus must deserialize");
+        let identity_case = integration["cases"]
+            .as_array()
+            .expect("integration corpus cases")
+            .iter()
+            .find(|case| case["id"] == "mobile.identity.copy-public-destination")
+            .expect("public destination case");
+        assert_eq!(
+            identity_case["actions"],
+            serde_json::json!(["open-identity", "copy-public-hash", "read-clipboard"])
+        );
+        assert!(APPLICATION_PROVENANCE.contains("Source baseline revision:"));
+        assert!(APPLICATION_PROVENANCE.contains("before using the UI copy as revision-locked"));
+        assert!(PARITY_CONTRACT.contains("current integration baseline revision"));
+        assert!(PARITY_CONTRACT.contains("uncommitted Skywave build 9 candidate"));
         assert!(PARITY_CONTRACT.contains("styrene-mobile-integration-v1"));
         assert!(PARITY_CONTRACT.contains("Not consumed by UI"));
     }

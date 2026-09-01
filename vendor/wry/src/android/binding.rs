@@ -48,6 +48,13 @@ macro_rules! android_binding {
       $domain,
       $package,
       Rust,
+      onDocumentPickerResult,
+      [JString, jboolean]
+    );
+    android_fn!(
+      $domain,
+      $package,
+      Rust,
       onWebviewDestroy,
       [JObject, JString]
     );
@@ -324,6 +331,24 @@ pub unsafe fn onUsbPermissionResult(
     return;
   };
   super::usb_permission_result(device_name.to_string_lossy().into_owned(), granted != 0);
+}
+
+#[allow(non_snake_case)]
+pub unsafe fn onDocumentPickerResult(
+  mut env: JNIEnv,
+  _: JClass,
+  uri: JString,
+  cancelled: jboolean,
+) {
+  let uri = if cancelled != 0 {
+    None
+  } else {
+    env
+      .get_string(&uri)
+      .ok()
+      .map(|value| value.to_string_lossy().into_owned())
+  };
+  super::document_picker_result(uri);
 }
 
 #[allow(non_snake_case)]

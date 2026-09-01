@@ -45,3 +45,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.97.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check -p styrene-dx --all-targets
+
+  ios-rust:
+    name: iOS Rust
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@1.97.0
+        with:
+          targets: aarch64-apple-ios
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check -p styrene-ui-apple-bridge --target aarch64-apple-ios
+      - run: cargo clippy -p styrene-ui-apple-bridge --target aarch64-apple-ios --no-deps -- -D warnings
+      - run: cargo check -p styrene-mobile-ios --target aarch64-apple-ios
+      - run: cargo clippy -p styrene-mobile-ios --target aarch64-apple-ios --no-deps -- -D warnings

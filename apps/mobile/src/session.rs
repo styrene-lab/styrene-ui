@@ -6,30 +6,39 @@ use std::time::Duration;
 use async_channel::{Receiver, Sender};
 use styrene_ipc::DaemonIdentity;
 use styrene_ipc::types::{
-    IdentityCustodyAuthentication as BackendCustodyAuthentication,
+    IdentityBackupImport, IdentityCustodyAuthentication as BackendCustodyAuthentication,
     IdentityCustodyAvailability as BackendCustodyAvailability,
     IdentityCustodyBackend as BackendCustodyBackend,
     IdentityCustodyDowngrade as BackendCustodyDowngrade,
     IdentityCustodyFailureCode as BackendCustodyFailureCode, IdentityCustodyInfo,
     IdentityCustodyProtection as BackendCustodyProtection, MessageInfo, MessageLifecycleState,
+    MessageRetryIneligibilityReason as BackendRetryIneligibilityReason,
 };
-use styrene_ui_platform::AndroidUsbAttachment;
 #[cfg(target_os = "ios")]
 use styrene_ui_platform::DeviceAuthenticationOutcome;
+use styrene_ui_platform::{AndroidUsbAttachment, OpaqueDocument};
 use styrene_ui_state::{
     Bearer, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
-    ExpectedProjection, IdentityCustody, IdentityCustodyAuthentication,
+    ExpectedProjection, IdentityBackupProtection, IdentityCustody, IdentityCustodyAuthentication,
     IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
-    IdentityCustodyProtection, Message, MessageLifecycle, MobileAction, MobileActionKind,
-    MobileFixture, Peer, PeerSource, PersistenceState, Profile, Propagation, PropagationCandidate,
-    PropagationEvidence, PropagationPolicy, PropagationProgress, PropagationUpdate, Session,
-    SessionPhase, SyncState, TransportEvidence, TypedFailure,
+    IdentityCustodyProtection, IdentityRecoveryFailure, Message, MessageAttachment,
+    MessageAttachmentTransfer, MessageAttempt, MessageAuthentication, MessageDeliveryKind,
+    MessageDeliveryObservation, MessageDeliveryState, MessageDetails, MessageInterfaceObservation,
+    MessageLifecycle, MessagePropagationCorrelation, MessageRetryIneligibilityReason,
+    MessageRouteObservation, MessageRouteOutcome, MessageStampState, MobileAction,
+    MobileActionKind, MobileFixture, Peer, PeerSource, PersistenceState, Profile, Propagation,
+    PropagationCandidate, PropagationEvidence, PropagationPolicy, PropagationProgress,
+    PropagationReadiness, PropagationSynchronization, PropagationTerminalOutcome,
+    PropagationTriggerSource, PropagationUpdate, Session, SessionPhase, SessionRuntime, SyncState,
+    TransportEvidence, TypedFailure,
 };
 use styrened::mobile::{
     IdentityBackend, MobileBearerKind, MobileBearerReason, MobileBearerState, MobileConfig,
-    MobileConnectionPhase, MobileDeliveryMethod, MobileInterfaceConfig, MobileNode,
-    MobilePeerAspect, MobilePropagationSnapshot, MobilePropagationSyncState, MobileSendRequest,
-    MobileStateEvent, MobileStateSubscription, MobileStateSubscriptionError,
+    MobileConnectionPhase, MobileDeliveryMethod, MobileIdentityPresence,
+    MobileIdentityRecoveryError, MobileInterfaceConfig, MobileNode, MobilePeerAspect,
+    MobilePropagationReadiness, MobilePropagationSnapshot, MobilePropagationSyncState,
+    MobilePropagationTerminalOutcome, MobilePropagationTriggerSource, MobileRuntimeState,
+    MobileSendRequest, MobileStateEvent, MobileStateSubscription, MobileStateSubscriptionError,
     MobileUsbFallbackDisposition, persist_mobile_tcp_endpoint,
 };
 #[cfg(target_os = "android")]
@@ -44,10 +53,12 @@ const SUBSCRIPTION_RETRY_DELAY: Duration = Duration::from_millis(250);
 #[derive(Clone)]
 pub struct MobileSession {
     actions: Sender<MobileAction>,
-    updates: Receiver<SessionUpdate>,
+    updates: Receiver<SessionView>,
+    bootstrap_requests: Sender<BootstrapRequest>,
     usb_fallbacks: Sender<UsbFallbackRequest>,
     usb_connections: Sender<UsbConnectionRequest>,
     usb_probes: Sender<UsbProbeRequest>,
+    backup_exports: Sender<BackupExportRequest>,
     #[cfg(target_os = "ios")]
     backend_nodes: Receiver<Arc<MobileNode>>,
 }
@@ -58,13 +69,31 @@ pub struct SessionUpdate {
     pub propagation: PropagationUpdate,
 }
 
+#[derive(Clone, Debug)]
+pub enum SessionView {
+    Inspecting,
+    Bootstrap { generation: u64 },
+    Running(SessionUpdate),
+    Failed(SessionUpdate),
+}
+
+impl SessionView {
+    pub const fn generation(&self) -> Option<u64> {
+        match self {
+            Self::Inspecting => None,
+            Self::Bootstrap { generation } => Some(*generation),
+            Self::Running(update) | Self::Failed(update) => Some(update.fixture.generation),
+        }
+    }
+}
+
 struct SessionOwner {
     generation: u64,
     backend_generation: u64,
     config: MobileConfig,
     node: Arc<MobileNode>,
     state_events: MobileStateSubscription,
-    updates: Sender<SessionUpdate>,
+    updates: Sender<SessionView>,
     usb_worker: Option<UsbWorker>,
 }
 
@@ -79,6 +108,37 @@ struct UsbConnectionRequest {
 
 struct UsbProbeRequest {
     response: Sender<Result<AndroidUsbProbeOutcome, String>>,
+}
+
+struct BackupExportRequest {
+    generation: u64,
+    protection: Vec<u8>,
+    response: Sender<Result<OpaqueDocument, IdentityRecoveryFailure>>,
+}
+
+enum BootstrapRequestKind {
+    Create,
+    Restore { document: OpaqueDocument, protection: Vec<u8> },
+}
+
+struct BootstrapRequest {
+    generation: u64,
+    kind: BootstrapRequestKind,
+    response: Sender<Result<(), IdentityRecoveryFailure>>,
+}
+
+impl Drop for BootstrapRequestKind {
+    fn drop(&mut self) {
+        if let Self::Restore { protection, .. } = self {
+            protection.fill(0);
+        }
+    }
+}
+
+impl Drop for BackupExportRequest {
+    fn drop(&mut self) {
+        self.protection.fill(0);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -103,9 +163,11 @@ impl MobileSession {
     pub fn start() -> Self {
         let (actions, action_receiver) = async_channel::bounded(ACTION_CAPACITY);
         let (update_sender, updates) = async_channel::bounded(1);
+        let (bootstrap_requests, bootstrap_request_receiver) = async_channel::bounded(1);
         let (usb_fallbacks, usb_fallback_receiver) = async_channel::bounded(1);
         let (usb_connections, usb_connection_receiver) = async_channel::bounded(1);
         let (usb_probes, usb_probe_receiver) = async_channel::bounded(1);
+        let (backup_exports, backup_export_receiver) = async_channel::bounded(1);
         #[cfg(target_os = "ios")]
         let (backend_node_sender, backend_nodes) = async_channel::bounded(1);
         let startup_failures = update_sender.clone();
@@ -113,27 +175,31 @@ impl MobileSession {
             thread::Builder::new().name("styrene-mobile-session".into()).spawn(move || {
                 run_owner(
                     action_receiver,
+                    bootstrap_request_receiver,
                     usb_fallback_receiver,
                     usb_connection_receiver,
                     usb_probe_receiver,
+                    backup_export_receiver,
                     #[cfg(target_os = "ios")]
                     backend_node_sender,
                     update_sender,
                 );
             })
         {
-            let _ = startup_failures.force_send(failed_update(
+            let _ = startup_failures.force_send(SessionView::Failed(failed_update(
                 1,
                 "session_thread_start_failed",
                 error.to_string(),
-            ));
+            )));
         }
         Self {
             actions,
             updates,
+            bootstrap_requests,
             usb_fallbacks,
             usb_connections,
             usb_probes,
+            backup_exports,
             #[cfg(target_os = "ios")]
             backend_nodes,
         }
@@ -143,8 +209,41 @@ impl MobileSession {
         let _ = self.actions.try_send(action);
     }
 
-    pub async fn next_update(&self) -> Option<SessionUpdate> {
+    pub async fn next_update(&self) -> Option<SessionView> {
         self.updates.recv().await.ok()
+    }
+
+    pub async fn confirm_identity_creation(
+        &self,
+        generation: u64,
+    ) -> Result<(), IdentityRecoveryFailure> {
+        self.request_bootstrap(generation, BootstrapRequestKind::Create).await
+    }
+
+    pub async fn restore_identity(
+        &self,
+        generation: u64,
+        document: OpaqueDocument,
+        protection: IdentityBackupProtection,
+    ) -> Result<(), IdentityRecoveryFailure> {
+        self.request_bootstrap(
+            generation,
+            BootstrapRequestKind::Restore { document, protection: protection.into_bytes() },
+        )
+        .await
+    }
+
+    async fn request_bootstrap(
+        &self,
+        generation: u64,
+        kind: BootstrapRequestKind,
+    ) -> Result<(), IdentityRecoveryFailure> {
+        let (response, result) = async_channel::bounded(1);
+        self.bootstrap_requests
+            .send(BootstrapRequest { generation, kind, response })
+            .await
+            .map_err(|_| IdentityRecoveryFailure::SessionUnavailable)?;
+        result.recv().await.map_err(|_| IdentityRecoveryFailure::SessionUnavailable)?
     }
 
     pub async fn request_android_usb_fallback(&self) -> Result<(), String> {
@@ -204,6 +303,19 @@ impl MobileSession {
             .map_err(|_| "mobile session closed the USB probe request".to_string())?
     }
 
+    pub async fn export_portable_identity_backup(
+        &self,
+        generation: u64,
+        protection: IdentityBackupProtection,
+    ) -> Result<OpaqueDocument, IdentityRecoveryFailure> {
+        let (response, result) = async_channel::bounded(1);
+        self.backup_exports
+            .send(BackupExportRequest { generation, protection: protection.into_bytes(), response })
+            .await
+            .map_err(|_| IdentityRecoveryFailure::SessionUnavailable)?;
+        result.recv().await.map_err(|_| IdentityRecoveryFailure::SessionUnavailable)?
+    }
+
     #[cfg(target_os = "ios")]
     pub async fn backend_node(&self) -> Result<Arc<MobileNode>, String> {
         self.backend_nodes
@@ -212,22 +324,20 @@ impl MobileSession {
             .map_err(|_| "mobile session closed before publishing its backend node".into())
     }
 
-    pub fn starting_update() -> SessionUpdate {
-        let mut update = failed_update(1, "starting", String::new());
-        update.fixture.id = "embedded-live-starting".into();
-        update.fixture.session.phase = SessionPhase::Starting;
-        update.fixture.session.failure = None;
-        update
+    pub const fn starting_view() -> SessionView {
+        SessionView::Inspecting
     }
 }
 
 fn run_owner(
     actions: Receiver<MobileAction>,
+    bootstrap_requests: Receiver<BootstrapRequest>,
     usb_fallbacks: Receiver<UsbFallbackRequest>,
     usb_connections: Receiver<UsbConnectionRequest>,
     usb_probes: Receiver<UsbProbeRequest>,
+    backup_exports: Receiver<BackupExportRequest>,
     #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
-    updates: Sender<SessionUpdate>,
+    updates: Sender<SessionView>,
 ) {
     #[cfg(target_os = "ios")]
     {
@@ -242,22 +352,28 @@ fn run_owner(
                 DeviceAuthenticationOutcome::Failed => "app_unlock_failed",
                 DeviceAuthenticationOutcome::Authenticated => unreachable!(),
             };
-            let _ = updates.force_send(failed_update(1, code, String::new()));
+            let _ = updates.force_send(SessionView::Failed(failed_update(1, code, String::new())));
             return;
         }
     }
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(runtime) => runtime,
         Err(error) => {
-            let _ = updates.force_send(failed_update(1, "runtime_start_failed", error.to_string()));
+            let _ = updates.force_send(SessionView::Failed(failed_update(
+                1,
+                "runtime_start_failed",
+                error.to_string(),
+            )));
             return;
         }
     };
     runtime.block_on(owner_loop(
         actions,
+        bootstrap_requests,
         usb_fallbacks,
         usb_connections,
         usb_probes,
+        backup_exports,
         #[cfg(target_os = "ios")]
         backend_nodes,
         updates,
@@ -265,52 +381,36 @@ fn run_owner(
 }
 
 #[cfg(target_os = "ios")]
-fn authenticating_update() -> SessionUpdate {
-    let mut update = MobileSession::starting_update();
+fn authenticating_update() -> SessionView {
+    let mut update = failed_update(1, "authenticating", String::new());
     update.fixture.id = "embedded-live-authenticating".into();
-    update
+    update.fixture.session.runtime = SessionRuntime::Ready;
+    update.fixture.session.phase = SessionPhase::Starting;
+    update.fixture.session.failure = None;
+    SessionView::Running(update)
 }
 
 async fn owner_loop(
     actions: Receiver<MobileAction>,
+    bootstrap_requests: Receiver<BootstrapRequest>,
     usb_fallbacks: Receiver<UsbFallbackRequest>,
     usb_connections: Receiver<UsbConnectionRequest>,
     usb_probes: Receiver<UsbProbeRequest>,
+    backup_exports: Receiver<BackupExportRequest>,
     #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
-    updates: Sender<SessionUpdate>,
+    updates: Sender<SessionView>,
 ) {
     let generation = 1;
-    let config = match mobile_config(DEFAULT_ENDPOINT) {
-        Ok(config) => config,
-        Err(error) => {
-            let _ =
-                updates.force_send(failed_update(generation, "platform_paths_unavailable", error));
-            return;
-        }
-    };
-    let node = match MobileNode::boot(config.clone()).await {
-        Ok(node) => Arc::new(node),
-        Err(error) => {
-            let _ = updates.force_send(failed_update(
-                generation,
-                "embedded_start_failed",
-                error.to_string(),
-            ));
-            return;
-        }
-    };
-    let state_events = node.subscribe_state_events();
-    #[cfg(target_os = "ios")]
-    let _ = backend_nodes.try_send(Arc::clone(&node));
-    let backend_generation = node.session_snapshot().await.generation;
-    let mut owner = SessionOwner {
+    let Some(mut owner) = prepare_owner(
         generation,
-        backend_generation,
-        config,
-        node,
-        state_events,
+        bootstrap_requests,
+        #[cfg(target_os = "ios")]
+        backend_nodes,
         updates,
-        usb_worker: None,
+    )
+    .await
+    else {
+        return;
     };
     publish_snapshot(&owner.node, owner.generation, owner.backend_generation, &owner.updates).await;
 
@@ -354,6 +454,13 @@ async fn owner_loop(
                     let _ = request.response.try_send(Err("Android USB is not active".into()));
                 }
             }
+            request = backup_exports.recv(), if !backup_exports.is_closed() => {
+                let Ok(request) = request else {
+                    continue;
+                };
+                let result = owner.export_identity_backup(request.generation, &request.protection).await;
+                let _ = request.response.try_send(result);
+            }
             action = actions.recv() => {
                 let Ok(action) = action else {
                     owner.stop_usb_worker().await;
@@ -368,7 +475,146 @@ async fn owner_loop(
     }
 }
 
+async fn prepare_owner(
+    generation: u64,
+    bootstrap_requests: Receiver<BootstrapRequest>,
+    #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
+    updates: Sender<SessionView>,
+) -> Option<SessionOwner> {
+    let config = match mobile_config(DEFAULT_ENDPOINT) {
+        Ok(config) => config,
+        Err(error) => {
+            let _ = updates.force_send(SessionView::Failed(failed_update(
+                generation,
+                "platform_paths_unavailable",
+                error,
+            )));
+            return None;
+        }
+    };
+    let presence = match MobileNode::identity_presence(&config).await {
+        Ok(presence) => presence,
+        Err(error) => {
+            let _ = updates.force_send(SessionView::Failed(failed_update(
+                generation,
+                "identity_presence_failed",
+                error.to_string(),
+            )));
+            return None;
+        }
+    };
+    let pending_response = if presence == MobileIdentityPresence::Absent {
+        let _ = updates.force_send(SessionView::Bootstrap { generation });
+        loop {
+            let Ok(request) = bootstrap_requests.recv().await else {
+                return None;
+            };
+            if request.generation != generation {
+                let _ = request.response.try_send(Err(IdentityRecoveryFailure::SessionUnavailable));
+                continue;
+            }
+            if let BootstrapRequestKind::Restore { document, protection } = &request.kind {
+                let mut import = IdentityBackupImport::default();
+                import.encrypted_bytes = document.clone().into_bytes();
+                if let Err(error) =
+                    MobileNode::restore_identity_before_boot(&config, import, protection).await
+                {
+                    let _ = request.response.try_send(Err(identity_recovery_failure(error)));
+                    continue;
+                }
+                if MobileNode::identity_presence(&config).await
+                    != Ok(MobileIdentityPresence::Present)
+                {
+                    let _ =
+                        request.response.try_send(Err(IdentityRecoveryFailure::CustodyUnavailable));
+                    let _ = updates.force_send(SessionView::Failed(failed_update(
+                        generation,
+                        "identity_restore_verification_failed",
+                        String::new(),
+                    )));
+                    return None;
+                }
+            }
+            break Some(request.response.clone());
+        }
+    } else {
+        None
+    };
+    let node = match MobileNode::boot(config.clone()).await {
+        Ok(node) => Arc::new(node),
+        Err(error) => {
+            if let Some(response) = pending_response {
+                let _ = response.try_send(Err(IdentityRecoveryFailure::SessionUnavailable));
+            }
+            let _ = updates.force_send(SessionView::Failed(failed_update(
+                generation,
+                "embedded_start_failed",
+                error.to_string(),
+            )));
+            return None;
+        }
+    };
+    if let Some(response) = pending_response {
+        let _ = response.try_send(Ok(()));
+    }
+    let state_events = node.subscribe_state_events();
+    #[cfg(target_os = "ios")]
+    let _ = backend_nodes.try_send(Arc::clone(&node));
+    let backend_generation = node.session_snapshot().await.generation;
+    Some(SessionOwner {
+        generation,
+        backend_generation,
+        config,
+        node,
+        state_events,
+        updates,
+        usb_worker: None,
+    })
+}
+
+const fn identity_recovery_failure(error: MobileIdentityRecoveryError) -> IdentityRecoveryFailure {
+    match error {
+        MobileIdentityRecoveryError::ProtectionRequired => {
+            IdentityRecoveryFailure::ProtectionRequired
+        }
+        MobileIdentityRecoveryError::ProtectionTooLarge => {
+            IdentityRecoveryFailure::ProtectionTooLarge
+        }
+        MobileIdentityRecoveryError::ArtifactTooLarge => IdentityRecoveryFailure::ArtifactTooLarge,
+        MobileIdentityRecoveryError::InvalidBackup => IdentityRecoveryFailure::InvalidBackup,
+        MobileIdentityRecoveryError::AuthenticationFailed => {
+            IdentityRecoveryFailure::AuthenticationFailed
+        }
+        MobileIdentityRecoveryError::CustodyUnavailable => {
+            IdentityRecoveryFailure::CustodyUnavailable
+        }
+        MobileIdentityRecoveryError::IdentityConflict => IdentityRecoveryFailure::IdentityConflict,
+        MobileIdentityRecoveryError::UnsupportedBackend => {
+            IdentityRecoveryFailure::UnsupportedBackend
+        }
+    }
+}
+
 impl SessionOwner {
+    async fn export_identity_backup(
+        &self,
+        generation: u64,
+        protection: &[u8],
+    ) -> Result<OpaqueDocument, IdentityRecoveryFailure> {
+        if generation == self.generation {
+            self.node
+                .export_portable_identity_backup(protection)
+                .await
+                .map_err(identity_recovery_failure)
+                .and_then(|export| {
+                    OpaqueDocument::new(export.encrypted_bytes)
+                        .map_err(|_| IdentityRecoveryFailure::ArtifactTooLarge)
+                })
+        } else {
+            Err(IdentityRecoveryFailure::SessionUnavailable)
+        }
+    }
+
     async fn report_usb_denied(&mut self) -> Result<(), String> {
         self.stop_usb_worker().await;
         self.node
@@ -505,11 +751,11 @@ impl SessionOwner {
             let replacement = match MobileNode::boot(self.config.clone()).await {
                 Ok(replacement) => replacement,
                 Err(error) => {
-                    let _ = self.updates.force_send(failed_update(
+                    let _ = self.updates.force_send(SessionView::Failed(failed_update(
                         self.generation,
                         "embedded_restart_failed",
                         error.to_string(),
-                    ));
+                    )));
                     return false;
                 }
             };
@@ -718,6 +964,19 @@ async fn execute_action(node: &MobileNode, action: MobileActionKind) -> Result<(
                 messaging_failure("active_conversation_failed", error.retryable)
             })?;
         }
+        MobileActionKind::StartConversation { peer_hash } => {
+            node.start_conversation(&peer_hash)
+                .await
+                .map_err(|_| messaging_failure("conversation_start_failed", false))?;
+            node.set_active_conversation(Some(&peer_hash)).await.map_err(|error| {
+                messaging_failure("active_conversation_failed", error.retryable)
+            })?;
+        }
+        MobileActionKind::SetIdentityDisplayName { display_name } => {
+            node.facade.as_ref().set_identity(Some(&display_name), None, None).await.map_err(
+                |error| messaging_failure("identity_display_name_failed", error.is_retryable()),
+            )?;
+        }
         MobileActionKind::SaveDraft { peer_hash, content, .. } => {
             node.set_draft(&peer_hash, &content)
                 .await
@@ -774,10 +1033,10 @@ async fn publish_snapshot(
     node: &MobileNode,
     generation: u64,
     backend_generation: u64,
-    updates: &Sender<SessionUpdate>,
+    updates: &Sender<SessionView>,
 ) {
     if let Ok(update) = project(node, generation, backend_generation).await {
-        let _ = updates.force_send(update);
+        let _ = updates.force_send(SessionView::Running(update));
     }
 }
 
@@ -785,12 +1044,12 @@ async fn publish_snapshot_with_failure(
     node: &MobileNode,
     generation: u64,
     backend_generation: u64,
-    updates: &Sender<SessionUpdate>,
+    updates: &Sender<SessionView>,
     failure: TypedFailure,
 ) {
     if let Ok(mut update) = project(node, generation, backend_generation).await {
         update.fixture.session.failure = Some(failure);
-        let _ = updates.force_send(update);
+        let _ = updates.force_send(SessionView::Running(update));
     }
 }
 
@@ -833,12 +1092,14 @@ async fn project(
             profile: Profile::Live,
             generation,
             session: Session {
+                runtime: project_runtime(session.runtime),
                 phase: project_phase(session.phase),
                 identity_hash: if identity.lxmf_destination_hash.is_empty() {
                     node.delivery_hash().unwrap_or_default()
                 } else {
                     identity.lxmf_destination_hash
                 },
+                display_name: identity.display_name,
                 endpoint: session.endpoint,
                 failure: session.failure.map(|failure| TypedFailure {
                     code: format!("{:?}", failure.code).to_ascii_lowercase(),
@@ -890,25 +1151,206 @@ async fn project(
 
 fn project_message(message: MessageInfo) -> Message {
     let lifecycle = project_lifecycle(message.lifecycle_state);
-    let delivered = lifecycle == MessageLifecycle::Delivered;
-    let failed = matches!(
-        lifecycle,
-        MessageLifecycle::Failed | MessageLifecycle::Expired | MessageLifecycle::Rejected
-    );
+    let details = project_message_details(&message);
+    let delivered = details
+        .delivery_evidence
+        .iter()
+        .any(|evidence| evidence.state == MessageDeliveryState::Completed);
     Message {
         id: message.id,
         peer_hash: if message.is_outgoing { message.destination_hash } else { message.source_hash },
         content: message.content,
         requested_method: project_method(message.requested_delivery_method.as_deref()),
         actual_method: project_method(message.actual_delivery_method.as_deref()),
-        persistence: PersistenceState::Durable,
+        persistence: PersistenceState::Unknown,
         transport: TransportEvidence::None,
         propagation: PropagationEvidence::None,
         delivery: if delivered { DeliveryEvidence::Delivered } else { DeliveryEvidence::Pending },
         correlation_id: message.correlation_id.unwrap_or_default(),
-        failure: failed
-            .then_some(TypedFailure { code: "terminal_message".into(), retryable: true }),
+        failure: None,
         lifecycle: Some(lifecycle),
+        details,
+    }
+}
+
+fn project_message_details(message: &MessageInfo) -> MessageDetails {
+    MessageDetails {
+        projection_complete: message.projection_complete,
+        source_hash: message.source_hash.clone(),
+        destination_hash: message.destination_hash.clone(),
+        timestamp: message.timestamp,
+        lxmf_timestamp: message.lxmf_timestamp,
+        title: message.title.clone(),
+        status: message.status.clone(),
+        terminal_detail: message.terminal_detail.clone(),
+        is_outgoing: message.is_outgoing,
+        delivery_method: message.delivery_method.clone(),
+        requested_delivery_method: message.requested_delivery_method.clone(),
+        actual_delivery_method: message.actual_delivery_method.clone(),
+        fallback_reason: message.fallback_reason.clone(),
+        correlation_id: message.correlation_id.clone(),
+        attempts: message.attempts.iter().map(project_message_attempt).collect(),
+        propagation_correlations: message
+            .propagation_correlations
+            .iter()
+            .map(|correlation| MessagePropagationCorrelation {
+                relation: correlation.relation.clone(),
+                transient_id: correlation.transient_id.clone(),
+                attempt_id: correlation.attempt_id.clone(),
+                peer_hash: correlation.peer_hash.clone(),
+                state: correlation.state.clone(),
+                created_at: correlation.created_at,
+                updated_at: correlation.updated_at,
+            })
+            .collect(),
+        read: message.read,
+        attachment_info: message.attachment_info.as_ref().map(project_attachment),
+        attachments: message.attachments.iter().map(project_attachment).collect(),
+        authentication: match message.authentication_state {
+            styrene_ipc::types::MessageAuthenticationState::Verified => {
+                MessageAuthentication::Verified
+            }
+            styrene_ipc::types::MessageAuthenticationState::Invalid => {
+                MessageAuthentication::Invalid
+            }
+            styrene_ipc::types::MessageAuthenticationState::UnknownIdentity => {
+                MessageAuthentication::UnknownIdentity
+            }
+            styrene_ipc::types::MessageAuthenticationState::NotApplicable => {
+                MessageAuthentication::NotApplicable
+            }
+            _ => MessageAuthentication::Unknown,
+        },
+        stamp_state: match message.stamp_state {
+            styrene_ipc::types::MessageStampState::Verified => MessageStampState::Verified,
+            styrene_ipc::types::MessageStampState::Invalid => MessageStampState::Invalid,
+            styrene_ipc::types::MessageStampState::NotApplicable => {
+                MessageStampState::NotApplicable
+            }
+            _ => MessageStampState::Unknown,
+        },
+        stamp_value: message.stamp_value,
+        stamp_cost: message.stamp_cost,
+        delivery_evidence: message
+            .delivery_evidence
+            .iter()
+            .map(|evidence| MessageDeliveryObservation {
+                kind: match evidence.kind {
+                    styrene_ipc::types::MessageDeliveryEvidenceKind::PacketReceipt => {
+                        MessageDeliveryKind::PacketReceipt
+                    }
+                    styrene_ipc::types::MessageDeliveryEvidenceKind::ResourceCompletion => {
+                        MessageDeliveryKind::ResourceCompletion
+                    }
+                    _ => MessageDeliveryKind::Unknown,
+                },
+                hash: evidence.hash.clone(),
+                representation: evidence.representation.clone(),
+                state: match evidence.state {
+                    styrene_ipc::types::MessageDeliveryEvidenceState::Tracked => {
+                        MessageDeliveryState::Tracked
+                    }
+                    styrene_ipc::types::MessageDeliveryEvidenceState::Completed => {
+                        MessageDeliveryState::Completed
+                    }
+                    styrene_ipc::types::MessageDeliveryEvidenceState::Failed => {
+                        MessageDeliveryState::Failed
+                    }
+                    styrene_ipc::types::MessageDeliveryEvidenceState::Cancelled => {
+                        MessageDeliveryState::Cancelled
+                    }
+                    _ => MessageDeliveryState::Unknown,
+                },
+                outcome: evidence.outcome.clone(),
+                attempt: evidence.attempt,
+                correlation_id: evidence.correlation_id.clone(),
+                observed_at: evidence.observed_at,
+                terminal_at: evidence.terminal_at,
+                transferred_bytes: evidence.transferred_bytes,
+                total_bytes: evidence.total_bytes,
+                progress: evidence.progress,
+            })
+            .collect(),
+        retry_eligible: message.retry_eligible,
+        retry_ineligibility_reason: message.retry_ineligibility_reason.map(project_retry_reason),
+    }
+}
+
+fn project_retry_reason(
+    reason: BackendRetryIneligibilityReason,
+) -> MessageRetryIneligibilityReason {
+    match reason {
+        BackendRetryIneligibilityReason::Inbound => MessageRetryIneligibilityReason::Inbound,
+        BackendRetryIneligibilityReason::MissingOutboundRoute => {
+            MessageRetryIneligibilityReason::MissingOutboundRoute
+        }
+        BackendRetryIneligibilityReason::LifecycleState => {
+            MessageRetryIneligibilityReason::LifecycleState
+        }
+        BackendRetryIneligibilityReason::CanonicalWireUnavailable => {
+            MessageRetryIneligibilityReason::CanonicalWireUnavailable
+        }
+        BackendRetryIneligibilityReason::AttemptLimitReached => {
+            MessageRetryIneligibilityReason::AttemptLimitReached
+        }
+        _ => MessageRetryIneligibilityReason::Unknown,
+    }
+}
+
+fn project_message_attempt(attempt: &styrene_ipc::types::MessageAttemptInfo) -> MessageAttempt {
+    MessageAttempt {
+        message_id: attempt.message_id.clone(),
+        number: attempt.number,
+        started_unix_ms: attempt.started_unix_ms,
+        deadline_unix_ms: attempt.deadline_unix_ms,
+        state: attempt.state.clone(),
+        bearer: attempt.bearer.clone(),
+        route: MessageRouteObservation {
+            outcome: match attempt.route.outcome {
+                styrene_ipc::types::MessageAttemptRouteOutcome::Observed => {
+                    MessageRouteOutcome::Observed
+                }
+                _ => MessageRouteOutcome::Unknown,
+            },
+            connection_generation: attempt.route.connection_generation,
+            observed_at: attempt.route.observed_at,
+            next_hop: attempt.route.next_hop.clone(),
+            hops: attempt.route.hops,
+            stale: attempt.route.stale,
+            interface: attempt.route.interface.as_ref().map(|interface| {
+                MessageInterfaceObservation {
+                    id: interface.id.clone(),
+                    kind: interface.kind.clone(),
+                    generation: interface.generation,
+                }
+            }),
+        },
+    }
+}
+
+fn project_attachment(attachment: &styrene_ipc::types::AttachmentInfo) -> MessageAttachment {
+    MessageAttachment {
+        ordinal: attachment.ordinal,
+        id: attachment.id.clone(),
+        name: attachment.name.clone(),
+        content_type: attachment.content_type.clone(),
+        size: attachment.size,
+        checksum: attachment.checksum.clone(),
+        availability: attachment.availability.clone(),
+        integrity: attachment.integrity.clone(),
+        transfer: attachment.transfer.as_ref().map(|transfer| MessageAttachmentTransfer {
+            message_id: transfer.message_id.clone(),
+            transfer_id: transfer.transfer_id.clone(),
+            resource_hash: transfer.resource_hash.clone(),
+            representation: transfer.representation.clone(),
+            direction: transfer.direction.clone(),
+            state: transfer.state.clone(),
+            transferred: transfer.transferred,
+            total: transfer.total,
+            checksum_verified: transfer.checksum_verified,
+            cancellable: transfer.cancellable,
+            error: transfer.error.clone(),
+        }),
     }
 }
 
@@ -993,14 +1435,22 @@ fn project_lifecycle(lifecycle: MessageLifecycleState) -> MessageLifecycle {
 
 fn project_phase(phase: MobileConnectionPhase) -> SessionPhase {
     match phase {
+        MobileConnectionPhase::Stopped => SessionPhase::Stopped,
+        MobileConnectionPhase::Starting => SessionPhase::Starting,
+        MobileConnectionPhase::Connecting => SessionPhase::Connecting,
         MobileConnectionPhase::Connected => SessionPhase::Connected,
         MobileConnectionPhase::Offline => SessionPhase::Offline,
+        MobileConnectionPhase::Reconnecting => SessionPhase::Reconnecting,
+        MobileConnectionPhase::Degraded => SessionPhase::Degraded,
         MobileConnectionPhase::Failed => SessionPhase::Failed,
-        MobileConnectionPhase::Stopped
-        | MobileConnectionPhase::Starting
-        | MobileConnectionPhase::Connecting
-        | MobileConnectionPhase::Reconnecting
-        | MobileConnectionPhase::Degraded => SessionPhase::Reconnecting,
+    }
+}
+
+fn project_runtime(runtime: MobileRuntimeState) -> SessionRuntime {
+    match runtime {
+        MobileRuntimeState::Ready => SessionRuntime::Ready,
+        MobileRuntimeState::Failed => SessionRuntime::Failed,
+        MobileRuntimeState::Stopped => SessionRuntime::Stopped,
     }
 }
 
@@ -1013,9 +1463,8 @@ fn project_bearer(bearer: &styrened::mobile::MobileBearerObservation) -> Bearer 
         },
         state: match bearer.state {
             MobileBearerState::Connected => BearerState::Connected,
-            MobileBearerState::Connecting | MobileBearerState::Reconnecting => {
-                BearerState::Reconnecting
-            }
+            MobileBearerState::Connecting => BearerState::Connecting,
+            MobileBearerState::Reconnecting => BearerState::Reconnecting,
             MobileBearerState::Disconnected => BearerState::Disconnected,
             MobileBearerState::Unavailable => BearerState::Unavailable,
             MobileBearerState::Unverified => BearerState::Unverified,
@@ -1036,6 +1485,13 @@ fn project_propagation(generation: u64, snapshot: &MobilePropagationSnapshot) ->
     PropagationUpdate {
         generation,
         selected_destination: snapshot.selected_destination.clone(),
+        readiness: match snapshot.readiness {
+            MobilePropagationReadiness::Unselected => PropagationReadiness::Unselected,
+            MobilePropagationReadiness::Ready => PropagationReadiness::Ready,
+            MobilePropagationReadiness::Unavailable => PropagationReadiness::Unavailable,
+            MobilePropagationReadiness::Inactive => PropagationReadiness::Inactive,
+            MobilePropagationReadiness::InvalidMetadata => PropagationReadiness::InvalidMetadata,
+        },
         ready: snapshot.ready,
         sync_state: match snapshot.sync_state {
             MobilePropagationSyncState::Idle => SyncState::Idle,
@@ -1078,6 +1534,53 @@ fn project_propagation(generation: u64, snapshot: &MobilePropagationSnapshot) ->
             stamp_cost: policy.stamp_cost,
             stamp_flexibility: policy.stamp_flexibility,
         }),
+        trigger_capabilities: snapshot
+            .trigger_capabilities
+            .iter()
+            .copied()
+            .map(project_propagation_trigger)
+            .collect(),
+        active_trigger: snapshot.active_trigger.map(project_propagation_trigger),
+        active_sync_started_at: snapshot.active_sync_started_at,
+        last_synchronization: snapshot.last_synchronization.as_ref().map(|synchronization| {
+            PropagationSynchronization {
+                trigger: project_propagation_trigger(synchronization.trigger),
+                started_at: synchronization.started_at,
+                finished_at: synchronization.finished_at,
+                outcome: match synchronization.outcome {
+                    MobilePropagationTerminalOutcome::Succeeded => {
+                        PropagationTerminalOutcome::Succeeded
+                    }
+                    MobilePropagationTerminalOutcome::Failed => PropagationTerminalOutcome::Failed,
+                    MobilePropagationTerminalOutcome::TimedOut => {
+                        PropagationTerminalOutcome::TimedOut
+                    }
+                    MobilePropagationTerminalOutcome::Cancelled => {
+                        PropagationTerminalOutcome::Cancelled
+                    }
+                },
+                new_messages: synchronization.new_messages,
+            }
+        }),
+        cooldown_remaining_secs: snapshot.cooldown_remaining_secs,
+    }
+}
+
+fn project_propagation_trigger(
+    trigger: MobilePropagationTriggerSource,
+) -> PropagationTriggerSource {
+    match trigger {
+        MobilePropagationTriggerSource::InitialConnection => {
+            PropagationTriggerSource::InitialConnection
+        }
+        MobilePropagationTriggerSource::Reconnect => PropagationTriggerSource::Reconnect,
+        MobilePropagationTriggerSource::ForegroundOpportunity => {
+            PropagationTriggerSource::ForegroundOpportunity
+        }
+        MobilePropagationTriggerSource::GrantedBackgroundOpportunity => {
+            PropagationTriggerSource::GrantedBackgroundOpportunity
+        }
+        MobilePropagationTriggerSource::Manual => PropagationTriggerSource::Manual,
     }
 }
 
@@ -1133,8 +1636,10 @@ fn failed_update(generation: u64, code: &str, _message: String) -> SessionUpdate
         profile: Profile::Live,
         generation,
         session: Session {
+            runtime: SessionRuntime::Failed,
             phase: SessionPhase::Failed,
             identity_hash: String::new(),
+            display_name: String::new(),
             endpoint: Some(DEFAULT_ENDPOINT.into()),
             failure: Some(TypedFailure { code: code.into(), retryable: true }),
             custody: None,
@@ -1167,14 +1672,68 @@ fn failed_update(generation: u64, code: &str, _message: String) -> SessionUpdate
 mod tests {
     use super::*;
 
-    #[test]
-    fn initial_projection_is_live_starting_state() {
-        let update = MobileSession::starting_update();
+    const PRODUCT_HANDOFF: &str =
+        include_str!("../../../tests/fixtures/mobile-product-handoff-v1/message.json");
 
-        assert_eq!(update.fixture.profile, Profile::Live);
-        assert_eq!(update.fixture.session.phase, SessionPhase::Starting);
-        assert!(update.fixture.session.failure.is_none());
-        assert!(update.fixture.session.custody.is_none());
+    fn validated_handoff_message(value: &serde_json::Value) -> Result<MessageInfo, String> {
+        if value["schema_version"] != 1
+            || value["corpus"] != "styrene-mobile-product-handoff-v1"
+            || value["authority"]["repository"] != "https://github.com/styrene-lab/styrene-rs.git"
+            || value["authority"]["source_revision"] != "0d9dc04cab795f23f791278b019fe4c28430ab6f"
+        {
+            return Err("invalid immutable backend authority".into());
+        }
+        let message = value.get("message").ok_or("message is required")?;
+        let authoritative_fields = value["authoritative_fields"]
+            .as_array()
+            .ok_or("authoritative_fields must be an array")?;
+        for pointer in authoritative_fields {
+            let pointer = pointer.as_str().ok_or("authoritative field must be a string")?;
+            if message.pointer(pointer).is_none() {
+                return Err(format!("missing authoritative field {pointer}"));
+            }
+        }
+        let message: MessageInfo = serde_json::from_value(message.clone())
+            .map_err(|error| format!("invalid typed backend message: {error}"))?;
+        if message.retry_eligible != Some(false)
+            || message.requested_delivery_method.as_deref() != Some("propagated")
+            || message.actual_delivery_method.as_deref() != Some("direct")
+        {
+            return Err("authoritative delivery facts were altered or synthesized".into());
+        }
+        Ok(message)
+    }
+
+    #[test]
+    fn initial_view_inspects_custody_without_publishing_a_fixture() {
+        let view = MobileSession::starting_view();
+
+        assert!(matches!(view, SessionView::Inspecting));
+        assert_eq!(view.generation(), None);
+    }
+
+    #[test]
+    fn bootstrap_generation_is_explicit_and_stale_views_do_not_match() {
+        let view = SessionView::Bootstrap { generation: 7 };
+
+        assert_eq!(view.generation(), Some(7));
+        assert_ne!(view.generation(), Some(8));
+    }
+
+    #[test]
+    fn backend_restore_failures_remain_typed_for_bootstrap_ui() {
+        assert_eq!(
+            identity_recovery_failure(MobileIdentityRecoveryError::AuthenticationFailed),
+            IdentityRecoveryFailure::AuthenticationFailed
+        );
+        assert_eq!(
+            identity_recovery_failure(MobileIdentityRecoveryError::InvalidBackup),
+            IdentityRecoveryFailure::InvalidBackup
+        );
+        assert_eq!(
+            identity_recovery_failure(MobileIdentityRecoveryError::IdentityConflict),
+            IdentityRecoveryFailure::IdentityConflict
+        );
     }
 
     #[test]
@@ -1185,9 +1744,192 @@ mod tests {
     }
 
     #[test]
+    fn backend_message_projection_preserves_authoritative_evidence_without_retry_inference() {
+        let mut route = styrene_ipc::types::MessageAttemptRouteObservation::default();
+        route.outcome = styrene_ipc::types::MessageAttemptRouteOutcome::Observed;
+        route.connection_generation = Some(7);
+        route.observed_at = Some(1_700_000_010);
+        route.next_hop = Some("next-hop".into());
+        route.hops = Some(2);
+        let mut interface = styrene_ipc::types::MessageAttemptInterfaceObservation::default();
+        interface.id = "interface-id".into();
+        interface.kind = "tcp-client".into();
+        interface.generation = 7;
+        route.interface = Some(interface);
+        let mut attempt = styrene_ipc::types::MessageAttemptInfo::default();
+        attempt.message_id = "message-1".into();
+        attempt.number = 2;
+        attempt.started_unix_ms = 1_700_000_000_000;
+        attempt.deadline_unix_ms = 1_700_000_030_000;
+        attempt.state = "failed".into();
+        attempt.bearer = Some("tcp".into());
+        attempt.route = route;
+
+        let mut propagation = styrene_ipc::types::MessagePropagationCorrelationInfo::default();
+        propagation.relation = "upload".into();
+        propagation.transient_id = "transient-1".into();
+        propagation.attempt_id = Some("attempt-2".into());
+        propagation.peer_hash = Some("propagation-node".into());
+        propagation.state = "accepted".into();
+        propagation.created_at = 1_700_000_001;
+        propagation.updated_at = 1_700_000_002;
+
+        let mut evidence = styrene_ipc::types::MessageDeliveryEvidenceInfo::default();
+        evidence.kind = styrene_ipc::types::MessageDeliveryEvidenceKind::PacketReceipt;
+        evidence.hash = "receipt-hash".into();
+        evidence.representation = "packet".into();
+        evidence.state = styrene_ipc::types::MessageDeliveryEvidenceState::Completed;
+        evidence.outcome = Some("delivered".into());
+        evidence.attempt = Some(2);
+        evidence.correlation_id = Some("correlation-1".into());
+        evidence.observed_at = 1_700_000_020;
+        evidence.terminal_at = Some(1_700_000_021);
+
+        let mut message = MessageInfo::default();
+        message.projection_complete = true;
+        message.id = "message-1".into();
+        message.source_hash = "local-source".into();
+        message.destination_hash = "remote-destination".into();
+        message.timestamp = 1_700_000_000;
+        message.lxmf_timestamp = Some(1_700_000_000.25);
+        message.content = "payload".into();
+        message.title = Some("title".into());
+        message.status = "failed".into();
+        message.lifecycle_state = MessageLifecycleState::Failed;
+        message.terminal_detail = Some("non-retryable policy rejection".into());
+        message.is_outgoing = true;
+        message.delivery_method = Some("propagated".into());
+        message.requested_delivery_method = Some("propagated".into());
+        message.actual_delivery_method = Some("direct".into());
+        message.fallback_reason = Some("node unavailable".into());
+        message.correlation_id = Some("correlation-1".into());
+        message.attempts = vec![attempt];
+        message.propagation_correlations = vec![propagation];
+        message.read = true;
+        message.authentication_state = styrene_ipc::types::MessageAuthenticationState::Verified;
+        message.stamp_state = styrene_ipc::types::MessageStampState::Verified;
+        message.stamp_value = Some(18);
+        message.stamp_cost = Some(16);
+        message.delivery_evidence = vec![evidence];
+
+        let projected = project_message(message);
+        let details = &projected.details;
+
+        assert!(details.projection_complete);
+        assert_eq!(details.source_hash, "local-source");
+        assert_eq!(details.destination_hash, "remote-destination");
+        assert_eq!(details.lxmf_timestamp, Some(1_700_000_000.25));
+        assert_eq!(details.terminal_detail.as_deref(), Some("non-retryable policy rejection"));
+        assert_eq!(details.requested_delivery_method.as_deref(), Some("propagated"));
+        assert_eq!(details.actual_delivery_method.as_deref(), Some("direct"));
+        assert_eq!(details.attempts[0].bearer.as_deref(), Some("tcp"));
+        assert_eq!(details.attempts[0].route.outcome, MessageRouteOutcome::Observed);
+        assert_eq!(
+            details.attempts[0].route.interface.as_ref().map(|interface| interface.generation),
+            Some(7)
+        );
+        assert_eq!(details.propagation_correlations[0].state, "accepted");
+        assert_eq!(details.delivery_evidence[0].state, MessageDeliveryState::Completed);
+        assert_eq!(details.authentication, MessageAuthentication::Verified);
+        assert_eq!(details.stamp_state, MessageStampState::Verified);
+        assert_eq!(details.retry_eligible, None);
+        assert_eq!(projected.persistence, PersistenceState::Unknown);
+        assert_eq!(projected.delivery, DeliveryEvidence::Delivered);
+        assert!(projected.failure.is_none());
+    }
+
+    #[test]
+    fn immutable_backend_handoff_projects_without_dropping_or_synthesizing_evidence() {
+        let value: serde_json::Value =
+            serde_json::from_str(PRODUCT_HANDOFF).expect("handoff fixture must be JSON");
+        let projected = project_message(
+            validated_handoff_message(&value).expect("handoff fixture must preserve authority"),
+        );
+
+        assert!(projected.details.projection_complete);
+        assert_eq!(projected.details.requested_delivery_method.as_deref(), Some("propagated"));
+        assert_eq!(projected.details.actual_delivery_method.as_deref(), Some("direct"));
+        assert_eq!(projected.details.retry_eligible, Some(false));
+        assert_eq!(
+            projected.details.retry_ineligibility_reason,
+            Some(MessageRetryIneligibilityReason::AttemptLimitReached)
+        );
+        assert_eq!(projected.details.attempts[0].bearer.as_deref(), Some("tcp"));
+        assert_eq!(projected.details.attempts[0].route.outcome, MessageRouteOutcome::Observed);
+        assert_eq!(projected.details.propagation_correlations[0].state, "accepted");
+        assert_eq!(projected.details.delivery_evidence[0].state, MessageDeliveryState::Completed);
+        assert_eq!(projected.delivery, DeliveryEvidence::Delivered);
+    }
+
+    #[test]
+    fn immutable_backend_handoff_rejects_authority_mutations() {
+        let canonical: serde_json::Value =
+            serde_json::from_str(PRODUCT_HANDOFF).expect("handoff fixture must be JSON");
+        let mut dropped = canonical.clone();
+        dropped["message"].as_object_mut().unwrap().remove("actual_delivery_method");
+        assert!(
+            validated_handoff_message(&dropped)
+                .unwrap_err()
+                .contains("missing authoritative field")
+        );
+
+        let mut synthesized = canonical;
+        synthesized["message"]["retry_eligible"] = serde_json::Value::Bool(true);
+        assert!(
+            validated_handoff_message(&synthesized).unwrap_err().contains("altered or synthesized")
+        );
+    }
+
+    #[test]
     fn backend_offline_ready_state_remains_distinct_from_reconnecting() {
         assert_eq!(project_phase(MobileConnectionPhase::Offline), SessionPhase::Offline);
         assert_eq!(SessionPhase::Offline.as_str(), "offline");
+    }
+
+    #[test]
+    fn backend_runtime_and_connection_phases_remain_distinct() {
+        for (backend, projected) in [
+            (MobileConnectionPhase::Stopped, SessionPhase::Stopped),
+            (MobileConnectionPhase::Offline, SessionPhase::Offline),
+            (MobileConnectionPhase::Starting, SessionPhase::Starting),
+            (MobileConnectionPhase::Connecting, SessionPhase::Connecting),
+            (MobileConnectionPhase::Connected, SessionPhase::Connected),
+            (MobileConnectionPhase::Reconnecting, SessionPhase::Reconnecting),
+            (MobileConnectionPhase::Degraded, SessionPhase::Degraded),
+            (MobileConnectionPhase::Failed, SessionPhase::Failed),
+        ] {
+            assert_eq!(project_phase(backend), projected);
+        }
+
+        for (backend, projected) in [
+            (MobileRuntimeState::Ready, SessionRuntime::Ready),
+            (MobileRuntimeState::Failed, SessionRuntime::Failed),
+            (MobileRuntimeState::Stopped, SessionRuntime::Stopped),
+        ] {
+            assert_eq!(project_runtime(backend), projected);
+        }
+    }
+
+    #[test]
+    fn propagation_trigger_sources_remain_typed_and_background_is_explicitly_granted() {
+        for (backend, projected) in [
+            (
+                MobilePropagationTriggerSource::InitialConnection,
+                PropagationTriggerSource::InitialConnection,
+            ),
+            (MobilePropagationTriggerSource::Reconnect, PropagationTriggerSource::Reconnect),
+            (
+                MobilePropagationTriggerSource::ForegroundOpportunity,
+                PropagationTriggerSource::ForegroundOpportunity,
+            ),
+            (
+                MobilePropagationTriggerSource::GrantedBackgroundOpportunity,
+                PropagationTriggerSource::GrantedBackgroundOpportunity,
+            ),
+            (MobilePropagationTriggerSource::Manual, PropagationTriggerSource::Manual),
+        ] {
+            assert_eq!(project_propagation_trigger(backend), projected);
+        }
     }
 
     #[test]
