@@ -191,6 +191,27 @@ label {
   color: var(--ink);
 }
 
+.qr-capture-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--size-touch-ios);
+  padding: 0.65rem 0.9rem;
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--radius-control);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.mobile-shell[data-target="android"] .qr-capture-action {
+  min-block-size: var(--size-touch-android);
+}
+
+.qr-capture-action[aria-disabled="true"] {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 /* Application shell */
 
 .mobile-shell {

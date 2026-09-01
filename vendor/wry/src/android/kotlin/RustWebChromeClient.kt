@@ -275,8 +275,12 @@ class RustWebChromeClient(appActivity: WryActivity) : WebChromeClient() {
     fileChooserParams: FileChooserParams
   ): Boolean {
     val acceptTypes = listOf(*fileChooserParams.acceptTypes)
+      .flatMap { it.split(",") }
+      .map { it.trim() }
     val captureEnabled = fileChooserParams.isCaptureEnabled
-    val capturePhoto = captureEnabled && acceptTypes.contains("image/*")
+    val capturePhoto = captureEnabled && acceptTypes.any {
+      it == "image/*" || it == "image/jpeg" || it == "image/png"
+    }
     val captureVideo = captureEnabled && acceptTypes.contains("video/*")
     if (capturePhoto || captureVideo) {
       if (isMediaCaptureSupported) {

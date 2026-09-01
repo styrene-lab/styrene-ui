@@ -287,6 +287,12 @@ mod native_platform {
         .await
     }
 
+    pub async fn camera_authorization() -> AuthorizationState {
+        dispatch_query(read_native_facts)
+            .await
+            .map_or(AuthorizationState::Unavailable, |facts| facts.camera)
+    }
+
     #[allow(dead_code)] // Consumed by the compose integration in the adjacent workflow task.
     pub async fn read_clipboard_text(
         generation: TextAcquisitionGeneration,
@@ -1152,6 +1158,10 @@ mod native_platform {
         }
     }
 
+    pub fn camera_authorization() -> std::future::Ready<AuthorizationState> {
+        std::future::ready(authorization(styrene_ui_apple_bridge::camera_authorization()))
+    }
+
     #[allow(dead_code)] // Consumed by the compose integration in the adjacent workflow task.
     pub fn read_clipboard_text(
         generation: TextAcquisitionGeneration,
@@ -1279,6 +1289,10 @@ mod native_platform {
             code: "application_settings_unavailable".into(),
             retryable: false,
         }))
+    }
+
+    pub fn camera_authorization() -> std::future::Ready<AuthorizationState> {
+        std::future::ready(AuthorizationState::Unavailable)
     }
 
     #[allow(dead_code)] // Consumed by the compose integration in the adjacent workflow task.
@@ -1930,6 +1944,11 @@ pub async fn request_android_usb_authorization(
     attachment: AndroidUsbAttachment,
 ) -> Result<AuthorizationState, PlatformFailure> {
     WebViewPlatformService.request_android_usb_authorization(attachment).await
+}
+
+#[cfg(not(feature = "ui-test"))]
+pub async fn camera_authorization() -> AuthorizationState {
+    native_platform::camera_authorization().await
 }
 
 async fn run_platform_subscription(snapshot: &mut Signal<Option<PlatformSnapshot>>) {

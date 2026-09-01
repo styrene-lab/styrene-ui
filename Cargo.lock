@@ -4111,6 +4111,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
+name = "quircs"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d71dee9e56835add6f9c26227e6c690b19eda9414f5affc666c3ec833ba140dc"
+dependencies = [
+ "num-derive",
+ "num-traits",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5237,6 +5248,9 @@ dependencies = [
 name = "styrene-ui-platform"
 version = "0.1.0"
 dependencies = [
+ "image",
+ "qrcode",
+ "quircs",
  "serde",
  "serde_json",
 ]

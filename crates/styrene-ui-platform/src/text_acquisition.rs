@@ -1,10 +1,18 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::io::Cursor;
 
 use crate::PlatformFuture;
+use image::{ImageFormat, ImageReader};
 
 /// Maximum text accepted from a clipboard or QR platform boundary.
 pub const MAX_CANDIDATE_PAYLOAD_BYTES: usize = 4096;
+/// Maximum compressed JPEG or PNG supplied by system image capture.
+pub const MAX_QR_ENCODED_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+/// Maximum width or height accepted before image frame allocation.
+pub const MAX_QR_IMAGE_DIMENSION: u32 = 4096;
+/// Maximum decoded pixels accepted before image frame allocation.
+pub const MAX_QR_DECODED_PIXELS: u64 = 4096 * 4096;
 
 /// Bounded UTF-8 text supplied as a possible LXMF destination.
 ///
@@ -80,6 +88,28 @@ pub enum TextAcquisitionFailure {
     Oversized,
     Malformed,
     Cancelled,
+    NoCode,
+    Ambiguous,
+    Unsupported,
+    Stale,
+}
+
+impl TextAcquisitionFailure {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::Denied => "denied",
+            Self::Restricted => "restricted",
+            Self::Unavailable => "unavailable",
+            Self::Oversized => "oversized",
+            Self::Malformed => "malformed",
+            Self::Cancelled => "cancelled",
+            Self::NoCode => "no_code",
+            Self::Ambiguous => "ambiguous",
+            Self::Unsupported => "unsupported",
+            Self::Stale => "stale",
+        }
+    }
 }
 
 impl From<CandidatePayloadError> for TextAcquisitionFailure {
@@ -109,6 +139,19 @@ impl TextAcquisitionCompletion {
     ) -> Option<Result<CandidatePayload, TextAcquisitionFailure>> {
         (self.generation == current).then_some(self.result)
     }
+
+    /// Consume a completion and retain staleness as a typed outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TextAcquisitionFailure::Stale`] when the completion does not
+    /// belong to `current`, or the typed acquisition failure otherwise.
+    pub fn into_typed_result_for(
+        self,
+        current: TextAcquisitionGeneration,
+    ) -> Result<CandidatePayload, TextAcquisitionFailure> {
+        if self.generation == current { self.result } else { Err(TextAcquisitionFailure::Stale) }
+    }
 }
 
 /// Reads text from the system clipboard without interpreting it as a destination.
@@ -132,7 +175,81 @@ pub trait QrDestinationScanner {
     fn scan_qr_destination(
         &self,
         generation: TextAcquisitionGeneration,
+        encoded_image: Vec<u8>,
     ) -> PlatformFuture<'_, TextAcquisitionCompletion>;
+}
+
+/// Decode one bounded JPEG or PNG containing exactly one QR symbol.
+///
+/// The returned text is only a candidate. Destination interpretation remains a
+/// backend responsibility.
+///
+/// # Errors
+///
+/// Returns a payload-free typed failure when an image violates a resource
+/// bound, has an unsupported format, cannot be decoded, contains anything other
+/// than one QR symbol, or contains a non-UTF-8 or oversized QR payload.
+pub fn decode_qr_destination_image(
+    encoded_image: &[u8],
+) -> Result<CandidatePayload, TextAcquisitionFailure> {
+    if encoded_image.len() > MAX_QR_ENCODED_IMAGE_BYTES {
+        return Err(TextAcquisitionFailure::Oversized);
+    }
+
+    let reader = ImageReader::new(Cursor::new(encoded_image))
+        .with_guessed_format()
+        .map_err(|_| TextAcquisitionFailure::Malformed)?;
+    match reader.format() {
+        Some(ImageFormat::Jpeg | ImageFormat::Png) => {}
+        Some(_) => return Err(TextAcquisitionFailure::Unsupported),
+        None => return Err(TextAcquisitionFailure::Malformed),
+    }
+    let (width, height) =
+        reader.into_dimensions().map_err(|_| TextAcquisitionFailure::Malformed)?;
+    if width > MAX_QR_IMAGE_DIMENSION
+        || height > MAX_QR_IMAGE_DIMENSION
+        || u64::from(width) * u64::from(height) > MAX_QR_DECODED_PIXELS
+    {
+        return Err(TextAcquisitionFailure::Oversized);
+    }
+
+    let grayscale = ImageReader::new(Cursor::new(encoded_image))
+        .with_guessed_format()
+        .map_err(|_| TextAcquisitionFailure::Malformed)?
+        .decode()
+        .map_err(|_| TextAcquisitionFailure::Malformed)?
+        .into_luma8();
+    let mut decoder = quircs::Quirc::default();
+    let mut codes = decoder.identify(width as usize, height as usize, grayscale.as_raw());
+    let Some(code) = codes.next() else {
+        return Err(TextAcquisitionFailure::NoCode);
+    };
+    if codes.next().is_some() {
+        return Err(TextAcquisitionFailure::Ambiguous);
+    }
+    let data = code
+        .map_err(|_| TextAcquisitionFailure::Malformed)?
+        .decode()
+        .map_err(|_| TextAcquisitionFailure::Malformed)?;
+    CandidatePayload::from_service_bytes(data.payload).map_err(Into::into)
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ImageQrDestinationScanner;
+
+impl QrDestinationScanner for ImageQrDestinationScanner {
+    fn scan_qr_destination(
+        &self,
+        generation: TextAcquisitionGeneration,
+        encoded_image: Vec<u8>,
+    ) -> PlatformFuture<'_, TextAcquisitionCompletion> {
+        Box::pin(async move {
+            TextAcquisitionCompletion {
+                generation,
+                result: decode_qr_destination_image(&encoded_image),
+            }
+        })
+    }
 }
 
 /// One deterministic response produced by a platform-service mock.
@@ -257,6 +374,7 @@ impl QrDestinationScanner for MockQrDestinationScanner {
     fn scan_qr_destination(
         &self,
         generation: TextAcquisitionGeneration,
+        _: Vec<u8>,
     ) -> PlatformFuture<'_, TextAcquisitionCompletion> {
         let completion = self.responses.complete(generation);
         Box::pin(async move { completion })

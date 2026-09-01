@@ -141,6 +141,9 @@ fn NewMessageShell(
     #[props(default)] failure: Option<TypedFailure>,
     #[props(default)] paste_failure: Option<String>,
     #[props(default)] paste_enabled: bool,
+    #[props(default)] scan_failure: Option<String>,
+    #[props(default)] scan_enabled: bool,
+    #[props(default)] scan_busy: bool,
 ) -> Element {
     rsx! {
         NewMessageForm {
@@ -152,6 +155,10 @@ fn NewMessageShell(
             failure,
             paste_failure,
             on_paste: paste_enabled.then_some(EventHandler::new(move |()| {})),
+            scan_failure,
+            scan_busy,
+            on_scan: scan_enabled.then_some(EventHandler::new(move |_capture| {})),
+            open_application_settings: move |()| {},
             action_sink: move |_action| {},
         }
     }
@@ -835,6 +842,73 @@ fn new_message_clipboard_failure_is_bounded_and_associated() {
             .contains("aria-describedby=\"mobile.paste-destination-status\"")
     );
     assert!(markup.contains("Clipboard text was not added (denied)."));
+}
+
+#[test]
+fn new_message_qr_capture_is_single_shot_and_uses_the_candidate_path() {
+    let state = fixture("canonical-peer-discovery");
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: String::new(),
+            paste_enabled: true,
+            scan_enabled: true,
+        }
+    });
+
+    let capture = opening_tag_with_id(&markup, "mobile.scan-qr-input");
+    assert!(capture.contains("type=\"file\""));
+    assert!(capture.contains("accept=\"image/jpeg,image/png\""));
+    assert!(capture.contains("capture=\"environment\""));
+    assert!(!capture.contains("multiple"));
+    assert!(markup.contains("Scan QR"));
+    assert!(markup.contains("one QR code is treated as an unvalidated destination candidate"));
+    assert!(!opening_tag_with_id(&markup, "mobile.paste-destination").contains("disabled"));
+    assert!(opening_tag_with_id(&markup, "mobile.start-conversation").contains("disabled"));
+}
+
+#[test]
+fn qr_denial_offers_settings_without_disabling_manual_or_paste_ingress() {
+    let state = fixture("canonical-peer-discovery");
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: String::new(),
+            paste_enabled: true,
+            scan_enabled: true,
+            scan_failure: Some("denied".into()),
+        }
+    });
+
+    assert!(markup.contains("QR image was not added (denied)."));
+    assert!(markup.contains("Open system Settings"));
+    assert!(!opening_tag_with_id(&markup, "mobile.paste-destination").contains("disabled"));
+    assert!(!opening_tag_with_id(&markup, "mobile.direct-destination").contains("disabled"));
+}
+
+#[test]
+fn qr_busy_state_disables_only_scan_capture() {
+    let state = fixture("canonical-peer-discovery");
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: String::new(),
+            paste_enabled: true,
+            scan_enabled: true,
+            scan_busy: true,
+        }
+    });
+
+    assert!(opening_tag_with_id(&markup, "mobile.scan-qr-input").contains("disabled"));
+    assert!(markup.contains("Scanning QR"));
+    assert!(!opening_tag_with_id(&markup, "mobile.paste-destination").contains("disabled"));
+    assert!(!opening_tag_with_id(&markup, "mobile.direct-destination").contains("disabled"));
 }
 
 #[test]
