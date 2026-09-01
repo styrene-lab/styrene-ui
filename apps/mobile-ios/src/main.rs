@@ -15,6 +15,7 @@ mod tests {
     fn packaging_declares_ios_compatibility_contract() {
         assert!(DIOXUS_CONFIG.contains("deployment_target = \"17.0\""));
         assert!(DIOXUS_CONFIG.contains("identifier = \"io.styrene.mesh\""));
+        assert!(DIOXUS_CONFIG.contains("NSFaceIDUsageDescription"));
         assert!(DIOXUS_CONFIG.contains("[permissions]"));
         assert!(DIOXUS_CONFIG.contains("camera = { description"));
         assert!(DIOXUS_CONFIG.contains("bluetooth = { description"));

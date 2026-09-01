@@ -10,6 +10,14 @@ use std::pin::Pin;
 pub type PlatformFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeviceAuthenticationOutcome {
+    Authenticated,
+    Cancelled,
+    Unavailable,
+    Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WindowClass {
     Compact,
     Wide,

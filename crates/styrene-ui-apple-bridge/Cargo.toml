@@ -17,6 +17,7 @@ objc2 = { version = "=0.6.4", default-features = false, features = ["std"] }
 objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
 objc2-core-bluetooth = { version = "=0.3.2", default-features = false, features = ["bitflags", "CBAttribute", "CBCentralManager", "CBCharacteristic", "CBManager", "CBPeer", "CBPeripheral", "CBService", "CBUUID", "dispatch2"] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["NSNotification", "NSOperation", "NSObject", "NSString", "NSUserDefaults", "block2"] }
+objc2-local-authentication = { version = "=0.3.2", default-features = false, features = ["LAContext", "LAError", "block2", "std"] }
 objc2-ui-kit = { version = "=0.3.2", default-features = false, features = ["UIContentSizeCategory"] }
 objc2-user-notifications = { version = "=0.3.2", default-features = false, features = ["block2", "UNNotificationSettings", "UNUserNotificationCenter"] }
 
