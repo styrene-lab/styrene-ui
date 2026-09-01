@@ -4,11 +4,11 @@ use styrene_ui_app::{
     LocalAnnounceStatus, MobileShell, NewMessageForm, PropagationPanel,
 };
 use styrene_ui_platform::{
-    AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
-    AuthorizationState, BleAdapterState, BleApprovedPeripheral, BleCandidate, BleControlFailure,
-    BleControlPhase, BleControlState, BlePeripheralId, Contrast, KeyboardGeometry,
-    MotionPreference, PermissionKind, PermissionStatus, PlatformGeometry, PlatformInsets,
-    PlatformSnapshot, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
+    AccessibilityPreferences, AndroidUsbAttachment, AppLockPolicy, Appearance,
+    ApplicationLifecycle, AuthorizationState, BleAdapterState, BleApprovedPeripheral, BleCandidate,
+    BleControlFailure, BleControlPhase, BleControlState, BlePeripheralId, Contrast,
+    KeyboardGeometry, MotionPreference, PermissionKind, PermissionStatus, PlatformGeometry,
+    PlatformInsets, PlatformSnapshot, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
 };
 use styrene_ui_state::{
     ApplyResult, BearerState, Conversation, IdentityCustody, IdentityCustodyAuthentication,
@@ -37,6 +37,22 @@ fn render(fixture: MobileFixture) -> String {
     dioxus_ssr::render_element(rsx! {
         MobileShell { target: TargetClass::Ios, fixture }
     })
+}
+
+#[test]
+fn ios_more_exposes_app_lock_without_conflating_identity_custody() {
+    let markup = dioxus_ssr::render_element(rsx! {
+        MobileShell {
+            target: TargetClass::Ios,
+            fixture: fixture("live-empty-connected"),
+            app_lock_policy: AppLockPolicy::EveryLaunch,
+        }
+    });
+
+    assert!(markup.contains("id=\"mobile.app-lock\""));
+    assert!(markup.contains("Every app launch"));
+    assert!(markup.contains("Once after device reboot"));
+    assert!(markup.contains("Identity custody remains protected separately"));
 }
 
 #[component]
