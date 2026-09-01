@@ -305,6 +305,10 @@ pub trait PlatformEventStream {
     fn next(&mut self) -> PlatformFuture<'_, Option<PlatformEvent>>;
 }
 
+pub trait ApplicationSettingsService {
+    fn open_application_settings(&self) -> PlatformFuture<'_, Result<(), PlatformFailure>>;
+}
+
 pub trait PlatformService {
     fn snapshot(&self) -> PlatformFuture<'_, Result<PlatformSnapshot, PlatformFailure>>;
 

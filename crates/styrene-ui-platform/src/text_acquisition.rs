@@ -97,6 +97,20 @@ pub struct TextAcquisitionCompletion {
     pub result: Result<CandidatePayload, TextAcquisitionFailure>,
 }
 
+impl TextAcquisitionCompletion {
+    /// Consume a completion only when it belongs to the currently active request.
+    ///
+    /// Returning `None` prevents a late platform callback from replacing a newer
+    /// request's candidate or failure state.
+    #[must_use]
+    pub fn into_result_for(
+        self,
+        current: TextAcquisitionGeneration,
+    ) -> Option<Result<CandidatePayload, TextAcquisitionFailure>> {
+        (self.generation == current).then_some(self.result)
+    }
+}
+
 /// Reads text from the system clipboard without interpreting it as a destination.
 pub trait ClipboardTextReader {
     fn read_clipboard_text(

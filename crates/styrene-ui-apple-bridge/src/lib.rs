@@ -32,6 +32,8 @@ pub enum NativeAuthorization {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeBridgeFailure {
     MediaTypeUnavailable,
+    MainThreadUnavailable,
+    Oversized,
 }
 
 #[cfg(target_os = "ios")]
@@ -42,13 +44,18 @@ mod ios {
     use block2::RcBlock;
     use objc2::rc::Retained;
     use objc2::runtime::{Bool, ProtocolObject};
-    use objc2::{AnyThread, DefinedClass, define_class, msg_send};
+    use objc2::{AnyThread, DefinedClass, MainThreadMarker, define_class, msg_send};
     use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeVideo};
     use objc2_core_bluetooth::{
         CBCentralManager, CBCentralManagerDelegate, CBManager, CBManagerAuthorization,
     };
-    use objc2_foundation::{NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol};
-    use objc2_ui_kit::UIContentSizeCategoryDidChangeNotification;
+    use objc2_foundation::{
+        NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSURL,
+    };
+    use objc2_ui_kit::{
+        UIApplication, UIApplicationOpenSettingsURLString,
+        UIContentSizeCategoryDidChangeNotification, UIPasteboard,
+    };
     use objc2_user_notifications::{
         UNAuthorizationStatus, UNNotificationSettings, UNUserNotificationCenter,
     };
@@ -100,6 +107,32 @@ mod ios {
     pub struct BluetoothAuthorizationRequest {
         _delegate: Retained<BluetoothDelegate>,
         _manager: Retained<CBCentralManager>,
+    }
+
+    /// Read plain clipboard text on the main thread without exposing Objective-C objects.
+    pub fn clipboard_text(max_bytes: usize) -> Result<Option<Vec<u8>>, NativeBridgeFailure> {
+        let _marker = MainThreadMarker::new().ok_or(NativeBridgeFailure::MainThreadUnavailable)?;
+        let pasteboard = UIPasteboard::generalPasteboard();
+        // SAFETY: MainThreadMarker above proves this call runs on the main
+        // thread. The returned NSString is retained and does not escape.
+        let Some(text) = (unsafe { pasteboard.string() }) else {
+            return Ok(None);
+        };
+        if text.len() > max_bytes {
+            return Err(NativeBridgeFailure::Oversized);
+        }
+        Ok(Some(text.to_string().into_bytes()))
+    }
+
+    pub fn open_application_settings() -> Result<bool, NativeBridgeFailure> {
+        let marker = MainThreadMarker::new().ok_or(NativeBridgeFailure::MainThreadUnavailable)?;
+        // SAFETY: UIKit initializes this process-wide NSString constant before
+        // application code runs; the reference does not escape this call.
+        let settings_url = unsafe { UIApplicationOpenSettingsURLString };
+        let url =
+            NSURL::URLWithString(settings_url).ok_or(NativeBridgeFailure::MediaTypeUnavailable)?;
+        #[allow(deprecated)]
+        Ok(UIApplication::sharedApplication(marker).openURL(&url))
     }
 
     pub fn camera_authorization() -> NativeAuthorization {
@@ -234,8 +267,8 @@ pub use ios::BluetoothAuthorizationRequest;
 
 #[cfg(target_os = "ios")]
 pub use ios::{
-    bluetooth_authorization, camera_authorization, install_content_size_observer,
-    query_notification_authorization, request_bluetooth, request_camera,
+    bluetooth_authorization, camera_authorization, clipboard_text, install_content_size_observer,
+    open_application_settings, query_notification_authorization, request_bluetooth, request_camera,
 };
 
 #[cfg(not(target_os = "ios"))]
