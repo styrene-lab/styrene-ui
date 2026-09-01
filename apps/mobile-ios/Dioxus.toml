@@ -6,6 +6,9 @@ default_platform = "mobile"
 identifier = "io.styrene.mesh"
 deployment_target = "17.0"
 
+[ios.plist]
+NSFaceIDUsageDescription = "Styrene uses Face ID to unlock your private mesh communications."
+
 [permissions]
 camera = { description = "Styrene uses the camera to scan mesh device and contact codes." }
 bluetooth = { description = "Styrene uses Bluetooth to discover and communicate with nearby mesh radios." }

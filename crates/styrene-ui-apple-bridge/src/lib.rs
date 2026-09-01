@@ -5,6 +5,8 @@
 mod ble;
 #[cfg(target_os = "ios")]
 mod ble_ios;
+#[cfg(target_os = "ios")]
+mod device_authentication;
 mod firmware;
 #[cfg(target_os = "ios")]
 mod firmware_ios;
@@ -14,6 +16,8 @@ mod legacy_dfu_transport;
 pub use ble::*;
 #[cfg(target_os = "ios")]
 pub use ble_ios::*;
+#[cfg(target_os = "ios")]
+pub use device_authentication::*;
 pub use firmware::*;
 #[cfg(target_os = "ios")]
 pub use firmware_ios::*;
