@@ -7,8 +7,8 @@ use qrcode::{Color, QrCode};
 use styrene_ui_platform::{
     AndroidUsbAttachment, Appearance, ApplicationLifecycle, AuthorizationState, BleAdapterState,
     BleControlDisabledReason, BleControlFailure, BleControlPhase, BleControlState, BlePeripheralId,
-    Contrast, KeyboardGeometry, MotionPreference, PermissionKind, PlatformInsets, PlatformSnapshot,
-    TextScale, WindowClass,
+    Contrast, KeyboardGeometry, MAX_QR_ENCODED_IMAGE_BYTES, MotionPreference, PermissionKind,
+    PlatformInsets, PlatformSnapshot, TextAcquisitionFailure, TextScale, WindowClass,
 };
 use styrene_ui_state::{
     BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
@@ -26,6 +26,12 @@ use styrene_ui_state::{
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BackNavigation {
     web_history: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QrImageCapture {
+    EncodedImage(Vec<u8>),
+    Failure(TextAcquisitionFailure),
 }
 
 impl BackNavigation {
@@ -554,6 +560,9 @@ pub fn MobileShell(
     #[props(default)] clipboard_failure: Option<String>,
     #[props(default)] clipboard_busy: bool,
     #[props(default)] clipboard_read: Option<EventHandler<()>>,
+    #[props(default)] qr_failure: Option<String>,
+    #[props(default)] qr_busy: bool,
+    #[props(default)] qr_capture: Option<EventHandler<QrImageCapture>>,
     #[props(default)] identity_copy_busy: bool,
     #[props(default)] identity_copy_succeeded: bool,
     #[props(default)] identity_copy_failure: Option<String>,
@@ -819,6 +828,11 @@ pub fn MobileShell(
                                 paste_busy: clipboard_busy,
                                 paste_failure: clipboard_failure.clone(),
                                 on_paste: clipboard_read,
+                                scan_busy: qr_busy,
+                                scan_failure: qr_failure.clone(),
+                                on_scan: qr_capture,
+                                application_settings_busy,
+                                open_application_settings,
                                 failure: fixture.session.failure.clone(),
                                 action_sink,
                                 on_cancel: move |()| {
@@ -1988,6 +2002,11 @@ pub fn NewMessageForm(
     #[props(default)] paste_busy: bool,
     #[props(default)] paste_failure: Option<String>,
     #[props(default)] on_paste: Option<EventHandler<()>>,
+    #[props(default)] scan_busy: bool,
+    #[props(default)] scan_failure: Option<String>,
+    #[props(default)] on_scan: Option<EventHandler<QrImageCapture>>,
+    #[props(default)] application_settings_busy: bool,
+    #[props(default)] open_application_settings: Option<EventHandler<()>>,
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
     #[props(default)] on_cancel: Option<EventHandler<()>>,
 ) -> Element {
@@ -2010,6 +2029,8 @@ pub fn NewMessageForm(
     let has_validation_error = matches!(constraint, DestinationEntryConstraint::Oversized);
     let has_start_failure =
         failure.as_ref().is_some_and(|failure| failure.code == "conversation_start_failed");
+    let scan_settings_recovery =
+        scan_failure.as_deref().is_some_and(|failure| matches!(failure, "denied" | "restricted"));
     let destination_described_by = if has_validation_error && has_start_failure {
         format!("{destination_status_id} {destination_error_id} {destination_failure_id}")
     } else if has_validation_error {
@@ -2115,6 +2136,78 @@ pub fn NewMessageForm(
                         }
                     },
                     if paste_busy { "Reading clipboard" } else { "Paste destination" }
+                }
+                label {
+                    class: "secondary-action qr-capture-action",
+                    "aria-disabled": (!controls_enabled || scan_busy || on_scan.is_none()).to_string(),
+                    r#for: "mobile.scan-qr-input",
+                    if scan_busy { "Scanning QR" } else { "Scan QR" }
+                }
+                input {
+                    key: "{scan_busy}",
+                    id: "mobile.scan-qr-input",
+                    class: "visually-hidden",
+                    name: "qr-image",
+                    r#type: "file",
+                    accept: "image/jpeg,image/png",
+                    capture: "environment",
+                    disabled: !controls_enabled || scan_busy || on_scan.is_none(),
+                    "aria-describedby": "mobile.scan-qr-status",
+                    oncancel: move |_| {
+                        if let Some(on_scan) = on_scan {
+                            on_scan.call(QrImageCapture::Failure(TextAcquisitionFailure::Cancelled));
+                        }
+                    },
+                    onchange: move |event| {
+                        let mut files = event.files().into_iter();
+                        let Some(file) = files.next() else {
+                            if let Some(on_scan) = on_scan {
+                                on_scan.call(QrImageCapture::Failure(TextAcquisitionFailure::Cancelled));
+                            }
+                            return;
+                        };
+                        if usize::try_from(file.size())
+                            .map_or(true, |size| size > MAX_QR_ENCODED_IMAGE_BYTES)
+                        {
+                            if let Some(on_scan) = on_scan {
+                                on_scan.call(QrImageCapture::Failure(TextAcquisitionFailure::Oversized));
+                            }
+                            return;
+                        }
+                        spawn(async move {
+                            let capture = match file.read_bytes().await {
+                                Ok(bytes) => QrImageCapture::EncodedImage(bytes.to_vec()),
+                                Err(_) => QrImageCapture::Failure(TextAcquisitionFailure::Malformed),
+                            };
+                            if let Some(on_scan) = on_scan {
+                                on_scan.call(capture);
+                            }
+                        });
+                    },
+                }
+                div {
+                    id: "mobile.scan-qr-status",
+                    class: if scan_failure.is_some() { "field-error" } else { "field-hint" },
+                    role: "status",
+                    "aria-live": "polite",
+                    if let Some(failure) = &scan_failure {
+                        p { "QR image was not added ({failure})." }
+                        if scan_settings_recovery && open_application_settings.is_some() {
+                            button {
+                                class: "secondary-action",
+                                r#type: "button",
+                                disabled: application_settings_busy,
+                                onclick: move |_| {
+                                    if let Some(open_settings) = open_application_settings {
+                                        open_settings.call(());
+                                    }
+                                },
+                                if application_settings_busy { "Opening Settings" } else { "Open system Settings" }
+                            }
+                        }
+                    } else {
+                        p { "A JPEG or PNG with one QR code is treated as an unvalidated destination candidate." }
+                    }
                 }
                 p {
                     id: "mobile.paste-destination-status",

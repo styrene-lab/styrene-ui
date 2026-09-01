@@ -257,19 +257,24 @@ fn qr_mock_reports_cancellation_and_success_without_destination_validation() {
         TextAcquisitionFailure::Malformed,
     ];
     for (value, expected) in expected.into_iter().enumerate() {
-        let completion =
-            ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(value as u64 + 21)));
+        let completion = ready(
+            scanner
+                .scan_qr_destination(TextAcquisitionGeneration::new(value as u64 + 21), Vec::new()),
+        );
         assert_eq!(completion.result, Err(expected));
     }
 
-    let cancelled = ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(26)));
+    let cancelled =
+        ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(26), Vec::new()));
     assert_eq!(cancelled.generation.value(), 26);
     assert_eq!(cancelled.result, Err(TextAcquisitionFailure::Cancelled));
 
-    let candidate = ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(27)));
+    let candidate =
+        ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(27), Vec::new()));
     assert_eq!(candidate.result.unwrap().as_str(), "");
 
-    let exhausted = ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(28)));
+    let exhausted =
+        ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(28), Vec::new()));
     assert_eq!(exhausted.result, Err(TextAcquisitionFailure::Unavailable));
 }
 
@@ -287,6 +292,12 @@ fn text_acquisition_completion_rejects_stale_generation() {
 
     assert_eq!(stale.into_result_for(current), None);
     assert_eq!(matching.into_result_for(current), Some(Err(TextAcquisitionFailure::Cancelled)));
+
+    let typed_stale = TextAcquisitionCompletion {
+        generation: TextAcquisitionGeneration::new(11),
+        result: Err(TextAcquisitionFailure::Denied),
+    };
+    assert_eq!(typed_stale.into_typed_result_for(current), Err(TextAcquisitionFailure::Stale));
 }
 
 #[test]

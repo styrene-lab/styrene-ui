@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use styrene_ui_app::{BackNavigation, IdentityBootstrap, MobileShell};
+use styrene_ui_app::{BackNavigation, IdentityBootstrap, MobileShell, QrImageCapture};
 use styrene_ui_platform::ClipboardTextWriter;
 #[cfg(all(
     any(target_os = "android", target_os = "ios", target_os = "macos"),
@@ -9,7 +9,7 @@ use styrene_ui_platform::{
     AndroidUsbAttachment, ApplicationSettingsService, AuthorizationState, BleControlPhase,
     BleControlState, ClipboardTextReader, DocumentPickerFailure, DocumentRequestGeneration,
     DocumentShareFailure, DocumentShareOutcome, OpaqueDocument, OpaqueDocumentPicker,
-    OpaqueDocumentSharer, TextAcquisitionGeneration,
+    OpaqueDocumentSharer, QrDestinationScanner, TextAcquisitionFailure, TextAcquisitionGeneration,
 };
 #[cfg(all(
     not(target_os = "ios"),
@@ -65,6 +65,18 @@ pub const MOBILE_INDEX: &str = r#"<!DOCTYPE html>
 
 fn target_class() -> TargetClass {
     if cfg!(target_os = "android") { TargetClass::Android } else { TargetClass::Ios }
+}
+
+const fn cancelled_qr_capture_failure(
+    authorization: styrene_ui_platform::AuthorizationState,
+) -> TextAcquisitionFailure {
+    match authorization {
+        styrene_ui_platform::AuthorizationState::Denied => TextAcquisitionFailure::Denied,
+        styrene_ui_platform::AuthorizationState::Restricted => TextAcquisitionFailure::Restricted,
+        styrene_ui_platform::AuthorizationState::Unavailable => TextAcquisitionFailure::Unavailable,
+        styrene_ui_platform::AuthorizationState::NotDetermined
+        | styrene_ui_platform::AuthorizationState::Granted => TextAcquisitionFailure::Cancelled,
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -133,6 +145,12 @@ pub fn App() -> Element {
     ))]
     let (mut clipboard_candidate, mut clipboard_failure, mut clipboard_busy) =
         (use_signal(|| None::<String>), use_signal(|| None::<String>), use_signal(|| false));
+    #[cfg(all(
+        any(target_os = "android", target_os = "ios", target_os = "macos"),
+        not(feature = "ui-test")
+    ))]
+    let (mut qr_failure, mut qr_busy, mut acquisition_generation) =
+        (use_signal(|| None::<String>), use_signal(|| false), use_signal(|| 0_u64));
     #[cfg(all(
         any(target_os = "android", target_os = "ios", target_os = "macos"),
         not(feature = "ui-test")
@@ -489,23 +507,69 @@ pub fn App() -> Element {
                     }
                     clipboard_busy.set(true);
                     clipboard_failure.set(None);
-                    let generation = TextAcquisitionGeneration::new(current_generation);
+                    let generation_value = acquisition_generation().wrapping_add(1);
+                    acquisition_generation.set(generation_value);
+                    let generation = TextAcquisitionGeneration::new(generation_value);
                     spawn(async move {
                         let reader = platform::NativeClipboardTextReader;
                         let completion = reader.read_clipboard_text(generation).await;
-                        if let Some(result) = completion.into_result_for(generation) {
+                        let active = TextAcquisitionGeneration::new(acquisition_generation());
+                        if update.read().generation() == Some(current_generation)
+                            && let Some(result) = completion.into_result_for(active)
+                        {
                             match result {
                                 Ok(candidate) => {
                                     clipboard_candidate.set(Some(candidate.into_string()));
                                 }
                                 Err(error) => {
-                                    clipboard_failure.set(Some(
-                                        format!("{error:?}").to_ascii_lowercase(),
-                                    ));
+                                    clipboard_failure.set(Some(error.code().into()));
                                 }
                             }
                         }
                         clipboard_busy.set(false);
+                    });
+                },
+                qr_failure: qr_failure.read().clone(),
+                qr_busy: *qr_busy.read(),
+                qr_capture: move |capture: QrImageCapture| {
+                    if *qr_busy.read() {
+                        return;
+                    }
+                    qr_busy.set(true);
+                    qr_failure.set(None);
+                    let generation_value = acquisition_generation().wrapping_add(1);
+                    acquisition_generation.set(generation_value);
+                    let generation = TextAcquisitionGeneration::new(generation_value);
+                    spawn(async move {
+                        let result = match capture {
+                            QrImageCapture::EncodedImage(encoded_image) => {
+                                let scanner = styrene_ui_platform::ImageQrDestinationScanner;
+                                scanner.scan_qr_destination(generation, encoded_image).await.result
+                            }
+                            QrImageCapture::Failure(TextAcquisitionFailure::Cancelled) => {
+                                Err(cancelled_qr_capture_failure(
+                                    platform::camera_authorization().await,
+                                ))
+                            }
+                            QrImageCapture::Failure(failure) => Err(failure),
+                        };
+                        let active = TextAcquisitionGeneration::new(acquisition_generation());
+                        let completion = styrene_ui_platform::TextAcquisitionCompletion {
+                            generation,
+                            result,
+                        };
+                        if update.read().generation() == Some(current_generation) {
+                            match completion.into_typed_result_for(active) {
+                                Ok(candidate) => {
+                                    clipboard_candidate.set(Some(candidate.into_string()));
+                                }
+                                Err(TextAcquisitionFailure::Cancelled | TextAcquisitionFailure::Stale) => {}
+                                Err(error) => {
+                                    qr_failure.set(Some(error.code().into()));
+                                }
+                            }
+                        }
+                        qr_busy.set(false);
                     });
                 },
                 identity_copy_busy: *identity_copy_busy.read(),
@@ -683,6 +747,32 @@ mod tests {
         assert!(completion.is_for(7, "aabbccdd"));
         assert!(!completion.is_for(8, "aabbccdd"));
         assert!(!completion.is_for(7, "eeff0011"));
+    }
+
+    #[test]
+    fn qr_capture_cancellation_preserves_typed_permission_outcomes() {
+        use styrene_ui_platform::AuthorizationState;
+
+        assert_eq!(
+            cancelled_qr_capture_failure(AuthorizationState::Denied),
+            TextAcquisitionFailure::Denied
+        );
+        assert_eq!(
+            cancelled_qr_capture_failure(AuthorizationState::Restricted),
+            TextAcquisitionFailure::Restricted
+        );
+        assert_eq!(
+            cancelled_qr_capture_failure(AuthorizationState::Unavailable),
+            TextAcquisitionFailure::Unavailable
+        );
+        assert_eq!(
+            cancelled_qr_capture_failure(AuthorizationState::Granted),
+            TextAcquisitionFailure::Cancelled
+        );
+        assert_eq!(
+            cancelled_qr_capture_failure(AuthorizationState::NotDetermined),
+            TextAcquisitionFailure::Cancelled
+        );
     }
 
     const BACKEND_REVISION: &str = "e70c3d6cb140cf5427fc912b32acc318981eaee8";

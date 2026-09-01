@@ -11,6 +11,8 @@ fn main() {
 mod tests {
     const ANDROID_MANIFEST: &str = include_str!("../AndroidManifest.xml");
     const DIOXUS_CONFIG: &str = include_str!("../Dioxus.toml");
+    const WRY_FILE_CAPTURE: &str =
+        include_str!("../../../vendor/wry/src/android/kotlin/RustWebChromeClient.kt");
 
     #[test]
     fn packaging_declares_android_compatibility_contract() {
@@ -39,5 +41,13 @@ mod tests {
         assert!(
             ANDROID_MANIFEST.contains("android.hardware.usb.host\" android:required=\"false\"")
         );
+    }
+
+    #[test]
+    fn vendored_wry_capture_accepts_bounded_qr_image_types() {
+        assert!(WRY_FILE_CAPTURE.contains("fileChooserParams.isCaptureEnabled"));
+        assert!(WRY_FILE_CAPTURE.contains("it == \"image/jpeg\" || it == \"image/png\""));
+        assert!(WRY_FILE_CAPTURE.contains("MediaStore.ACTION_IMAGE_CAPTURE"));
+        assert!(WRY_FILE_CAPTURE.contains("Falling back to default file picker"));
     }
 }
