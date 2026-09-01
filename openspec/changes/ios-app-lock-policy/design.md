@@ -13,6 +13,16 @@ checks labels and custody-separation text. It does not prove persistence, setup
 marker timing, startup ordering, reboot behavior, negative authentication outcomes,
 or exactly-once prompting within one process.
 
+## Implementation Note
+
+The decision boundary below is implemented in `styrene-ui-platform::app_lock`.
+`AppLockController` owns policy resolution, setup completion, launch and boot
+satisfaction, and the gate that requests authentication. Deterministic tests
+live in `crates/styrene-ui-platform/tests/app_lock_policy.rs`. The Apple bridge
+supplies `UserDefaultsAppLockStore`, `LocalAuthenticationAuthenticator`, and the
+launch and boot identity samplers. The startup owner in `styrene-mobile` blocks
+on a retry channel after a closed outcome and re-evaluates the gate on demand.
+
 ## Decision Boundary
 
 Move policy evaluation behind a pure Rust decision function. Inputs include the

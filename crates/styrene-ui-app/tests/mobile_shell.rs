@@ -56,6 +56,146 @@ fn ios_more_exposes_app_lock_without_conflating_identity_custody() {
 }
 
 #[component]
+fn AppLockShell(target: TargetClass, policy: AppLockPolicy, changeable: bool) -> Element {
+    let fixture = fixture("live-empty-connected");
+    if changeable {
+        rsx! {
+            MobileShell {
+                target,
+                fixture,
+                app_lock_policy: policy,
+                app_lock_policy_change: move |_policy: AppLockPolicy| {},
+            }
+        }
+    } else {
+        rsx! {
+            MobileShell { target, fixture, app_lock_policy: policy }
+        }
+    }
+}
+
+#[component]
+fn AppLockFailureShell(code: String, retry_available: bool) -> Element {
+    let fixture = app_lock_failure_fixture(&code);
+    if retry_available {
+        rsx! {
+            MobileShell { target: TargetClass::Ios, fixture, app_unlock_retry: move |()| {} }
+        }
+    } else {
+        rsx! {
+            MobileShell { target: TargetClass::Ios, fixture }
+        }
+    }
+}
+
+fn render_app_lock(target: TargetClass, policy: AppLockPolicy, changeable: bool) -> String {
+    dioxus_ssr::render_element(rsx! {
+        AppLockShell { target, policy, changeable }
+    })
+}
+
+fn app_lock_failure_fixture(code: &str) -> MobileFixture {
+    let mut fixture = fixture("live-empty-connected");
+    fixture.session.phase = SessionPhase::Failed;
+    fixture.session.failure = Some(TypedFailure { code: code.into(), retryable: true });
+    fixture
+}
+
+#[test]
+fn app_lock_control_is_ios_only_even_when_a_policy_is_supplied() {
+    let markup = render_app_lock(TargetClass::Android, AppLockPolicy::EveryLaunch, true);
+    assert!(!markup.contains("id=\"mobile.app-lock\""), "Android rendered App Lock");
+    assert!(!markup.contains("Once after device reboot"), "Android advertised App Lock");
+
+    let without_policy = dioxus_ssr::render_element(rsx! {
+        MobileShell { target: TargetClass::Ios, fixture: fixture("live-empty-connected") }
+    });
+    assert!(!without_policy.contains("id=\"mobile.app-lock\""));
+}
+
+#[test]
+fn app_lock_control_presents_every_choice_with_the_current_selection() {
+    for (policy, label) in [
+        (AppLockPolicy::EveryLaunch, "Every app launch"),
+        (AppLockPolicy::OncePerBoot, "Once after device reboot"),
+        (AppLockPolicy::Off, "Off"),
+    ] {
+        let markup = render_app_lock(TargetClass::Ios, policy, true);
+        let select = opening_tag_with_id(&markup, "mobile.app-lock-policy");
+        assert!(select.contains(&format!("value=\"{}\"", policy.as_str())), "{policy:?}");
+        assert!(!select.contains("disabled"), "{policy:?}");
+        for choice in [AppLockPolicy::EveryLaunch, AppLockPolicy::OncePerBoot, AppLockPolicy::Off] {
+            let option = format!("value=\"{}\"", choice.as_str());
+            let start = markup.find(&format!("<option {option}")).unwrap_or_else(|| {
+                markup.find(&option).unwrap_or_else(|| panic!("{policy:?} missing {choice:?}"))
+            });
+            let tag = &markup[start..start + markup[start..].find('>').expect("option tag")];
+            assert_eq!(tag.contains("selected"), choice == policy, "{policy:?} {choice:?}: {tag}");
+        }
+        assert!(markup.contains(label));
+        assert!(markup.contains("Every app launch"));
+        assert!(markup.contains("Once after device reboot"));
+        assert!(markup.contains(">Off<"));
+    }
+}
+
+#[test]
+fn app_lock_control_is_labelled_and_explains_custody_separation() {
+    let markup = render_app_lock(TargetClass::Ios, AppLockPolicy::OncePerBoot, true);
+
+    assert!(markup.contains("for=\"mobile.app-lock-policy\""));
+    assert!(markup.contains("Require Face ID or device passcode"));
+    let select = opening_tag_with_id(&markup, "mobile.app-lock-policy");
+    assert!(select.contains("aria-describedby=\"mobile.app-lock-custody\""));
+    assert!(markup.contains("id=\"mobile.app-lock-custody\""));
+    assert!(markup.contains("Identity custody remains protected separately"));
+    assert!(!markup.contains("id=\"mobile.app-lock-disabled\""));
+}
+
+#[test]
+fn app_lock_control_without_a_change_handler_is_disabled_with_guidance() {
+    let markup = render_app_lock(TargetClass::Ios, AppLockPolicy::EveryLaunch, false);
+
+    let select = opening_tag_with_id(&markup, "mobile.app-lock-policy");
+    assert!(select.contains("disabled"));
+    assert!(
+        select.contains("aria-describedby=\"mobile.app-lock-custody mobile.app-lock-disabled\"")
+    );
+    assert!(markup.contains("id=\"mobile.app-lock-disabled\""));
+    assert!(markup.contains("App Lock policy cannot be changed in this view."));
+    assert!(markup.contains("Once after device reboot"), "disabled control hid the choices");
+}
+
+#[test]
+fn app_lock_failure_offers_an_explicit_retry_without_touching_custody() {
+    for code in ["app_unlock_cancelled", "app_unlock_unavailable", "app_unlock_failed"] {
+        let markup = dioxus_ssr::render_element(rsx! {
+            AppLockFailureShell { code: code.to_owned(), retry_available: true }
+        });
+        let banner = opening_tag_with_id(&markup, "mobile.session-failure");
+        assert!(banner.contains(&format!("data-code=\"{code}\"")));
+        assert!(banner.contains("data-retryable=\"true\""));
+        let retry = opening_tag_with_id(&markup, "mobile.app-unlock-retry");
+        assert!(!retry.contains("disabled"), "{code}");
+        assert!(retry.contains("aria-describedby=\"mobile.session-failure\""));
+        assert!(markup.contains("Retry unlock"));
+        assert!(markup.contains("Identity custody was not changed."));
+        assert!(!markup.contains("Open Network to review connection settings"), "{code}");
+    }
+
+    let without_handler = dioxus_ssr::render_element(rsx! {
+        AppLockFailureShell { code: "app_unlock_cancelled".to_owned(), retry_available: false }
+    });
+    assert!(opening_tag_with_id(&without_handler, "mobile.app-unlock-retry").contains("disabled"));
+
+    let unrelated = dioxus_ssr::render_element(rsx! {
+        AppLockFailureShell { code: "embedded_start_failed".to_owned(), retry_available: true }
+    });
+    assert!(!unrelated.contains("id=\"mobile.app-unlock-retry\""));
+    assert!(unrelated.contains("Open Network to review connection settings"));
+}
+
+#[component]
 fn IdentityShell(
     fixture: MobileFixture,
     #[props(default)] succeeded: bool,

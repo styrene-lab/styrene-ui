@@ -1,63 +1,150 @@
+//! iOS adapters for the pure App Lock policy in `styrene-ui-platform`.
+//!
+//! This module only acquires Apple state. Policy decisions, satisfaction
+//! recording, and startup ordering live in `AppLockController`, where they are
+//! tested without Apple frameworks.
+
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 
 use block2::RcBlock;
 use objc2::{AnyThread, runtime::Bool};
 use objc2_foundation::{NSDate, NSError, NSProcessInfo, NSString, NSUserDefaults};
 use objc2_local_authentication::{LAContext, LAError, LAPolicy};
-use styrene_ui_platform::{AppLockPolicy, DeviceAuthenticationOutcome};
+use styrene_ui_platform::{
+    APP_LOCK_POLICY_KEY, APP_LOCK_SATISFIED_BOOT_KEY, APP_LOCK_SETUP_COMPLETE_KEY,
+    AppLockController, AppLockGateOutcome, AppLockPolicy, AppLockStore, BootIdentity,
+    DeviceAuthenticationOutcome, DeviceAuthenticator, LaunchIdentity,
+};
 
-const POLICY_KEY: &str = "io.styrene.app-lock.policy";
-const SETUP_COMPLETE_KEY: &str = "io.styrene.app-lock.setup-complete";
-const AUTHENTICATED_BOOT_KEY: &str = "io.styrene.app-lock.authenticated-boot";
-const BOOT_MARKER_TOLERANCE_SECS: f64 = 5.0;
+/// Launch satisfaction is process-scoped and intentionally never persisted.
+/// Zero means no launch has been satisfied in this process.
+static SATISFIED_LAUNCH: AtomicU64 = AtomicU64::new(0);
+
+/// Bounded `NSUserDefaults` adapter for durable App Lock state.
+///
+/// Absent keys read as `None` so the controller fails closed. No identity
+/// material or custody result is ever written through this adapter.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct UserDefaultsAppLockStore;
+
+impl UserDefaultsAppLockStore {
+    fn has_value(key: &NSString) -> bool {
+        NSUserDefaults::standardUserDefaults().objectForKey(key).is_some()
+    }
+}
+
+impl AppLockStore for UserDefaultsAppLockStore {
+    fn policy(&self) -> Option<String> {
+        let key = NSString::from_str(APP_LOCK_POLICY_KEY);
+        NSUserDefaults::standardUserDefaults().stringForKey(&key).map(|value| value.to_string())
+    }
+
+    fn set_policy(&mut self, value: &str) {
+        let defaults = NSUserDefaults::standardUserDefaults();
+        let key = NSString::from_str(APP_LOCK_POLICY_KEY);
+        let value = NSString::from_str(value);
+        // SAFETY: NSString is a supported NSUserDefaults property-list value.
+        unsafe { defaults.setObject_forKey(Some(&value), &key) };
+    }
+
+    fn setup_complete(&self) -> Option<bool> {
+        let key = NSString::from_str(APP_LOCK_SETUP_COMPLETE_KEY);
+        Self::has_value(&key).then(|| NSUserDefaults::standardUserDefaults().boolForKey(&key))
+    }
+
+    fn set_setup_complete(&mut self, complete: bool) {
+        NSUserDefaults::standardUserDefaults()
+            .setBool_forKey(complete, &NSString::from_str(APP_LOCK_SETUP_COMPLETE_KEY));
+    }
+
+    fn satisfied_boot_epoch_secs(&self) -> Option<f64> {
+        let key = NSString::from_str(APP_LOCK_SATISFIED_BOOT_KEY);
+        Self::has_value(&key).then(|| NSUserDefaults::standardUserDefaults().doubleForKey(&key))
+    }
+
+    fn set_satisfied_boot_epoch_secs(&mut self, boot_epoch_secs: f64) {
+        NSUserDefaults::standardUserDefaults()
+            .setDouble_forKey(boot_epoch_secs, &NSString::from_str(APP_LOCK_SATISFIED_BOOT_KEY));
+    }
+
+    fn satisfied_launch(&self) -> Option<u64> {
+        match SATISFIED_LAUNCH.load(Ordering::Acquire) {
+            0 => None,
+            launch => Some(launch),
+        }
+    }
+
+    fn set_satisfied_launch(&mut self, launch: u64) {
+        SATISFIED_LAUNCH.store(launch, Ordering::Release);
+    }
+}
+
+/// LocalAuthentication adapter. One request per call; the native context is
+/// retained until the reply arrives.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LocalAuthenticationAuthenticator;
+
+impl DeviceAuthenticator for LocalAuthenticationAuthenticator {
+    fn authenticate_device_owner(&mut self, reason: &str) -> DeviceAuthenticationOutcome {
+        authenticate_device_owner(reason)
+    }
+}
+
+#[must_use]
+pub fn app_lock_controller() -> AppLockController<UserDefaultsAppLockStore> {
+    AppLockController::new(UserDefaultsAppLockStore)
+}
+
+/// The current process. Process identifiers are never zero on iOS, and zero is
+/// reserved in the store for "no satisfied launch".
+#[must_use]
+pub fn current_launch_identity() -> LaunchIdentity {
+    LaunchIdentity::new(u64::from(std::process::id()).max(1))
+}
+
+/// Approximate boot instant derived from wall-clock time minus system uptime.
+#[must_use]
+pub fn current_boot_identity() -> BootIdentity {
+    let marker =
+        NSDate::date().timeIntervalSince1970() - NSProcessInfo::processInfo().systemUptime();
+    BootIdentity::from_boot_epoch_secs(marker.round() as i64)
+}
 
 #[must_use]
 pub fn app_lock_policy() -> AppLockPolicy {
-    let key = NSString::from_str(POLICY_KEY);
-    NSUserDefaults::standardUserDefaults()
-        .stringForKey(&key)
-        .as_deref()
-        .and_then(|value| AppLockPolicy::parse(&value.to_string()))
-        .unwrap_or_default()
+    app_lock_controller().policy()
 }
 
 pub fn store_app_lock_policy(policy: AppLockPolicy) {
-    let defaults = NSUserDefaults::standardUserDefaults();
-    let key = NSString::from_str(POLICY_KEY);
-    let value = NSString::from_str(policy.as_str());
-    // SAFETY: NSString is a supported NSUserDefaults property-list value.
-    unsafe { defaults.setObject_forKey(Some(&value), &key) };
+    app_lock_controller().set_policy(policy);
 }
 
+/// Report whether the next gate evaluation will request authentication.
 #[must_use]
 pub fn app_lock_requires_authentication() -> bool {
-    let defaults = NSUserDefaults::standardUserDefaults();
-    if !defaults.boolForKey(&NSString::from_str(SETUP_COMPLETE_KEY)) {
-        return false;
-    }
-    match app_lock_policy() {
-        AppLockPolicy::EveryLaunch => true,
-        AppLockPolicy::OncePerBoot => {
-            let authenticated_boot =
-                defaults.doubleForKey(&NSString::from_str(AUTHENTICATED_BOOT_KEY));
-            (authenticated_boot - current_boot_marker()).abs() > BOOT_MARKER_TOLERANCE_SECS
-        }
-        AppLockPolicy::Off => false,
-    }
+    app_lock_controller()
+        .decision(current_launch_identity(), current_boot_identity())
+        .requires_authentication()
 }
 
-pub fn record_app_lock_authentication() {
-    NSUserDefaults::standardUserDefaults()
-        .setDouble_forKey(current_boot_marker(), &NSString::from_str(AUTHENTICATED_BOOT_KEY));
+/// Gate private session startup against the persisted policy for this launch
+/// and boot. Satisfaction is recorded only after an `Authenticated` outcome.
+pub fn gate_app_lock<A: DeviceAuthenticator>(
+    authenticator: &mut A,
+    reason: &str,
+) -> AppLockGateOutcome {
+    app_lock_controller().gate(
+        current_launch_identity(),
+        current_boot_identity(),
+        authenticator,
+        reason,
+    )
 }
 
+/// Record setup completion. Call only after a usable backend session exists.
 pub fn record_app_lock_setup_complete() {
-    NSUserDefaults::standardUserDefaults()
-        .setBool_forKey(true, &NSString::from_str(SETUP_COMPLETE_KEY));
-}
-
-fn current_boot_marker() -> f64 {
-    NSDate::date().timeIntervalSince1970() - NSProcessInfo::processInfo().systemUptime()
+    app_lock_controller().record_setup_complete();
 }
 
 /// Authenticate the device owner once while retaining the native context until completion.

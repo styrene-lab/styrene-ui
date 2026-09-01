@@ -411,6 +411,13 @@ pub fn App() -> Element {
                     styrene_ui_apple_bridge::store_app_lock_policy(policy);
                     app_lock_policy.set(policy);
                 },
+                app_unlock_retry: move |()| {
+                    let session = session.read();
+                    #[cfg(target_os = "ios")]
+                    session.retry_app_unlock();
+                    #[cfg(not(target_os = "ios"))]
+                    drop(session);
+                },
                 android_usb_attachments: usb_attachments.read().clone(),
                 android_usb_authorization: *usb_authorization.read(),
                 android_usb_failure: usb_failure.read().clone(),
