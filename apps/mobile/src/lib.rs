@@ -63,6 +63,19 @@ fn target_class() -> TargetClass {
     if cfg!(target_os = "android") { TargetClass::Android } else { TargetClass::Ios }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct IdentityCopyCompletion {
+    generation: u64,
+    destination: String,
+    failure: Option<String>,
+}
+
+impl IdentityCopyCompletion {
+    fn is_for(&self, generation: u64, destination: &str) -> bool {
+        self.generation == generation && self.destination == destination
+    }
+}
+
 #[cfg(any(
     test,
     feature = "ui-test",
@@ -88,8 +101,7 @@ pub fn App() -> Element {
     platform::use_back_navigation();
     let platform_snapshot = platform::use_platform_snapshot();
     let mut identity_copy_busy = use_signal(|| false);
-    let mut identity_copy_succeeded = use_signal(|| false);
-    let mut identity_copy_failure = use_signal(|| None::<String>);
+    let mut identity_copy_completion = use_signal(|| None::<IdentityCopyCompletion>);
     #[cfg(all(
         any(target_os = "android", target_os = "ios", target_os = "macos"),
         not(feature = "ui-test")
@@ -227,6 +239,15 @@ pub fn App() -> Element {
             *usb_authorization.read() == Some(AuthorizationState::Granted)
                 && selected.as_ref().is_some_and(|selected| attachments.contains(selected))
         };
+        let current_destination = current.fixture.session.identity_hash.clone();
+        let visible_copy_completion = identity_copy_completion
+            .read()
+            .clone()
+            .filter(|completion| completion.is_for(current_generation, &current_destination));
+        let identity_copy_succeeded =
+            visible_copy_completion.as_ref().is_some_and(|completion| completion.failure.is_none());
+        let identity_copy_failure =
+            visible_copy_completion.and_then(|completion| completion.failure);
 
         return rsx! {
             MobileShell {
@@ -367,21 +388,23 @@ pub fn App() -> Element {
                     });
                 },
                 identity_copy_busy: *identity_copy_busy.read(),
-                identity_copy_succeeded: *identity_copy_succeeded.read(),
-                identity_copy_failure: identity_copy_failure.read().clone(),
+                identity_copy_succeeded,
+                identity_copy_failure,
                 identity_copy: move |value: String| {
                     if *identity_copy_busy.read() {
                         return;
                     }
                     identity_copy_busy.set(true);
-                    identity_copy_succeeded.set(false);
-                    identity_copy_failure.set(None);
+                    identity_copy_completion.set(None);
                     spawn(async move {
                         let writer = platform::NativeClipboardTextWriter;
-                        match writer.write_clipboard_text(value).await {
-                            Ok(()) => identity_copy_succeeded.set(true),
-                            Err(error) => identity_copy_failure.set(Some(error.code)),
-                        }
+                        let destination = value.clone();
+                        let failure = writer.write_clipboard_text(value).await.err().map(|error| error.code);
+                        identity_copy_completion.set(Some(IdentityCopyCompletion {
+                            generation: current_generation,
+                            destination,
+                            failure,
+                        }));
                         identity_copy_busy.set(false);
                     });
                 },
@@ -409,31 +432,47 @@ pub fn App() -> Element {
         feature = "ui-test",
         not(any(target_os = "android", target_os = "ios", target_os = "macos"))
     ))]
-    rsx! {
+    {
+        let fixture = bootstrap_fixture();
+        let current_generation = fixture.generation;
+        let current_destination = fixture.session.identity_hash.clone();
+        let visible_copy_completion = identity_copy_completion
+            .read()
+            .clone()
+            .filter(|completion| completion.is_for(current_generation, &current_destination));
+        let identity_copy_succeeded =
+            visible_copy_completion.as_ref().is_some_and(|completion| completion.failure.is_none());
+        let identity_copy_failure =
+            visible_copy_completion.and_then(|completion| completion.failure);
+
+        rsx! {
         MobileShell {
             target: target_class(),
-            fixture: bootstrap_fixture(),
+            fixture,
             platform_snapshot: platform_snapshot.read().clone(),
             back_navigation: BackNavigation::web_history(),
             identity_copy_busy: *identity_copy_busy.read(),
-            identity_copy_succeeded: *identity_copy_succeeded.read(),
-            identity_copy_failure: identity_copy_failure.read().clone(),
+            identity_copy_succeeded,
+            identity_copy_failure,
             identity_copy: move |value: String| {
                 if *identity_copy_busy.read() {
                     return;
                 }
                 identity_copy_busy.set(true);
-                identity_copy_succeeded.set(false);
-                identity_copy_failure.set(None);
+                identity_copy_completion.set(None);
                 spawn(async move {
                     let writer = platform::NativeClipboardTextWriter;
-                    match writer.write_clipboard_text(value).await {
-                        Ok(()) => identity_copy_succeeded.set(true),
-                        Err(error) => identity_copy_failure.set(Some(error.code)),
-                    }
+                    let destination = value.clone();
+                    let failure = writer.write_clipboard_text(value).await.err().map(|error| error.code);
+                    identity_copy_completion.set(Some(IdentityCopyCompletion {
+                        generation: current_generation,
+                        destination,
+                        failure,
+                    }));
                     identity_copy_busy.set(false);
                 });
             },
+        }
         }
     }
 }
@@ -443,6 +482,16 @@ mod tests {
     use styrene_ui_state::{Profile, RuntimeBoundary};
 
     use super::*;
+
+    #[test]
+    fn identity_copy_completion_is_bound_to_generation_and_destination() {
+        let completion =
+            IdentityCopyCompletion { generation: 7, destination: "aabbccdd".into(), failure: None };
+
+        assert!(completion.is_for(7, "aabbccdd"));
+        assert!(!completion.is_for(8, "aabbccdd"));
+        assert!(!completion.is_for(7, "eeff0011"));
+    }
 
     const BACKEND_REVISION: &str = "f0359c92ba9f6d63ce248bc97617fc3115a0f3c3";
     const MINIMUM_FIXTURE_REVISION: &str = "899da81302c5f4e92f60a2fdaf396c26e813ba76";
