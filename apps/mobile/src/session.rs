@@ -14,6 +14,8 @@ use styrene_ipc::types::{
     IdentityCustodyProtection as BackendCustodyProtection, MessageInfo, MessageLifecycleState,
 };
 use styrene_ui_platform::AndroidUsbAttachment;
+#[cfg(target_os = "ios")]
+use styrene_ui_platform::DeviceAuthenticationOutcome;
 use styrene_ui_state::{
     Bearer, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
     ExpectedProjection, IdentityCustody, IdentityCustodyAuthentication,
@@ -227,6 +229,23 @@ fn run_owner(
     #[cfg(target_os = "ios")] backend_nodes: Sender<Arc<MobileNode>>,
     updates: Sender<SessionUpdate>,
 ) {
+    #[cfg(target_os = "ios")]
+    {
+        let _ = updates.force_send(authenticating_update());
+        let outcome = styrene_ui_apple_bridge::authenticate_device_owner(
+            "unlock your private mesh communications",
+        );
+        if outcome != DeviceAuthenticationOutcome::Authenticated {
+            let code = match outcome {
+                DeviceAuthenticationOutcome::Cancelled => "app_unlock_cancelled",
+                DeviceAuthenticationOutcome::Unavailable => "app_unlock_unavailable",
+                DeviceAuthenticationOutcome::Failed => "app_unlock_failed",
+                DeviceAuthenticationOutcome::Authenticated => unreachable!(),
+            };
+            let _ = updates.force_send(failed_update(1, code, String::new()));
+            return;
+        }
+    }
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -243,6 +262,13 @@ fn run_owner(
         backend_nodes,
         updates,
     ));
+}
+
+#[cfg(target_os = "ios")]
+fn authenticating_update() -> SessionUpdate {
+    let mut update = MobileSession::starting_update();
+    update.fixture.id = "embedded-live-authenticating".into();
+    update
 }
 
 async fn owner_loop(
