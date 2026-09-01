@@ -50,7 +50,7 @@ mod ios {
         CBCentralManager, CBCentralManagerDelegate, CBManager, CBManagerAuthorization,
     };
     use objc2_foundation::{
-        NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSURL,
+        NSNotification, NSNotificationCenter, NSObject, NSObjectProtocol, NSString, NSURL,
     };
     use objc2_ui_kit::{
         UIApplication, UIApplicationOpenSettingsURLString,
@@ -122,6 +122,16 @@ mod ios {
             return Err(NativeBridgeFailure::Oversized);
         }
         Ok(Some(text.to_string().into_bytes()))
+    }
+
+    /// Write plain public text on the main thread without exposing Objective-C objects.
+    pub fn set_clipboard_text(value: &str) -> Result<(), NativeBridgeFailure> {
+        let _marker = MainThreadMarker::new().ok_or(NativeBridgeFailure::MainThreadUnavailable)?;
+        let value = NSString::from_str(value);
+        // SAFETY: MainThreadMarker above proves UIKit main-thread access, and
+        // UIPasteboard copies the NSString rather than retaining a Rust borrow.
+        unsafe { UIPasteboard::generalPasteboard().setString(Some(&value)) };
+        Ok(())
     }
 
     pub fn open_application_settings() -> Result<bool, NativeBridgeFailure> {
@@ -269,6 +279,7 @@ pub use ios::BluetoothAuthorizationRequest;
 pub use ios::{
     bluetooth_authorization, camera_authorization, clipboard_text, install_content_size_observer,
     open_application_settings, query_notification_authorization, request_bluetooth, request_camera,
+    set_clipboard_text,
 };
 
 #[cfg(not(target_os = "ios"))]

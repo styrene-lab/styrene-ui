@@ -119,6 +119,14 @@ pub trait ClipboardTextReader {
     ) -> PlatformFuture<'_, TextAcquisitionCompletion>;
 }
 
+/// Writes an already-selected public value to the system clipboard.
+pub trait ClipboardTextWriter {
+    fn write_clipboard_text(
+        &self,
+        value: String,
+    ) -> PlatformFuture<'_, Result<(), crate::PlatformFailure>>;
+}
+
 /// Scans one possible LXMF destination without validating backend syntax.
 pub trait QrDestinationScanner {
     fn scan_qr_destination(
@@ -191,6 +199,44 @@ impl ClipboardTextReader for MockClipboardTextReader {
     ) -> PlatformFuture<'_, TextAcquisitionCompletion> {
         let completion = self.responses.complete(generation);
         Box::pin(async move { completion })
+    }
+}
+
+/// Scripted clipboard writer that records every requested value.
+#[derive(Debug)]
+pub struct MockClipboardTextWriter {
+    responses: RefCell<VecDeque<Result<(), crate::PlatformFailure>>>,
+    writes: RefCell<Vec<String>>,
+}
+
+impl MockClipboardTextWriter {
+    #[must_use]
+    pub fn new(responses: impl IntoIterator<Item = Result<(), crate::PlatformFailure>>) -> Self {
+        Self {
+            responses: RefCell::new(responses.into_iter().collect()),
+            writes: RefCell::new(Vec::new()),
+        }
+    }
+
+    #[must_use]
+    pub fn writes(&self) -> Vec<String> {
+        self.writes.borrow().clone()
+    }
+}
+
+impl ClipboardTextWriter for MockClipboardTextWriter {
+    fn write_clipboard_text(
+        &self,
+        value: String,
+    ) -> PlatformFuture<'_, Result<(), crate::PlatformFailure>> {
+        self.writes.borrow_mut().push(value);
+        let response = self.responses.borrow_mut().pop_front().unwrap_or_else(|| {
+            Err(crate::PlatformFailure {
+                code: "clipboard_write_unavailable".into(),
+                retryable: false,
+            })
+        });
+        Box::pin(async move { response })
     }
 }
 

@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use styrene_ui_app::{
-    BackNavigation, Composer, LocalAnnounceStatus, MobileShell, NewMessageForm, PropagationPanel,
+    BackNavigation, Composer, IdentityQrCode, LocalAnnounceStatus, MobileShell, NewMessageForm,
+    PropagationPanel,
 };
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
@@ -35,6 +36,27 @@ fn render(fixture: MobileFixture) -> String {
     dioxus_ssr::render_element(rsx! {
         MobileShell { target: TargetClass::Ios, fixture }
     })
+}
+
+#[component]
+fn IdentityShell(
+    fixture: MobileFixture,
+    #[props(default)] succeeded: bool,
+    #[props(default)] failure: Option<String>,
+) -> Element {
+    rsx! {
+        MobileShell {
+            target: TargetClass::Ios,
+            fixture,
+            identity_copy_succeeded: succeeded,
+            identity_copy_failure: failure,
+            identity_copy: move |_value: String| {},
+        }
+    }
+}
+
+fn render_identity_actions(fixture: MobileFixture) -> String {
+    dioxus_ssr::render_element(rsx! { IdentityShell { fixture } })
 }
 
 #[component]
@@ -342,6 +364,47 @@ fn opening_tag_with_id<'a>(markup: &'a str, id: &str) -> &'a str {
     let start = markup.find(&id).unwrap_or_else(|| panic!("missing {id}"));
     let end = start + markup[start..].find('>').expect("element opening tag") + 1;
     &markup[start..end]
+}
+
+#[test]
+fn public_identity_actions_share_one_backend_destination() {
+    let fixture = fixture("canonical-peer-discovery");
+    let public_destination = fixture.session.identity_hash.clone();
+    let markup = render_identity_actions(fixture);
+
+    assert!(markup.contains(&format!("Public LXMF destination {public_destination}")));
+    assert!(!opening_tag_with_id(&markup, "mobile.identity-copy").contains("disabled"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.identity-show-qr").contains("aria-expanded=\"false\"")
+    );
+    assert!(markup.contains("Copy shares only the public LXMF destination."));
+    assert!(!markup.contains("private"));
+
+    let qr =
+        dioxus_ssr::render_element(rsx! { IdentityQrCode { value: public_destination.clone() } });
+    assert!(
+        opening_tag_with_id(&qr, "mobile.identity-qr")
+            .contains(&format!("data-payload=\"{public_destination}\""))
+    );
+    assert!(qr.contains(&format!("QR code for public LXMF destination {public_destination}")));
+    assert!(qr.contains("<rect"));
+}
+
+#[test]
+fn public_identity_copy_reports_success_and_failure_without_changing_the_value() {
+    let fixture = fixture("canonical-peer-discovery");
+    let public_destination = fixture.session.identity_hash.clone();
+    let success = dioxus_ssr::render_element(rsx! {
+        IdentityShell { fixture: fixture.clone(), succeeded: true }
+    });
+    let failure = dioxus_ssr::render_element(rsx! {
+        IdentityShell { fixture, failure: Some("clipboard_denied".into()) }
+    });
+
+    assert!(success.contains("Public destination copied."));
+    assert!(success.contains(&public_destination));
+    assert!(failure.contains("Public destination was not copied (clipboard_denied)."));
+    assert!(failure.contains(&public_destination));
 }
 
 #[test]

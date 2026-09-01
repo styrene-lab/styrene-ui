@@ -4,13 +4,13 @@ use std::task::{Context, Poll, Waker};
 
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, Appearance, ApplicationLifecycle,
-    AuthorizationState, ClipboardTextReader, Contrast, EdgeInsets, KeyboardGeometry,
-    MAX_CANDIDATE_PAYLOAD_BYTES, MockClipboardTextReader, MockQrDestinationScanner,
-    MockTextAcquisitionResponse, MotionPreference, PermissionKind, PermissionStatus,
-    PlatformApplyResult, PlatformChange, PlatformEvent, PlatformGeometry, PlatformInsets,
-    PlatformSnapshot, PlatformState, QrDestinationScanner, TextAcquisitionCompletion,
-    TextAcquisitionFailure, TextAcquisitionGeneration, TextScale, TextScaleCategory, WindowClass,
-    WindowMetrics,
+    AuthorizationState, ClipboardTextReader, ClipboardTextWriter, Contrast, EdgeInsets,
+    KeyboardGeometry, MAX_CANDIDATE_PAYLOAD_BYTES, MockClipboardTextReader,
+    MockClipboardTextWriter, MockQrDestinationScanner, MockTextAcquisitionResponse,
+    MotionPreference, PermissionKind, PermissionStatus, PlatformApplyResult, PlatformChange,
+    PlatformEvent, PlatformFailure, PlatformGeometry, PlatformInsets, PlatformSnapshot,
+    PlatformState, QrDestinationScanner, TextAcquisitionCompletion, TextAcquisitionFailure,
+    TextAcquisitionGeneration, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
 };
 
 fn ready<T>(future: impl Future<Output = T>) -> T {
@@ -213,6 +213,22 @@ fn clipboard_mock_types_boundary_failures_and_preserves_generation() {
 
     let completion = ready(reader.read_clipboard_text(TextAcquisitionGeneration::new(16)));
     assert_eq!(completion.result.unwrap().as_str(), "not-validated-by-platform");
+}
+
+#[test]
+fn clipboard_writer_preserves_the_exact_public_value_and_typed_failure() {
+    let writer = MockClipboardTextWriter::new([
+        Ok(()),
+        Err(PlatformFailure { code: "clipboard_denied".into(), retryable: false }),
+    ]);
+    let public_destination = "e01b09b22ccc4e2755d29eead962677b";
+
+    assert_eq!(ready(writer.write_clipboard_text(public_destination.into())), Ok(()));
+    assert_eq!(
+        ready(writer.write_clipboard_text(public_destination.into())),
+        Err(PlatformFailure { code: "clipboard_denied".into(), retryable: false })
+    );
+    assert_eq!(writer.writes(), [public_destination, public_destination]);
 }
 
 #[test]
