@@ -341,19 +341,23 @@ fn run_owner(
 ) {
     #[cfg(target_os = "ios")]
     {
-        let _ = updates.force_send(authenticating_update());
-        let outcome = styrene_ui_apple_bridge::authenticate_device_owner(
-            "unlock your private mesh communications",
-        );
-        if outcome != DeviceAuthenticationOutcome::Authenticated {
-            let code = match outcome {
-                DeviceAuthenticationOutcome::Cancelled => "app_unlock_cancelled",
-                DeviceAuthenticationOutcome::Unavailable => "app_unlock_unavailable",
-                DeviceAuthenticationOutcome::Failed => "app_unlock_failed",
-                DeviceAuthenticationOutcome::Authenticated => unreachable!(),
-            };
-            let _ = updates.force_send(SessionView::Failed(failed_update(1, code, String::new())));
-            return;
+        if styrene_ui_apple_bridge::app_lock_requires_authentication() {
+            let _ = updates.force_send(authenticating_update());
+            let outcome = styrene_ui_apple_bridge::authenticate_device_owner(
+                "unlock your private mesh communications",
+            );
+            if outcome != DeviceAuthenticationOutcome::Authenticated {
+                let code = match outcome {
+                    DeviceAuthenticationOutcome::Cancelled => "app_unlock_cancelled",
+                    DeviceAuthenticationOutcome::Unavailable => "app_unlock_unavailable",
+                    DeviceAuthenticationOutcome::Failed => "app_unlock_failed",
+                    DeviceAuthenticationOutcome::Authenticated => unreachable!(),
+                };
+                let _ =
+                    updates.force_send(SessionView::Failed(failed_update(1, code, String::new())));
+                return;
+            }
+            styrene_ui_apple_bridge::record_app_lock_authentication();
         }
     }
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
@@ -554,6 +558,8 @@ async fn prepare_owner(
             return None;
         }
     };
+    #[cfg(target_os = "ios")]
+    styrene_ui_apple_bridge::record_app_lock_setup_complete();
     if let Some(response) = pending_response {
         let _ = response.try_send(Ok(()));
     }
