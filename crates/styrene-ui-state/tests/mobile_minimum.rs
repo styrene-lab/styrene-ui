@@ -319,6 +319,7 @@ fn propagation_policy_and_recoverable_failure_are_backend_owned_projections() {
     let update = PropagationUpdate {
         generation: store.snapshot().generation,
         selected_destination: Some("780e7aa7b2f175c88f28c7ba8ab1b714".into()),
+        readiness: styrene_ui_state::PropagationReadiness::Unavailable,
         ready: false,
         sync_state: SyncState::Failed,
         new_messages: 0,
@@ -329,6 +330,11 @@ fn propagation_policy_and_recoverable_failure_are_backend_owned_projections() {
         progress: None,
         candidates: Vec::new(),
         selected_policy: None,
+        trigger_capabilities: Vec::new(),
+        active_trigger: None,
+        active_sync_started_at: None,
+        last_synchronization: None,
+        cooldown_remaining_secs: 0,
     };
 
     assert_eq!(store.apply_propagation_update(update), ApplyResult::Applied);

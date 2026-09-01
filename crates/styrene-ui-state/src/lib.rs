@@ -976,6 +976,7 @@ pub struct PropagationCandidate {
 pub struct PropagationUpdate {
     pub generation: u64,
     pub selected_destination: Option<String>,
+    pub readiness: PropagationReadiness,
     pub ready: bool,
     pub sync_state: SyncState,
     pub new_messages: u32,
@@ -986,6 +987,88 @@ pub struct PropagationUpdate {
     pub progress: Option<PropagationProgress>,
     pub candidates: Vec<PropagationCandidate>,
     pub selected_policy: Option<PropagationPolicy>,
+    pub trigger_capabilities: Vec<PropagationTriggerSource>,
+    pub active_trigger: Option<PropagationTriggerSource>,
+    pub active_sync_started_at: Option<i64>,
+    pub last_synchronization: Option<PropagationSynchronization>,
+    pub cooldown_remaining_secs: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PropagationReadiness {
+    Unselected,
+    Ready,
+    Unavailable,
+    Inactive,
+    InvalidMetadata,
+}
+
+impl PropagationReadiness {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Unselected => "unselected",
+            Self::Ready => "ready",
+            Self::Unavailable => "unavailable",
+            Self::Inactive => "inactive",
+            Self::InvalidMetadata => "invalid_metadata",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PropagationTriggerSource {
+    InitialConnection,
+    Reconnect,
+    ForegroundOpportunity,
+    GrantedBackgroundOpportunity,
+    Manual,
+}
+
+impl PropagationTriggerSource {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InitialConnection => "initial_connection",
+            Self::Reconnect => "reconnect",
+            Self::ForegroundOpportunity => "foreground_opportunity",
+            Self::GrantedBackgroundOpportunity => "granted_background_opportunity",
+            Self::Manual => "manual",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PropagationTerminalOutcome {
+    Succeeded,
+    Failed,
+    TimedOut,
+    Cancelled,
+}
+
+impl PropagationTerminalOutcome {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::TimedOut => "timed_out",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropagationSynchronization {
+    pub trigger: PropagationTriggerSource,
+    pub started_at: i64,
+    pub finished_at: i64,
+    pub outcome: PropagationTerminalOutcome,
+    pub new_messages: u32,
 }
 
 impl PropagationUpdate {
@@ -994,6 +1077,13 @@ impl PropagationUpdate {
         Self {
             generation: fixture.generation,
             selected_destination: fixture.propagation.selected_destination.clone(),
+            readiness: if fixture.propagation.selected_destination.is_none() {
+                PropagationReadiness::Unselected
+            } else if fixture.propagation.ready {
+                PropagationReadiness::Ready
+            } else {
+                PropagationReadiness::Unavailable
+            },
             ready: fixture.propagation.ready,
             sync_state: fixture.propagation.sync_state,
             new_messages: fixture.propagation.new_messages,
@@ -1004,6 +1094,11 @@ impl PropagationUpdate {
             progress: None,
             candidates: Vec::new(),
             selected_policy: None,
+            trigger_capabilities: Vec::new(),
+            active_trigger: None,
+            active_sync_started_at: None,
+            last_synchronization: None,
+            cooldown_remaining_secs: 0,
         }
     }
 }
@@ -1132,6 +1227,7 @@ impl BearerKind {
 #[serde(rename_all = "snake_case")]
 pub enum BearerState {
     Connected,
+    Connecting,
     Disconnected,
     Reconnecting,
     Unavailable,
@@ -1142,6 +1238,7 @@ impl std::fmt::Display for BearerState {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
             Self::Connected => "connected",
+            Self::Connecting => "connecting",
             Self::Disconnected => "disconnected",
             Self::Reconnecting => "reconnecting",
             Self::Unavailable => "unavailable",

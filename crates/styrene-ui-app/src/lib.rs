@@ -128,7 +128,9 @@ impl StatusTone {
     const fn for_bearer(state: BearerState) -> Self {
         match state {
             BearerState::Connected => Self::Positive,
-            BearerState::Reconnecting | BearerState::Unverified => Self::Caution,
+            BearerState::Connecting | BearerState::Reconnecting | BearerState::Unverified => {
+                Self::Caution
+            }
             BearerState::Disconnected => Self::Negative,
             BearerState::Unavailable => Self::Neutral,
         }
@@ -472,7 +474,7 @@ pub fn BleRNodeControls(
                                                 handler.call(candidate_id.clone());
                                             }
                                         },
-                                        if already_approved { "Approved" } else { "Use RNode" }
+                                        if already_approved { "Approved" } else { "Approve and connect" }
                                     }
                                 }
                             }
@@ -546,18 +548,31 @@ pub fn MobileShell(
     #[props(default)] ble_select: Option<EventHandler<BlePeripheralId>>,
     #[props(default)] ble_retry: Option<EventHandler<()>>,
     #[props(default)] ble_forget: Option<EventHandler<()>>,
+    #[props(default)] clipboard_candidate: Option<String>,
+    #[props(default)] clipboard_failure: Option<String>,
+    #[props(default)] clipboard_busy: bool,
+    #[props(default)] clipboard_read: Option<EventHandler<()>>,
+    #[props(default)] application_settings_busy: bool,
+    #[props(default)] application_settings_failure: Option<String>,
+    #[props(default)] open_application_settings: Option<EventHandler<()>>,
 ) -> Element {
     let boundary = RuntimeBoundary::from(fixture.profile);
     let store = MobileStore::new(fixture.clone());
     let messaging_available = store.messaging_available();
-    let operational_summary = store.operational_summary();
+    let propagation = propagation.unwrap_or_else(|| PropagationUpdate::from_fixture(&fixture));
+    let mut operational_summary = store.operational_summary();
+    operational_summary.propagation_selected = propagation.selected_destination.is_some();
+    operational_summary.propagation_ready = propagation.ready;
+    operational_summary.propagation_sync_state = propagation.sync_state;
     let live_actions_enabled = boundary.live_network_allowed();
     let action_sink = live_actions_enabled.then_some(action_sink).flatten();
-    let propagation = propagation.unwrap_or_else(|| PropagationUpdate::from_fixture(&fixture));
     let mut destination = use_signal(|| MobileDestination::Messages);
     let mut selected_peer = use_signal(|| None::<String>);
     let mut compact_thread_open = use_signal(|| false);
     let mut new_message_open = use_signal(|| false);
+    let mut new_message_trigger = use_signal(|| None::<Event<MountedData>>);
+    let new_message_key =
+        format!("{}:{}", fixture.generation, clipboard_candidate.as_deref().unwrap_or_default());
 
     let active_destination = *destination.read();
     let selected_hash = selected_peer
@@ -763,18 +778,41 @@ pub fn MobileShell(
                                 disabled: action_sink.is_none(),
                                 "aria-expanded": new_message_open().to_string(),
                                 "aria-controls": "mobile.new-message-form",
+                                "aria-describedby": action_sink
+                                    .is_none()
+                                    .then_some("mobile.new-message-disabled"),
+                                onmounted: move |event| new_message_trigger.set(Some(event)),
                                 onclick: move |_| new_message_open.set(true),
                                 "New Message"
                             }
                         }
+                        if action_sink.is_none() {
+                            p {
+                                id: "mobile.new-message-disabled",
+                                class: "field-hint",
+                                "New Message is unavailable in this view."
+                            }
+                        }
                         if new_message_open() {
                             NewMessageForm {
+                                key: "{new_message_key}",
                                 peers: fixture.peers.clone(),
                                 generation: fixture.generation,
                                 enabled: action_sink.is_some(),
+                                initial_destination: clipboard_candidate.clone().unwrap_or_default(),
+                                paste_busy: clipboard_busy,
+                                paste_failure: clipboard_failure.clone(),
+                                on_paste: clipboard_read,
                                 failure: fixture.session.failure.clone(),
                                 action_sink,
-                                on_cancel: move |()| new_message_open.set(false),
+                                on_cancel: move |()| {
+                                    new_message_open.set(false);
+                                    if let Some(trigger) = new_message_trigger.read().clone() {
+                                        spawn(async move {
+                                            let _ = trigger.data().set_focus(true).await;
+                                        });
+                                    }
+                                },
                             }
                         }
                         ConversationList {
@@ -864,7 +902,18 @@ pub fn MobileShell(
                         p { "Announced peers will appear here." }
                     }
                 }
-                for peer in &fixture.peers {
+                if !fixture.peers.is_empty() && action_sink.is_none() {
+                    p {
+                        id: "mobile.people-actions-disabled",
+                        class: "field-hint",
+                        "Starting a conversation is unavailable in this view."
+                    }
+                }
+                if !fixture.peers.is_empty() {
+                    ul {
+                        class: "people-list",
+                        "aria-label": "Discovered people",
+                    for peer in &fixture.peers {
                     {
                         let has_conversation = fixture.conversations.iter().any(|conversation| {
                             conversation.peer_hash == peer.destination_hash
@@ -876,7 +925,7 @@ pub fn MobileShell(
                         if has_conversation {
                             let peer_hash = peer.destination_hash.clone();
                             rsx! {
-                                button {
+                                li { button {
                                     id: format!("mobile.peer.{}", peer.destination_hash),
                                     class: "peer-card",
                                     r#type: "button",
@@ -910,12 +959,12 @@ pub fn MobileShell(
                                         }
                                     }
                                     span { class: "row-action", "Open conversation" }
-                                }
+                                } }
                             }
                         } else {
                             let peer_hash = peer.destination_hash.clone();
                             rsx! {
-                                button {
+                                li { button {
                                     id: format!("mobile.peer.{}", peer.destination_hash),
                                     class: "peer-card",
                                     r#type: "button",
@@ -923,6 +972,9 @@ pub fn MobileShell(
                                     "data-source": "canonical_announce",
                                     "data-action": "start-conversation",
                                     disabled: action_sink.is_none(),
+                                    "aria-describedby": action_sink
+                                        .is_none()
+                                        .then_some("mobile.people-actions-disabled"),
                                     onclick: move |_| {
                                         selected_peer.set(Some(peer_hash.clone()));
                                         if let Some(action_sink) = action_sink {
@@ -950,10 +1002,12 @@ pub fn MobileShell(
                                         }
                                     }
                                     span { class: "row-action", "Start conversation" }
-                                }
+                                } }
                             }
                         }
                     }
+                    }
+                }
                 }
             }
             section {
@@ -1241,6 +1295,27 @@ pub fn MobileShell(
                             class: "field-hint",
                             "Denied or restricted access can be reviewed in this app's system Settings."
                         }
+                        button {
+                            id: "mobile.open-application-settings",
+                            class: "secondary-action",
+                            r#type: "button",
+                            disabled: application_settings_busy || open_application_settings.is_none(),
+                            "aria-describedby": "mobile.permissions-recovery",
+                            onclick: move |_| {
+                                if let Some(open_application_settings) = open_application_settings {
+                                    open_application_settings.call(());
+                                }
+                            },
+                            if application_settings_busy { "Opening Settings" } else { "Open system Settings" }
+                        }
+                        if let Some(failure) = &application_settings_failure {
+                            p {
+                                id: "mobile.application-settings-failure",
+                                class: "field-error",
+                                role: "status",
+                                "System Settings could not be opened ({failure})."
+                            }
+                        }
                     }
                 }
                 article {
@@ -1359,6 +1434,9 @@ fn IdentityDisplayNameEditor(
     let value = name.read().trim().to_owned();
     let character_count = value.chars().count();
     let editing_enabled = enabled && action_sink.is_some();
+    let has_name_failure =
+        failure.as_ref().is_some_and(|failure| failure.code == "identity_display_name_failed");
+    let has_name_error = has_name_failure || character_count > IDENTITY_DISPLAY_NAME_MAX_CHARS;
     let can_save = editing_enabled
         && !value.is_empty()
         && character_count <= IDENTITY_DISPLAY_NAME_MAX_CHARS
@@ -1367,7 +1445,8 @@ fn IdentityDisplayNameEditor(
     rsx! {
         form {
             class: "identity-name-form",
-            onsubmit: move |_| {
+            onsubmit: move |event| {
+                event.prevent_default();
                 if can_save && let Some(action_sink) = action_sink {
                     action_sink.call(MobileAction::new(
                         generation,
@@ -1384,8 +1463,9 @@ fn IdentityDisplayNameEditor(
                 r#type: "text",
                 maxlength: (IDENTITY_DISPLAY_NAME_MAX_CHARS + 1).to_string(),
                 disabled: !editing_enabled,
-                "aria-invalid": (character_count > IDENTITY_DISPLAY_NAME_MAX_CHARS).to_string(),
+                "aria-invalid": has_name_error.to_string(),
                 "aria-describedby": "mobile.identity-display-name-status",
+                "aria-errormessage": has_name_error.then_some("mobile.identity-display-name-status"),
                 value: name,
                 oninput: move |event| {
                     name.set(event.value().chars().take(IDENTITY_DISPLAY_NAME_MAX_CHARS + 1).collect());
@@ -1393,9 +1473,10 @@ fn IdentityDisplayNameEditor(
             }
             p {
                 id: "mobile.identity-display-name-status",
-                class: if character_count > IDENTITY_DISPLAY_NAME_MAX_CHARS { "field-error" } else { "field-hint" },
+                class: if has_name_error { "field-error" } else { "field-hint" },
                 role: "status",
-                if failure.as_ref().is_some_and(|failure| failure.code == "identity_display_name_failed") {
+                "aria-live": "polite",
+                if has_name_failure {
                     "The backend rejected the display name. Check it and try again."
                 } else if !editing_enabled {
                     "Display-name editing is unavailable in this view."
@@ -1414,6 +1495,7 @@ fn IdentityDisplayNameEditor(
                 class: "primary-action",
                 r#type: "submit",
                 disabled: !can_save,
+                "aria-describedby": "mobile.identity-display-name-status",
                 "Save display name"
             }
         }
@@ -1428,6 +1510,9 @@ pub fn NewMessageForm(
     #[props(default)] initial_search: String,
     #[props(default)] initial_destination: String,
     #[props(default)] failure: Option<TypedFailure>,
+    #[props(default)] paste_busy: bool,
+    #[props(default)] paste_failure: Option<String>,
+    #[props(default)] on_paste: Option<EventHandler<()>>,
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
     #[props(default)] on_cancel: Option<EventHandler<()>>,
 ) -> Element {
@@ -1460,6 +1545,7 @@ pub fn NewMessageForm(
         destination_status_id.to_owned()
     };
     let validation_message = match constraint {
+        _ if !controls_enabled => "Starting a conversation is unavailable in this view.".into(),
         DestinationEntryConstraint::Empty => {
             format!("Enter a {LXMF_DESTINATION_INPUT_MAX_BYTES}-character LXMF destination.")
         }
@@ -1487,6 +1573,8 @@ pub fn NewMessageForm(
                 r#type: "search",
                 maxlength: PEER_SEARCH_INPUT_MAX_BYTES.to_string(),
                 disabled: !controls_enabled,
+                autofocus: !has_validation_error && !has_start_failure,
+                "aria-describedby": (!controls_enabled).then_some(destination_status_id),
                 value: search_value,
                 oninput: move |event| search.set(bounded_peer_search_input(&event.value())),
             }
@@ -1507,6 +1595,7 @@ pub fn NewMessageForm(
                                         class: "peer-card",
                                         r#type: "button",
                                         disabled: !controls_enabled,
+                                        "aria-describedby": (!controls_enabled).then_some(destination_status_id),
                                         onclick: move |_| {
                                             if let Some(action_sink) = action_sink
                                                 && let Some(action) = start_conversation_action(generation, &peer_hash)
@@ -1529,7 +1618,8 @@ pub fn NewMessageForm(
             }
             form {
                 class: "direct-destination-form",
-                onsubmit: move |_| {
+                onsubmit: move |event| {
+                    event.prevent_default();
                     if can_submit
                         && let Some(action_sink) = action_sink
                         && let Some(action) = start_conversation_action(generation, &submitted_destination)
@@ -1538,6 +1628,32 @@ pub fn NewMessageForm(
                     }
                 },
                 label { r#for: "mobile.direct-destination", "LXMF destination" }
+                button {
+                    id: "mobile.paste-destination",
+                    class: "secondary-action",
+                    r#type: "button",
+                    disabled: !controls_enabled || paste_busy || on_paste.is_none(),
+                    "aria-describedby": "mobile.paste-destination-status",
+                    onclick: move |_| {
+                        if let Some(on_paste) = on_paste {
+                            on_paste.call(());
+                        }
+                    },
+                    if paste_busy { "Reading clipboard" } else { "Paste destination" }
+                }
+                p {
+                    id: "mobile.paste-destination-status",
+                    class: if paste_failure.is_some() { "field-error" } else { "field-hint" },
+                    role: "status",
+                    "aria-live": "polite",
+                    if let Some(failure) = &paste_failure {
+                        "Clipboard text was not added ({failure})."
+                    } else if !controls_enabled {
+                        "Clipboard access is unavailable in this view."
+                    } else {
+                        "Clipboard text is treated as an unvalidated destination candidate."
+                    }
+                }
                 input {
                     id: "mobile.direct-destination",
                     name: "direct-destination",
@@ -1550,7 +1666,7 @@ pub fn NewMessageForm(
                     disabled: !controls_enabled,
                     autofocus: has_validation_error || has_start_failure,
                     "aria-invalid": (has_validation_error || has_start_failure).to_string(),
-                    "aria-describedby": destination_described_by,
+                    "aria-describedby": destination_described_by.clone(),
                     "aria-errormessage": if has_validation_error {
                         Some(destination_error_id)
                     } else if has_start_failure {
@@ -1602,6 +1718,7 @@ pub fn NewMessageForm(
                         class: "primary-action",
                         r#type: "submit",
                         disabled: !can_submit,
+                        "aria-describedby": destination_described_by,
                         "Start conversation"
                     }
                 }
@@ -1693,6 +1810,23 @@ pub fn PropagationPanel(
         SyncState::Complete => "Sync again",
         SyncState::Failed => "Retry sync",
     };
+    let trigger_capabilities = propagation
+        .trigger_capabilities
+        .iter()
+        .map(|trigger| trigger.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let readiness_reason = match propagation.readiness {
+        styrene_ui_state::PropagationReadiness::Unselected => "No propagation node is selected.",
+        styrene_ui_state::PropagationReadiness::Ready => "The selected node is ready.",
+        styrene_ui_state::PropagationReadiness::Unavailable => "The selected node is unavailable.",
+        styrene_ui_state::PropagationReadiness::Inactive => {
+            "The selected node announcement is inactive."
+        }
+        styrene_ui_state::PropagationReadiness::InvalidMetadata => {
+            "The selected node metadata is invalid."
+        }
+    };
     let sync_disabled_reason = if !controls_enabled {
         Some("Propagation actions are unavailable in this view.")
     } else if propagation.selected_destination.is_none() {
@@ -1712,11 +1846,12 @@ pub fn PropagationPanel(
             class: "surface-card product-section",
             "aria-labelledby": "mobile.propagation-heading",
             "data-ready": propagation.ready.to_string(),
+            "data-readiness": propagation.readiness.as_str(),
             "data-sync-state": propagation.sync_state.as_str(),
             h2 { id: "mobile.propagation-heading", "Propagation" }
             p {
                 id: "mobile.propagation-selected",
-                "aria-label": "Selected propagation node",
+                strong { "Selected propagation node: " }
                 {selected}
             }
             label {
@@ -1726,6 +1861,8 @@ pub fn PropagationPanel(
             select {
                 id: "mobile.propagation-node",
                 disabled: !controls_enabled,
+                "aria-describedby": (!controls_enabled)
+                    .then_some("mobile.propagation-node-disabled"),
                 onchange: move |event| {
                     if controls_enabled && let Some(action_sink) = action_sink {
                         let destination_hash = (!event.value().is_empty()).then(|| event.value());
@@ -1756,6 +1893,13 @@ pub fn PropagationPanel(
                     }
                 }
             }
+            if !controls_enabled {
+                p {
+                    id: "mobile.propagation-node-disabled",
+                    class: "field-hint",
+                    "Propagation-node selection is unavailable in this view."
+                }
+            }
             if let Some(policy) = &propagation.selected_policy {
                 p {
                     id: "mobile.propagation-policy",
@@ -1776,6 +1920,50 @@ pub fn PropagationPanel(
                 } else {
                     "Automatic synchronization is disabled. Use manual synchronization when a selected node is ready."
                 }
+            }
+            p {
+                id: "mobile.propagation-readiness",
+                "data-readiness": propagation.readiness.as_str(),
+                {readiness_reason}
+            }
+            p {
+                id: "mobile.propagation-trigger-capabilities",
+                class: "field-hint",
+                if trigger_capabilities.is_empty() {
+                    "Automatic trigger capabilities are unavailable."
+                } else {
+                    "Available trigger sources: {trigger_capabilities}. Background opportunity means explicitly granted, not guaranteed."
+                }
+            }
+            if let Some(trigger) = propagation.active_trigger {
+                p {
+                    id: "mobile.propagation-active-trigger",
+                    "data-trigger": trigger.as_str(),
+                    "data-started-at": propagation.active_sync_started_at.map(|value| value.to_string()),
+                    "Active synchronization trigger: {trigger.as_str()}"
+                }
+            }
+            if let Some(last) = &propagation.last_synchronization {
+                p {
+                    id: "mobile.propagation-last-sync",
+                    "data-trigger": last.trigger.as_str(),
+                    "data-outcome": last.outcome.as_str(),
+                    "data-started-at": last.started_at.to_string(),
+                    "data-finished-at": last.finished_at.to_string(),
+                    "Last synchronization: {last.trigger.as_str()} · {last.outcome.as_str()} · {last.new_messages} new messages"
+                }
+            } else {
+                p {
+                    id: "mobile.propagation-last-sync",
+                    "data-trigger": "unknown",
+                    "No completed synchronization evidence."
+                }
+            }
+            p {
+                id: "mobile.propagation-cooldown",
+                class: "field-hint",
+                "data-remaining-secs": propagation.cooldown_remaining_secs.to_string(),
+                "Cooldown remaining: {propagation.cooldown_remaining_secs} seconds"
             }
             p {
                 id: "mobile.propagation-airtime-policy",
@@ -1944,8 +2132,9 @@ pub fn MessageHistory(
                     p { "Write a message below to start the conversation." }
                 }
             }
-            ol {
-                class: "message-list",
+            if !messages.is_empty() {
+                ol {
+                    class: "message-list",
                 for message in messages {
                     {
                         let direction = if message.details.source_hash.is_empty()
@@ -1969,10 +2158,13 @@ pub fn MessageHistory(
                             class: "message-card",
                             "data-direction": direction,
                             "data-timestamp": message.details.timestamp.to_string(),
-                            "aria-label": format!("{direction_label} message with {}", message.peer_hash),
+                            "aria-labelledby": format!("mobile.message-heading.{}", message.id),
                             header {
                                 class: "message-context",
-                                span { {direction_label} }
+                                h4 {
+                                    id: format!("mobile.message-heading.{}", message.id),
+                                    {direction_label}
+                                }
                                 if message.details.timestamp != 0 {
                                     time {
                                         class: "technical-value",
@@ -1992,6 +2184,7 @@ pub fn MessageHistory(
                     }
                         }
                     }
+                }
                 }
             }
         }

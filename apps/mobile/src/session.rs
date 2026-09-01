@@ -25,15 +25,17 @@ use styrene_ui_state::{
     MessagePropagationCorrelation, MessageRetryIneligibilityReason, MessageRouteObservation,
     MessageRouteOutcome, MessageStampState, MobileAction, MobileActionKind, MobileFixture, Peer,
     PeerSource, PersistenceState, Profile, Propagation, PropagationCandidate, PropagationEvidence,
-    PropagationPolicy, PropagationProgress, PropagationUpdate, Session, SessionPhase,
+    PropagationPolicy, PropagationProgress, PropagationReadiness, PropagationSynchronization,
+    PropagationTerminalOutcome, PropagationTriggerSource, PropagationUpdate, Session, SessionPhase,
     SessionRuntime, SyncState, TransportEvidence, TypedFailure,
 };
 use styrened::mobile::{
     IdentityBackend, MobileBearerKind, MobileBearerReason, MobileBearerState, MobileConfig,
     MobileConnectionPhase, MobileDeliveryMethod, MobileInterfaceConfig, MobileNode,
-    MobilePeerAspect, MobilePropagationSnapshot, MobilePropagationSyncState, MobileRuntimeState,
-    MobileSendRequest, MobileStateEvent, MobileStateSubscription, MobileStateSubscriptionError,
-    MobileUsbFallbackDisposition, persist_mobile_tcp_endpoint,
+    MobilePeerAspect, MobilePropagationReadiness, MobilePropagationSnapshot,
+    MobilePropagationSyncState, MobilePropagationTerminalOutcome, MobilePropagationTriggerSource,
+    MobileRuntimeState, MobileSendRequest, MobileStateEvent, MobileStateSubscription,
+    MobileStateSubscriptionError, MobileUsbFallbackDisposition, persist_mobile_tcp_endpoint,
 };
 #[cfg(target_os = "android")]
 use styrened::mobile::{
@@ -1197,9 +1199,8 @@ fn project_bearer(bearer: &styrened::mobile::MobileBearerObservation) -> Bearer 
         },
         state: match bearer.state {
             MobileBearerState::Connected => BearerState::Connected,
-            MobileBearerState::Connecting | MobileBearerState::Reconnecting => {
-                BearerState::Reconnecting
-            }
+            MobileBearerState::Connecting => BearerState::Connecting,
+            MobileBearerState::Reconnecting => BearerState::Reconnecting,
             MobileBearerState::Disconnected => BearerState::Disconnected,
             MobileBearerState::Unavailable => BearerState::Unavailable,
             MobileBearerState::Unverified => BearerState::Unverified,
@@ -1220,6 +1221,13 @@ fn project_propagation(generation: u64, snapshot: &MobilePropagationSnapshot) ->
     PropagationUpdate {
         generation,
         selected_destination: snapshot.selected_destination.clone(),
+        readiness: match snapshot.readiness {
+            MobilePropagationReadiness::Unselected => PropagationReadiness::Unselected,
+            MobilePropagationReadiness::Ready => PropagationReadiness::Ready,
+            MobilePropagationReadiness::Unavailable => PropagationReadiness::Unavailable,
+            MobilePropagationReadiness::Inactive => PropagationReadiness::Inactive,
+            MobilePropagationReadiness::InvalidMetadata => PropagationReadiness::InvalidMetadata,
+        },
         ready: snapshot.ready,
         sync_state: match snapshot.sync_state {
             MobilePropagationSyncState::Idle => SyncState::Idle,
@@ -1262,6 +1270,53 @@ fn project_propagation(generation: u64, snapshot: &MobilePropagationSnapshot) ->
             stamp_cost: policy.stamp_cost,
             stamp_flexibility: policy.stamp_flexibility,
         }),
+        trigger_capabilities: snapshot
+            .trigger_capabilities
+            .iter()
+            .copied()
+            .map(project_propagation_trigger)
+            .collect(),
+        active_trigger: snapshot.active_trigger.map(project_propagation_trigger),
+        active_sync_started_at: snapshot.active_sync_started_at,
+        last_synchronization: snapshot.last_synchronization.as_ref().map(|synchronization| {
+            PropagationSynchronization {
+                trigger: project_propagation_trigger(synchronization.trigger),
+                started_at: synchronization.started_at,
+                finished_at: synchronization.finished_at,
+                outcome: match synchronization.outcome {
+                    MobilePropagationTerminalOutcome::Succeeded => {
+                        PropagationTerminalOutcome::Succeeded
+                    }
+                    MobilePropagationTerminalOutcome::Failed => PropagationTerminalOutcome::Failed,
+                    MobilePropagationTerminalOutcome::TimedOut => {
+                        PropagationTerminalOutcome::TimedOut
+                    }
+                    MobilePropagationTerminalOutcome::Cancelled => {
+                        PropagationTerminalOutcome::Cancelled
+                    }
+                },
+                new_messages: synchronization.new_messages,
+            }
+        }),
+        cooldown_remaining_secs: snapshot.cooldown_remaining_secs,
+    }
+}
+
+fn project_propagation_trigger(
+    trigger: MobilePropagationTriggerSource,
+) -> PropagationTriggerSource {
+    match trigger {
+        MobilePropagationTriggerSource::InitialConnection => {
+            PropagationTriggerSource::InitialConnection
+        }
+        MobilePropagationTriggerSource::Reconnect => PropagationTriggerSource::Reconnect,
+        MobilePropagationTriggerSource::ForegroundOpportunity => {
+            PropagationTriggerSource::ForegroundOpportunity
+        }
+        MobilePropagationTriggerSource::GrantedBackgroundOpportunity => {
+            PropagationTriggerSource::GrantedBackgroundOpportunity
+        }
+        MobilePropagationTriggerSource::Manual => PropagationTriggerSource::Manual,
     }
 }
 
@@ -1567,6 +1622,28 @@ mod tests {
             (MobileRuntimeState::Stopped, SessionRuntime::Stopped),
         ] {
             assert_eq!(project_runtime(backend), projected);
+        }
+    }
+
+    #[test]
+    fn propagation_trigger_sources_remain_typed_and_background_is_explicitly_granted() {
+        for (backend, projected) in [
+            (
+                MobilePropagationTriggerSource::InitialConnection,
+                PropagationTriggerSource::InitialConnection,
+            ),
+            (MobilePropagationTriggerSource::Reconnect, PropagationTriggerSource::Reconnect),
+            (
+                MobilePropagationTriggerSource::ForegroundOpportunity,
+                PropagationTriggerSource::ForegroundOpportunity,
+            ),
+            (
+                MobilePropagationTriggerSource::GrantedBackgroundOpportunity,
+                PropagationTriggerSource::GrantedBackgroundOpportunity,
+            ),
+            (MobilePropagationTriggerSource::Manual, PropagationTriggerSource::Manual),
+        ] {
+            assert_eq!(project_propagation_trigger(backend), projected);
         }
     }
 

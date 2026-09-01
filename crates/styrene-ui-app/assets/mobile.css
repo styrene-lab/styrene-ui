@@ -384,6 +384,18 @@ label {
   list-style: none;
 }
 
+.people-list {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.people-list .peer-card {
+  inline-size: 100%;
+}
+
 .new-message-peer-list .peer-card {
   margin: 0;
   border-inline: 0;

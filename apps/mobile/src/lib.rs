@@ -5,7 +5,8 @@ use styrene_ui_app::{BackNavigation, MobileShell};
     not(feature = "ui-test")
 ))]
 use styrene_ui_platform::{
-    AndroidUsbAttachment, AuthorizationState, BleControlPhase, BleControlState,
+    AndroidUsbAttachment, ApplicationSettingsService, AuthorizationState, BleControlPhase,
+    BleControlState, ClipboardTextReader, TextAcquisitionGeneration,
 };
 #[cfg(all(
     not(target_os = "ios"),
@@ -104,6 +105,18 @@ pub fn App() -> Element {
         use_signal(|| None::<AndroidUsbAttachment>),
         use_signal(|| None::<String>),
     );
+    #[cfg(all(
+        any(target_os = "android", target_os = "ios", target_os = "macos"),
+        not(feature = "ui-test")
+    ))]
+    let (mut clipboard_candidate, mut clipboard_failure, mut clipboard_busy) =
+        (use_signal(|| None::<String>), use_signal(|| None::<String>), use_signal(|| false));
+    #[cfg(all(
+        any(target_os = "android", target_os = "ios", target_os = "macos"),
+        not(feature = "ui-test")
+    ))]
+    let (mut application_settings_busy, mut application_settings_failure) =
+        (use_signal(|| false), use_signal(|| None::<String>));
 
     #[cfg(all(target_os = "android", not(feature = "ui-test")))]
     use_future(move || async move {
@@ -164,6 +177,7 @@ pub fn App() -> Element {
             });
         }
         let current = update.read().clone();
+        let current_generation = current.fixture.generation;
         let current_platform = platform_snapshot.read().clone();
         #[cfg(not(target_os = "ios"))]
         let bluetooth_permission = current_platform
@@ -319,6 +333,50 @@ pub fn App() -> Element {
                 ble_forget: move |()| {
                     #[cfg(target_os = "ios")]
                     ble_host.read().forget();
+                },
+                clipboard_candidate: clipboard_candidate.read().clone(),
+                clipboard_failure: clipboard_failure.read().clone(),
+                clipboard_busy: *clipboard_busy.read(),
+                clipboard_read: move |()| {
+                    if *clipboard_busy.read() {
+                        return;
+                    }
+                    clipboard_busy.set(true);
+                    clipboard_failure.set(None);
+                    let generation = TextAcquisitionGeneration::new(current_generation);
+                    spawn(async move {
+                        let reader = platform::NativeClipboardTextReader;
+                        let completion = reader.read_clipboard_text(generation).await;
+                        if let Some(result) = completion.into_result_for(generation) {
+                            match result {
+                                Ok(candidate) => {
+                                    clipboard_candidate.set(Some(candidate.into_string()));
+                                }
+                                Err(error) => {
+                                    clipboard_failure.set(Some(
+                                        format!("{error:?}").to_ascii_lowercase(),
+                                    ));
+                                }
+                            }
+                        }
+                        clipboard_busy.set(false);
+                    });
+                },
+                application_settings_busy: *application_settings_busy.read(),
+                application_settings_failure: application_settings_failure.read().clone(),
+                open_application_settings: move |()| {
+                    if *application_settings_busy.read() {
+                        return;
+                    }
+                    application_settings_busy.set(true);
+                    application_settings_failure.set(None);
+                    spawn(async move {
+                        let service = platform::NativeApplicationSettingsService;
+                        if let Err(error) = service.open_application_settings().await {
+                            application_settings_failure.set(Some(error.code));
+                        }
+                        application_settings_busy.set(false);
+                    });
                 },
             }
         };

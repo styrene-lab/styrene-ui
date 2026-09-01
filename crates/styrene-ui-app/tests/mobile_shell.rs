@@ -13,8 +13,9 @@ use styrene_ui_state::{
     ApplyResult, BearerState, Conversation, IdentityCustody, IdentityCustodyAuthentication,
     IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
     IdentityCustodyProtection, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus,
-    MobileStore, PropagationCandidate, PropagationPolicy, PropagationProgress, PropagationUpdate,
-    RuntimeBoundary, SessionPhase, SyncState, TargetClass, TypedFailure,
+    MobileStore, PropagationCandidate, PropagationPolicy, PropagationProgress,
+    PropagationSynchronization, PropagationTerminalOutcome, PropagationTriggerSource,
+    PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState, TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -81,6 +82,8 @@ fn NewMessageShell(
     initial_search: String,
     initial_destination: String,
     #[props(default)] failure: Option<TypedFailure>,
+    #[props(default)] paste_failure: Option<String>,
+    #[props(default)] paste_enabled: bool,
 ) -> Element {
     rsx! {
         NewMessageForm {
@@ -90,7 +93,26 @@ fn NewMessageShell(
             initial_search,
             initial_destination,
             failure,
+            paste_failure,
+            on_paste: paste_enabled.then_some(EventHandler::new(move |()| {})),
             action_sink: move |_action| {},
+        }
+    }
+}
+
+#[component]
+fn PlatformShell(
+    fixture: MobileFixture,
+    platform_snapshot: PlatformSnapshot,
+    ble_controls: BleControlState,
+) -> Element {
+    rsx! {
+        MobileShell {
+            target: TargetClass::Android,
+            fixture,
+            platform_snapshot,
+            ble_controls,
+            open_application_settings: move |()| {},
         }
     }
 }
@@ -442,8 +464,7 @@ fn shared_shell_exposes_typed_platform_facts_without_inventing_text_scale() {
     let ble_controls =
         BleControlState { permission: AuthorizationState::Restricted, ..Default::default() };
     let markup = dioxus_ssr::render_element(rsx! {
-        MobileShell {
-            target: TargetClass::Android,
+        PlatformShell {
             fixture: fixture("direct-message-queued"),
             platform_snapshot,
             ble_controls,
@@ -479,6 +500,11 @@ fn shared_shell_exposes_typed_platform_facts_without_inventing_text_scale() {
     );
     assert!(markup.contains("Not requested by Styrene"));
     assert!(markup.contains("system Settings."));
+    assert!(!opening_tag_with_id(&markup, "mobile.open-application-settings").contains("disabled"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.open-application-settings")
+            .contains("aria-describedby=\"mobile.permissions-recovery\"")
+    );
     assert!(!markup.contains("data-text-scale-percent"));
 
     category_snapshot.accessibility.text_scale =
@@ -516,6 +542,8 @@ fn mobile_shell_uses_destination_navigation_and_starts_on_the_conversation_list(
     let new_message = opening_tag_with_id(&markup, "mobile.new-message");
     assert!(new_message.contains("aria-expanded=\"false\""));
     assert!(new_message.contains("disabled"));
+    assert!(new_message.contains("aria-describedby=\"mobile.new-message-disabled\""));
+    assert!(markup.contains("New Message is unavailable in this view."));
 }
 
 fn render_new_message(initial_search: &str, initial_destination: &str) -> String {
@@ -536,6 +564,7 @@ fn new_message_empty_entry_exposes_search_and_no_optimistic_product_state() {
     let submit = opening_tag_with_id(&markup, "mobile.start-conversation");
 
     assert!(markup.contains("id=\"mobile.peer-search\""));
+    assert!(opening_tag_with_id(&markup, "mobile.peer-search").contains("autofocus"));
     assert!(markup.contains("FPIG_SKYWAVE"));
     assert!(markup.contains("id=\"mobile.direct-destination\""));
     assert!(markup.contains("Enter a 32-character LXMF destination."));
@@ -573,6 +602,52 @@ fn new_message_bounded_candidate_uses_backend_validation_action_semantics() {
             .contains("disabled")
     );
     assert!(malformed_but_bounded.contains("backend will validate"));
+}
+
+#[test]
+fn new_message_clipboard_candidate_stays_on_backend_validation_path() {
+    let state = fixture("canonical-peer-discovery");
+    let candidate = "e01b09b22ccc4e2755d29eead962677b";
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: candidate.to_owned(),
+            paste_enabled: true,
+        }
+    });
+
+    assert!(opening_tag_with_id(&markup, "mobile.paste-destination").contains("type=\"button\""));
+    assert!(!opening_tag_with_id(&markup, "mobile.paste-destination").contains("disabled"));
+    assert!(markup.contains("unvalidated destination candidate"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.direct-destination")
+            .contains(&format!("value=\"{candidate}\""))
+    );
+    assert!(!opening_tag_with_id(&markup, "mobile.start-conversation").contains("disabled"));
+    assert!(markup.contains("backend will validate"));
+}
+
+#[test]
+fn new_message_clipboard_failure_is_bounded_and_associated() {
+    let state = fixture("canonical-peer-discovery");
+    let markup = dioxus_ssr::render_element(rsx! {
+        NewMessageShell {
+            peers: state.peers,
+            generation: state.generation,
+            initial_search: String::new(),
+            initial_destination: String::new(),
+            paste_failure: Some("denied".into()),
+            paste_enabled: true,
+        }
+    });
+
+    assert!(
+        opening_tag_with_id(&markup, "mobile.paste-destination")
+            .contains("aria-describedby=\"mobile.paste-destination-status\"")
+    );
+    assert!(markup.contains("Clipboard text was not added (denied)."));
 }
 
 #[test]
@@ -977,6 +1052,32 @@ fn operational_summary_preserves_reconnecting_degraded_failed_and_mixed_bearers(
 }
 
 #[test]
+fn operational_summary_uses_the_current_propagation_projection_prop() {
+    let fixture = fixture("live-empty-connected");
+    let mut propagation = PropagationUpdate::from_fixture(&fixture);
+    propagation.selected_destination = Some("feedfeedfeedfeedfeedfeedfeedfeed".into());
+    propagation.ready = true;
+    propagation.readiness = styrene_ui_state::PropagationReadiness::Ready;
+    propagation.sync_state = SyncState::Complete;
+    let markup = dioxus_ssr::render_element(rsx! {
+        MobileShell {
+            target: TargetClass::Ios,
+            fixture,
+            propagation,
+        }
+    });
+
+    assert!(
+        opening_tag_with_id(&markup, "mobile.summary.propagation")
+            .contains("data-selected=\"true\"")
+    );
+    assert!(
+        opening_tag_with_id(&markup, "mobile.summary.propagation").contains("data-ready=\"true\"")
+    );
+    assert!(markup.contains("Selected node ready · complete"));
+}
+
+#[test]
 fn stale_completion_never_appears_in_rendered_state() {
     let mut store = MobileStore::new(fixture("stale-generation-rejected"));
     let mut stale = fixture("recoverable-session-failure");
@@ -1099,6 +1200,10 @@ fn identity_surface_labels_public_destination_and_exposes_durable_name_edit() {
     assert!(markup.contains("value=\"Field Node\""));
     assert!(markup.contains("This is the current public display name."));
     assert!(opening_tag_with_id(&markup, "mobile.identity-display-name-save").contains("disabled"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.identity-display-name-save")
+            .contains("aria-describedby=\"mobile.identity-display-name-status\"")
+    );
     assert!(markup.contains("Public LXMF destination"));
     assert!(markup.contains(&format!("aria-label=\"Public LXMF destination {destination}\"")));
     assert!(!markup.contains("Private key"));
@@ -1187,6 +1292,8 @@ fn message_history_renders_direction_chronology_and_independent_delivery_evidenc
 
     assert!(card.contains("data-direction=\"outgoing\""));
     assert!(card.contains("data-timestamp=\"1700000000\""));
+    assert!(card.contains("aria-labelledby=\"mobile.message-heading.message-direct-1\""));
+    assert!(markup.contains("<h4 id=\"mobile.message-heading.message-direct-1\">Sent</h4>"));
     for expected in [
         "Sent",
         "Unix 1700000000",
@@ -1220,6 +1327,19 @@ fn propagation_component_discloses_selection_readiness_and_automatic_policy() {
     propagation.automatic_sync_enabled = true;
     propagation.automatic_sync_cooldown_secs = 30;
     propagation.sync_deadline_secs = 32;
+    propagation.trigger_capabilities = vec![
+        PropagationTriggerSource::ForegroundOpportunity,
+        PropagationTriggerSource::GrantedBackgroundOpportunity,
+        PropagationTriggerSource::Manual,
+    ];
+    propagation.last_synchronization = Some(PropagationSynchronization {
+        trigger: PropagationTriggerSource::Manual,
+        started_at: 1_700_000_000,
+        finished_at: 1_700_000_004,
+        outcome: PropagationTerminalOutcome::Succeeded,
+        new_messages: 2,
+    });
+    propagation.cooldown_remaining_secs = 12;
     let policy = PropagationPolicy {
         transfer_limit_kb: 256,
         sync_limit_kb: 4_000,
@@ -1254,6 +1374,21 @@ fn propagation_component_discloses_selection_readiness_and_automatic_policy() {
     assert!(markup.contains("connection, reconnection, and allowed foreground opportunities"));
     assert!(markup.contains("Background collection is best effort"));
     assert!(markup.contains("may consume network airtime"));
+    assert!(markup.contains("foreground_opportunity, granted_background_opportunity, manual"));
+    assert!(markup.contains("explicitly granted, not guaranteed"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.propagation-last-sync")
+            .contains("data-trigger=\"manual\"")
+    );
+    assert!(
+        opening_tag_with_id(&markup, "mobile.propagation-last-sync")
+            .contains("data-outcome=\"succeeded\"")
+    );
+    assert!(markup.contains("Last synchronization: manual · succeeded · 2 new messages"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.propagation-cooldown")
+            .contains("data-remaining-secs=\"12\"")
+    );
     assert!(markup.contains("id=\"mobile.propagation-sync\""));
     assert!(markup.contains("id=\"mobile.propagation-node\""));
     assert!(markup.contains("value=\"780e7aa7b2f175c88f28c7ba8ab1b714\" selected"));
@@ -1273,6 +1408,11 @@ fn stale_propagation_metadata_disables_manual_sync_without_losing_selection() {
     assert!(markup.contains("780e7aa7b2f175c88f28c7ba8ab1b714"));
     assert!(markup.contains("data-ready=\"false\""));
     assert!(opening_tag_with_id(&markup, "mobile.propagation-sync").contains("disabled"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.propagation-node")
+            .contains("aria-describedby=\"mobile.propagation-node-disabled\"")
+    );
+    assert!(markup.contains("Propagation-node selection is unavailable in this view."));
     assert!(markup.contains("id=\"mobile.propagation-sync-disabled\""));
     assert!(markup.contains("The selected propagation node is not ready."));
     assert!(markup.contains("Selected node is currently unavailable"));
@@ -1288,10 +1428,16 @@ fn propagation_component_renders_progress_repeat_sync_and_recoverable_failure() 
         received_count: 1,
         received_bytes: 256,
     });
+    progress.active_trigger = Some(PropagationTriggerSource::ForegroundOpportunity);
+    progress.active_sync_started_at = Some(1_700_000_100);
     let progress_markup = render_propagation(progress);
     assert!(progress_markup.contains("id=\"mobile.propagation-progress\""));
     assert!(progress_markup.contains("data-attempt-id=\"attempt-mobile-sync\""));
     assert!(progress_markup.contains("data-received-count=\"1\""));
+    assert!(
+        opening_tag_with_id(&progress_markup, "mobile.propagation-active-trigger")
+            .contains("data-trigger=\"foreground_opportunity\"")
+    );
 
     let mut repeated = PropagationUpdate::from_fixture(&completed_fixture);
     repeated.new_messages = 0;

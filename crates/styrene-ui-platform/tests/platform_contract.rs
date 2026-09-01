@@ -8,8 +8,9 @@ use styrene_ui_platform::{
     MAX_CANDIDATE_PAYLOAD_BYTES, MockClipboardTextReader, MockQrDestinationScanner,
     MockTextAcquisitionResponse, MotionPreference, PermissionKind, PermissionStatus,
     PlatformApplyResult, PlatformChange, PlatformEvent, PlatformGeometry, PlatformInsets,
-    PlatformSnapshot, PlatformState, QrDestinationScanner, TextAcquisitionFailure,
-    TextAcquisitionGeneration, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
+    PlatformSnapshot, PlatformState, QrDestinationScanner, TextAcquisitionCompletion,
+    TextAcquisitionFailure, TextAcquisitionGeneration, TextScale, TextScaleCategory, WindowClass,
+    WindowMetrics,
 };
 
 fn ready<T>(future: impl Future<Output = T>) -> T {
@@ -189,6 +190,7 @@ fn clipboard_mock_types_boundary_failures_and_preserves_generation() {
         MockTextAcquisitionResponse::Denied,
         MockTextAcquisitionResponse::Restricted,
         MockTextAcquisitionResponse::Unavailable,
+        MockTextAcquisitionResponse::Cancelled,
         MockTextAcquisitionResponse::ServiceBytes(oversized),
         MockTextAcquisitionResponse::ServiceBytes(vec![0xff]),
         MockTextAcquisitionResponse::ServiceBytes(b"not-validated-by-platform".to_vec()),
@@ -198,6 +200,7 @@ fn clipboard_mock_types_boundary_failures_and_preserves_generation() {
         Err(TextAcquisitionFailure::Denied),
         Err(TextAcquisitionFailure::Restricted),
         Err(TextAcquisitionFailure::Unavailable),
+        Err(TextAcquisitionFailure::Cancelled),
         Err(TextAcquisitionFailure::Oversized),
         Err(TextAcquisitionFailure::Malformed),
     ];
@@ -208,7 +211,7 @@ fn clipboard_mock_types_boundary_failures_and_preserves_generation() {
         assert_eq!(completion.result, expected);
     }
 
-    let completion = ready(reader.read_clipboard_text(TextAcquisitionGeneration::new(15)));
+    let completion = ready(reader.read_clipboard_text(TextAcquisitionGeneration::new(16)));
     assert_eq!(completion.result.unwrap().as_str(), "not-validated-by-platform");
 }
 
@@ -247,4 +250,37 @@ fn qr_mock_reports_cancellation_and_success_without_destination_validation() {
 
     let exhausted = ready(scanner.scan_qr_destination(TextAcquisitionGeneration::new(28)));
     assert_eq!(exhausted.result, Err(TextAcquisitionFailure::Unavailable));
+}
+
+#[test]
+fn text_acquisition_completion_rejects_stale_generation() {
+    let current = TextAcquisitionGeneration::new(12);
+    let stale = TextAcquisitionCompletion {
+        generation: TextAcquisitionGeneration::new(11),
+        result: Err(TextAcquisitionFailure::Denied),
+    };
+    let matching = TextAcquisitionCompletion {
+        generation: current,
+        result: Err(TextAcquisitionFailure::Cancelled),
+    };
+
+    assert_eq!(stale.into_result_for(current), None);
+    assert_eq!(matching.into_result_for(current), Some(Err(TextAcquisitionFailure::Cancelled)));
+}
+
+#[test]
+fn candidate_payload_bound_is_utf8_bytes_and_accepts_the_exact_limit() {
+    let exact = "x".repeat(MAX_CANDIDATE_PAYLOAD_BYTES);
+    let multibyte = "\u{1f642}".repeat(MAX_CANDIDATE_PAYLOAD_BYTES / 4 + 1);
+
+    assert_eq!(
+        styrene_ui_platform::CandidatePayload::new(exact.clone())
+            .expect("exact byte boundary")
+            .into_string(),
+        exact
+    );
+    assert_eq!(
+        styrene_ui_platform::CandidatePayload::new(multibyte),
+        Err(styrene_ui_platform::CandidatePayloadError::Oversized)
+    );
 }
