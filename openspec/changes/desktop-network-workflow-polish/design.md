@@ -28,3 +28,15 @@ identifier establishes it. Missing relationships remain explicit.
 The surface polish can land before this change. The deeper change must preserve
 the current safety confirmation and generation checks. Fixture tests are the
 acceptance boundary before runtime smoke testing.
+
+## Reassessment
+
+The deterministic capability, form-state, correlation, generation, and flow
+simulation coverage is present on `main`. The flow simulation remains ignored by
+default and is not packaged UI evidence.
+
+Three gates remain open. Native keyboard order, labels, disabled guidance, and
+destructive confirmation need direct tests. Healthy, read-only, partially
+available, and active-operation fixtures need retained captures. Live-failure and
+Embedded smoke checks must run without changing daemon fallback behavior. Existing
+deterministic simulations do not close these native and runtime gates.
