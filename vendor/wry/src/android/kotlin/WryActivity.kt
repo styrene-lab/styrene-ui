@@ -6,6 +6,8 @@ package {{package}}
 
 import android.annotation.SuppressLint
 import android.app.PendingIntent
+import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -58,6 +60,8 @@ abstract class WryActivity : AppCompatActivity() {
     private lateinit var mWebView: RustWebView
     private var usbPermissionReceiver: BroadcastReceiver? = null
     private var usbPermissionPendingIntent: PendingIntent? = null
+    private var identityBackupSharePending = false
+    private var identityBackupSharePaused = false
     var id: Int = 0
     open val handleBackNavigation: Boolean = true
 
@@ -123,6 +127,7 @@ abstract class WryActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         id = savedInstanceState?.getInt(ACTIVITY_ID_KEY) ?: intent.extras?.getInt(ACTIVITY_ID_KEY) ?: hashCode()
         ProcessLifecycleOwner.get().lifecycle.addObserver(WryLifecycleObserver)
+        removeIdentityBackupShare()
         Rust.onActivityCreate(this)
     }
 
@@ -139,6 +144,9 @@ abstract class WryActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        if (identityBackupSharePending) {
+            identityBackupSharePaused = true
+        }
         if (::mWebView.isInitialized) {
             mWebView.onPause()
         }
@@ -146,6 +154,9 @@ abstract class WryActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (identityBackupSharePending && identityBackupSharePaused) {
+            removeIdentityBackupShare()
+        }
         if (::mWebView.isInitialized) {
             mWebView.onResume()
         }
@@ -153,6 +164,7 @@ abstract class WryActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         cancelUsbPermissionRequest()
+        removeIdentityBackupShare()
         super.onDestroy()
         Rust.onActivityDestroy(this)
         Rust.onWebviewDestroy(this, if (::mWebView.isInitialized) { mWebView.id } else { "" })
@@ -185,6 +197,55 @@ abstract class WryActivity : AppCompatActivity() {
         } catch (_: RuntimeException) {
             false
         }
+    }
+
+    fun presentIdentityBackup(document: ByteArray): Int {
+        if (document.size > IdentityBackupProvider.MAX_DOCUMENT_BYTES || identityBackupSharePending) {
+            return SHARE_PRESENTATION_FAILED
+        }
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = IdentityBackupProvider.MIME_TYPE
+        }
+        if (sendIntent.resolveActivity(packageManager) == null) {
+            return SHARE_UNAVAILABLE
+        }
+        removeIdentityBackupShare()
+        val file = IdentityBackupProvider.shareFile(this)
+        return try {
+            if (!file.parentFile!!.mkdirs() && !file.parentFile!!.isDirectory) {
+                return SHARE_PRESENTATION_FAILED
+            }
+            file.outputStream().use { stream -> stream.write(document) }
+            val uri = IdentityBackupProvider.shareUri(this)
+            sendIntent.apply {
+                putExtra(Intent.EXTRA_STREAM, uri)
+                clipData = ClipData.newRawUri("Encrypted identity backup", uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            identityBackupSharePending = true
+            identityBackupSharePaused = false
+            startActivity(Intent.createChooser(sendIntent, null))
+            SHARE_PRESENTED
+        } catch (_: ActivityNotFoundException) {
+            removeIdentityBackupShare()
+            SHARE_UNAVAILABLE
+        } catch (_: RuntimeException) {
+            removeIdentityBackupShare()
+            SHARE_PRESENTATION_FAILED
+        } catch (_: java.io.IOException) {
+            removeIdentityBackupShare()
+            SHARE_PRESENTATION_FAILED
+        }
+    }
+
+    private fun removeIdentityBackupShare() {
+        revokeUriPermission(
+            IdentityBackupProvider.shareUri(this),
+            Intent.FLAG_GRANT_READ_URI_PERMISSION
+        )
+        IdentityBackupProvider.shareFile(this).delete()
+        identityBackupSharePending = false
+        identityBackupSharePaused = false
     }
 
     @Deprecated("Deprecated in Android")
@@ -274,3 +335,7 @@ abstract class WryActivity : AppCompatActivity() {
 
     {{class-extension}}
 }
+
+private const val SHARE_PRESENTED = 0
+private const val SHARE_UNAVAILABLE = 1
+private const val SHARE_PRESENTATION_FAILED = 2
