@@ -236,9 +236,15 @@ pub fn destination_entry_constraint(value: &str) -> DestinationEntryConstraint {
     }
 }
 
+/// Bound a destination candidate for the New Message field.
+///
+/// Surrounding whitespace is never part of an LXMF destination, so it is
+/// removed before the byte bound is applied. Trimming afterwards would let a
+/// pasted or scanned candidate with leading whitespace lose its final
+/// characters and be reported as incomplete.
 #[must_use]
 pub fn bounded_destination_input(value: &str) -> String {
-    bounded_input(value, LXMF_DESTINATION_INPUT_MAX_BYTES)
+    bounded_input(value.trim(), LXMF_DESTINATION_INPUT_MAX_BYTES)
 }
 
 #[must_use]
