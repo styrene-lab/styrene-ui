@@ -493,7 +493,7 @@ mod tests {
         assert!(!completion.is_for(7, "eeff0011"));
     }
 
-    const BACKEND_REVISION: &str = "f0359c92ba9f6d63ce248bc97617fc3115a0f3c3";
+    const BACKEND_REVISION: &str = "e70c3d6cb140cf5427fc912b32acc318981eaee8";
     const MINIMUM_FIXTURE_REVISION: &str = "899da81302c5f4e92f60a2fdaf396c26e813ba76";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");

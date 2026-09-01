@@ -1,9 +1,11 @@
 //! Renderer-independent contracts for mobile operating-system services.
 
 mod ble;
+mod document_exchange;
 mod text_acquisition;
 
 pub use ble::*;
+pub use document_exchange::*;
 pub use text_acquisition::*;
 
 use std::future::Future;
