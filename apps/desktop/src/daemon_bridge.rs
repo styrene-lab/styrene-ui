@@ -14,6 +14,7 @@ use tokio::time::Duration;
 use tracing::{Instrument, debug, info, info_span, warn};
 
 use rmpv::Value as MpValue;
+use styrene_ipc::types::ProfileInfo;
 use styrene_ipc::types::{
     ConversationInfo, DaemonStatusInfo, DeviceInfo, ExecResult, IdentityInfo, LinkEvent,
     LinkSnapshot, MessageInfo, NetworkOperationInfo, NetworkOperationKind, ObservationMetadata,
@@ -23,7 +24,7 @@ use styrene_ipc::types::{
 };
 use styrene_ipc_client::{Client, ClientError, EventFrame, EventTopic};
 use styrene_ipc_wire::MessageType;
-use styrene_session::{EmbeddedConfig, Session, SessionProfile};
+use styrene_session::{EmbeddedConfig, ManagedTarget, Session, SessionProfile};
 
 /// A single entry from the path table — routing info for one destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +65,8 @@ pub struct BrokerDiagnostics {
 #[derive(Debug, Clone)]
 pub enum DaemonEvent {
     Connected,
+    /// The backend's description of the profile its daemon runs from.
+    Profile(Box<ProfileInfo>),
     Identity(IdentityInfo),
     Status(DaemonStatusInfo),
     EventGeneration(u64),
@@ -77,9 +80,17 @@ pub enum DaemonEvent {
     NetworkOperation(NetworkOperationInfo),
     Request(RequestObservationInfo),
     Resource(ResourceTransferInfo),
-    ReconcileRequests { dropped: u64, connection_generation: u64 },
-    ReconcileRequired { dropped: u64, connection_generation: u64 },
-    StandardPropagationChanged { connection_generation: u64 },
+    ReconcileRequests {
+        dropped: u64,
+        connection_generation: u64,
+    },
+    ReconcileRequired {
+        dropped: u64,
+        connection_generation: u64,
+    },
+    StandardPropagationChanged {
+        connection_generation: u64,
+    },
     Disconnected(String),
 }
 
@@ -574,9 +585,33 @@ pub(crate) async fn connect_embedded(
         Session::embedded(EmbeddedConfig { db: None, config: None, identity: None, ephemeral })
             .await
             .map_err(|error| format!("embedded daemon boot failed: {error}"))?;
-    debug_assert_eq!(command.profile(), SessionProfile::Embedded);
+    debug_assert_eq!(command.profile(), SessionProfile::Quick);
     let (broker, events) = attach(command, generation).await?;
     info!(target: "dx::bridge", "embedded daemon fully initialized");
+    let runtime = EmbeddedDaemon { session: broker.command_session.clone() };
+    Ok((broker, events, runtime))
+}
+
+/// Open a persistent managed Local profile at `root` (creating it when it
+/// does not exist yet) and attach a Live event session to its endpoint.
+pub(crate) async fn connect_local(
+    root: &Path,
+    generation: crate::backend::ConnectionGeneration,
+) -> Result<(RequestBroker, mpsc::Receiver<DaemonEvent>, EmbeddedDaemon), String> {
+    // Unix socket paths are length-limited; keep the host-private runtime
+    // parent short and off the profile root.
+    let runtime_parent = std::env::temp_dir().join("styrene-rt");
+    std::fs::create_dir_all(&runtime_parent)
+        .map_err(|error| format!("create runtime parent {}: {error}", runtime_parent.display()))?;
+    let command = Session::managed(ManagedTarget::Local {
+        root: root.to_path_buf(),
+        runtime_parent,
+        display_name: Some("Desktop local profile"),
+    })
+    .await
+    .map_err(|error| format!("local profile failed: {error}"))?;
+    debug_assert_eq!(command.profile(), SessionProfile::Local);
+    let (broker, events) = attach(command, generation).await?;
     let runtime = EmbeddedDaemon { session: broker.command_session.clone() };
     Ok((broker, events, runtime))
 }
@@ -599,8 +634,11 @@ async fn attach(
         + usize::from(status.is_some())
         + devices.len()
         + usize::from(paths.is_some());
-    let (tx, rx) = mpsc::channel(event_channel_capacity(initial_event_count));
+    let (tx, rx) = mpsc::channel(event_channel_capacity(initial_event_count + 1));
     let _ = tx.send(DaemonEvent::Connected).await;
+    if let Some(profile) = command.profile_info() {
+        let _ = tx.send(DaemonEvent::Profile(Box::new(profile.clone()))).await;
+    }
     if let Some(info) = identity {
         let _ = tx.send(DaemonEvent::Identity(info)).await;
     }
