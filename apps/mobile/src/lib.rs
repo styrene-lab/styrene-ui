@@ -517,6 +517,10 @@ pub fn App() -> Element {
                     #[cfg(target_os = "ios")]
                     ble_host.read().retry();
                 },
+                ble_cancel: move |()| {
+                    #[cfg(target_os = "ios")]
+                    ble_host.read().cancel();
+                },
                 ble_forget: move |()| {
                     #[cfg(target_os = "ios")]
                     ble_host.read().forget();

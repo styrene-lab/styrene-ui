@@ -286,6 +286,7 @@ const fn ble_disabled_reason(reason: BleControlDisabledReason) -> &'static str {
         }
         BleControlDisabledReason::NoApprovedPeripheral => "No Bluetooth RNode is approved",
         BleControlDisabledReason::NoRetryableFailure => "There is no retryable Bluetooth failure",
+        BleControlDisabledReason::NoOperationToCancel => "No Bluetooth connection is in progress",
     }
 }
 
@@ -310,17 +311,24 @@ pub fn BleRNodeControls(
     #[props(default)] scan: Option<EventHandler<()>>,
     #[props(default)] select: Option<EventHandler<BlePeripheralId>>,
     #[props(default)] retry: Option<EventHandler<()>>,
+    #[props(default)] cancel: Option<EventHandler<()>>,
     #[props(default)] forget: Option<EventHandler<()>>,
 ) -> Element {
     let scan_reason = state.scan_disabled_reason();
     let selection_reason = state.selection_disabled_reason();
-    let retry_reason = state.retry_disabled_reason();
+    // Reconnecting a remembered RNode is always an operator action; the
+    // application never connects on its own at launch.
+    let retry_reason = state.reconnect_disabled_reason();
+    let cancel_reason = state.cancel_disabled_reason();
     let forget_reason = state.forget_disabled_reason();
     let scan_disabled = !actions_enabled || scan.is_none() || scan_reason.is_some();
     let selection_disabled = !actions_enabled || select.is_none() || selection_reason.is_some();
     let retry_disabled = !actions_enabled || retry.is_none() || retry_reason.is_some();
+    let cancel_disabled = !actions_enabled || cancel.is_none() || cancel_reason.is_some();
     let forget_disabled = !actions_enabled || forget.is_none() || forget_reason.is_some();
     let connected = state.phase == BleControlPhase::Connected;
+    let in_flight =
+        matches!(state.phase, BleControlPhase::Connecting | BleControlPhase::Reconnecting);
     let scan_label = if state.permission == AuthorizationState::NotDetermined {
         "Allow Bluetooth and scan"
     } else if state.phase == BleControlPhase::Scanning {
@@ -345,7 +353,9 @@ pub fn BleRNodeControls(
     } else if state.phase == BleControlPhase::Connected {
         "The approved RNode is connected. Disconnect and forget it before choosing another."
     } else if state.phase == BleControlPhase::Reconnecting {
-        "Reconnecting to the approved RNode."
+        "Reconnecting to the approved RNode. Answer any pairing request iOS shows."
+    } else if state.approved.is_some() && state.failure.is_none() {
+        "An RNode is remembered. Reconnect when it is powered on and in range."
     } else if let Some(reason) = scan_reason {
         ble_disabled_reason(reason)
     } else if scan.is_none() {
@@ -414,6 +424,43 @@ pub fn BleRNodeControls(
                     div {
                         strong { "Approved RNode" }
                         p { class: "technical-value", {approved.id.as_str()} }
+                    }
+                    if !connected && !in_flight {
+                        button {
+                            id: "mobile.bluetooth-retry",
+                            r#type: "button",
+                            class: "secondary-action",
+                            disabled: retry_disabled,
+                            "aria-describedby": if retry_reason.is_some() { "mobile.bluetooth-status mobile.bluetooth-retry-disabled" } else { "mobile.bluetooth-status" },
+                            onclick: move |_| {
+                                if let Some(handler) = retry {
+                                    handler.call(());
+                                }
+                            },
+                            "Reconnect RNode"
+                        }
+                        if let Some(reason) = retry_reason {
+                            p {
+                                id: "mobile.bluetooth-retry-disabled",
+                                class: "field-hint",
+                                {ble_disabled_reason(reason)}
+                            }
+                        }
+                    }
+                    if in_flight {
+                        button {
+                            id: "mobile.bluetooth-cancel",
+                            r#type: "button",
+                            class: "secondary-action",
+                            disabled: cancel_disabled,
+                            "aria-describedby": "mobile.bluetooth-status",
+                            onclick: move |_| {
+                                if let Some(handler) = cancel {
+                                    handler.call(());
+                                }
+                            },
+                            "Cancel connection"
+                        }
                     }
                     button {
                         id: "mobile.bluetooth-forget",
@@ -510,26 +557,6 @@ pub fn BleRNodeControls(
                 if let Some(code) = &state.diagnostic_code {
                     p { class: "technical-value", "Diagnostic: {code}" }
                 }
-                button {
-                    id: "mobile.bluetooth-retry",
-                    r#type: "button",
-                    class: "secondary-action",
-                    disabled: retry_disabled,
-                    "aria-describedby": if retry_reason.is_some() { "mobile.bluetooth-failure mobile.bluetooth-retry-disabled" } else { "mobile.bluetooth-failure" },
-                    onclick: move |_| {
-                        if let Some(handler) = retry {
-                            handler.call(());
-                        }
-                    },
-                    "Retry Bluetooth connection"
-                }
-                if let Some(reason) = retry_reason {
-                    p {
-                        id: "mobile.bluetooth-retry-disabled",
-                        class: "field-hint",
-                        {ble_disabled_reason(reason)}
-                    }
-                }
             }
         }
     }
@@ -556,6 +583,7 @@ pub fn MobileShell(
     #[props(default)] ble_scan: Option<EventHandler<()>>,
     #[props(default)] ble_select: Option<EventHandler<BlePeripheralId>>,
     #[props(default)] ble_retry: Option<EventHandler<()>>,
+    #[props(default)] ble_cancel: Option<EventHandler<()>>,
     #[props(default)] ble_forget: Option<EventHandler<()>>,
     #[props(default)] clipboard_candidate: Option<String>,
     #[props(default)] clipboard_failure: Option<String>,
@@ -1084,6 +1112,7 @@ pub fn MobileShell(
                     scan: ble_scan,
                     select: ble_select,
                     retry: ble_retry,
+                    cancel: ble_cancel,
                     forget: ble_forget,
                 }
                 if target == TargetClass::Android
