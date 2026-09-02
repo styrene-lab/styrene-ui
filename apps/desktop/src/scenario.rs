@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -570,7 +570,9 @@ fn write_private_file(path: &std::path::Path, bytes: &[u8]) -> Result<(), String
     file.sync_all().map_err(|error| error.to_string())
 }
 
-const CATALOG: [ScenarioDefinition; 7] = [
+/// Fixture scenarios ship with the desktop; live scenarios mirror every
+/// pinned runner scenario at the pinned backend revision.
+const FIXTURE_CATALOG: [ScenarioDefinition; 4] = [
     ScenarioDefinition {
         id: "fixture-discovery",
         title: "Discovery Baseline",
@@ -607,34 +609,21 @@ const CATALOG: [ScenarioDefinition; 7] = [
         controls: &["reset", "replay"],
         runner_id: None,
     },
-    ScenarioDefinition {
-        id: PINNED_SCENARIOS[0].id.as_str(),
-        title: PINNED_SCENARIOS[0].title,
-        description: PINNED_SCENARIOS[0].description,
-        profile: ScenarioProfile::LiveRunner,
-        revision: "pinned-harness",
-        controls: PINNED_SCENARIOS[0].controls,
-        runner_id: Some(PINNED_SCENARIOS[0].id),
-    },
-    ScenarioDefinition {
-        id: PINNED_SCENARIOS[1].id.as_str(),
-        title: PINNED_SCENARIOS[1].title,
-        description: PINNED_SCENARIOS[1].description,
-        profile: ScenarioProfile::LiveRunner,
-        revision: "pinned-harness",
-        controls: PINNED_SCENARIOS[1].controls,
-        runner_id: Some(PINNED_SCENARIOS[1].id),
-    },
-    ScenarioDefinition {
-        id: PINNED_SCENARIOS[2].id.as_str(),
-        title: PINNED_SCENARIOS[2].title,
-        description: PINNED_SCENARIOS[2].description,
-        profile: ScenarioProfile::LiveRunner,
-        revision: "pinned-harness",
-        controls: PINNED_SCENARIOS[2].controls,
-        runner_id: Some(PINNED_SCENARIOS[2].id),
-    },
 ];
+
+static CATALOG: LazyLock<Vec<ScenarioDefinition>> = LazyLock::new(|| {
+    let mut catalog = FIXTURE_CATALOG.to_vec();
+    catalog.extend(PINNED_SCENARIOS.iter().map(|scenario| ScenarioDefinition {
+        id: scenario.id.as_str(),
+        title: scenario.title,
+        description: scenario.description,
+        profile: ScenarioProfile::LiveRunner,
+        revision: "pinned-harness",
+        controls: scenario.controls,
+        runner_id: Some(scenario.id),
+    }));
+    catalog
+});
 
 #[cfg(test)]
 mod tests {
