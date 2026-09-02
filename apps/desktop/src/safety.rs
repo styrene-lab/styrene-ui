@@ -196,7 +196,8 @@ impl SafetyContext {
     ) -> Self {
         let runtime = profile.map(|profile| match profile {
             RuntimeProfile::Live { .. } => RuntimeKind::Live,
-            RuntimeProfile::Embedded { .. } => RuntimeKind::Embedded,
+            // Quick and Local profiles are both daemons this desktop owns.
+            RuntimeProfile::Embedded { .. } | RuntimeProfile::Local { .. } => RuntimeKind::Embedded,
             RuntimeProfile::Fixture { .. } => RuntimeKind::Fixture,
         });
         Self {

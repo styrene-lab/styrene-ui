@@ -30,6 +30,8 @@ pub struct RuntimeStore {
     pub event_server_generation: Option<u64>,
     pub capabilities: Option<styrene_ipc::types::ActiveCapabilitiesInfo>,
     pub profile: String,
+    /// Profile truth reported by the backend, when its daemon manages profiles.
+    pub backend_profile: Option<styrene_ipc::types::ProfileInfo>,
     pub connected: bool,
     pub connection_mode: String,
     pub state: DataState,
@@ -329,6 +331,9 @@ impl DomainStores {
                     return false;
                 }
                 self.runtime.event_server_generation = Some(event_generation);
+            }
+            DaemonEvent::Profile(profile) => {
+                self.runtime.backend_profile = Some(*profile);
             }
             DaemonEvent::Disconnected(reason) => {
                 tracing::warn!(target: "dx::session", reason_bytes = reason.len(), "daemon disconnected");
@@ -1372,6 +1377,12 @@ fn activity_entry(event: &DaemonEvent) -> state::ActivityEntry {
         DaemonEvent::Connected => {
             (state::ActivitySeverity::Info, "session", "Backend session connected".into(), None)
         }
+        DaemonEvent::Profile(profile) => (
+            state::ActivitySeverity::Info,
+            "session",
+            format!("Backend profile {:?} reported for {}", profile.storage, profile.display_name),
+            None,
+        ),
         DaemonEvent::EventGeneration(generation) => (
             state::ActivitySeverity::Info,
             "session",
@@ -2920,5 +2931,37 @@ mod tests {
         assert!(!rendered.contains("structured-secret"));
         assert!(!rendered.contains("/private/key"));
         assert!(rendered.contains("[REDACTED]"));
+    }
+}
+
+#[cfg(test)]
+mod backend_profile_tests {
+    use super::*;
+
+    #[test]
+    fn backend_profile_events_record_profile_truth_for_the_current_generation() {
+        let mut stores = DomainStores::default();
+        stores.begin_session("Embedded", ConnectionGeneration(3));
+        let mut profile = styrene_ipc::types::ProfileInfo::default();
+        profile.id = "p1".into();
+        profile.display_name = "Field kit".into();
+        profile.storage = styrene_ipc::types::ProfileStorageKind::Quick;
+        profile.ownership.active = true;
+        assert!(stores.apply_daemon_event(
+            ConnectionGeneration(3),
+            DaemonEvent::Profile(Box::new(profile.clone()))
+        ));
+        assert_eq!(stores.runtime.backend_profile.as_ref(), Some(&profile));
+        // A stale generation never rewrites profile truth.
+        let mut stale = profile.clone();
+        stale.display_name = "Stale".into();
+        assert!(
+            !stores
+                .apply_daemon_event(ConnectionGeneration(2), DaemonEvent::Profile(Box::new(stale)))
+        );
+        assert_eq!(
+            stores.runtime.backend_profile.as_ref().map(|p| p.display_name.as_str()),
+            Some("Field kit")
+        );
     }
 }
