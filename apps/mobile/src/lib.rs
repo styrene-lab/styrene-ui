@@ -802,7 +802,7 @@ mod tests {
         );
     }
 
-    const BACKEND_REVISION: &str = "23beb83dbed95165347debdaabb1a672febfdc92";
+    const BACKEND_REVISION: &str = "2722ed0c8442f982498ac028a0d3b10325930eef";
     const MINIMUM_FIXTURE_REVISION: &str = "899da81302c5f4e92f60a2fdaf396c26e813ba76";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
@@ -842,7 +842,7 @@ mod tests {
     fn workspace_and_corpora_share_the_backend_contract() {
         assert!(WORKSPACE_MANIFEST.contains("resolver = \"3\""));
         assert!(WORKSPACE_MANIFEST.contains("edition = \"2024\""));
-        assert_eq!(WORKSPACE_MANIFEST.matches(BACKEND_REVISION).count(), 6);
+        assert_eq!(WORKSPACE_MANIFEST.matches(BACKEND_REVISION).count(), 9);
         assert_eq!(MOBILE_MANIFEST.matches(BACKEND_REVISION).count(), 4);
         assert!(FIXTURE_PROVENANCE.contains(MINIMUM_FIXTURE_REVISION));
         assert!(HANDOFF_PROVENANCE.contains(BACKEND_REVISION));

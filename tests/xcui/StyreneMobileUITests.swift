@@ -36,22 +36,66 @@ final class StyreneMobileUITests: XCTestCase {
     /// assertion suite: it only verifies that each tab renders.
     func testCaptureTabScreensForReview() throws {
         let app = launchFixture()
+        try captureTabs(app, prefix: "review")
+    }
+
+    /// The same capture at the largest accessibility text size, so reflow is
+    /// reviewed alongside the default size.
+    func testCaptureTabScreensAtLargestTextSize() throws {
+        let app = XCUIApplication(bundleIdentifier: "io.styrene.mesh")
+        app.launchEnvironment["STYRENE_UI_FIXTURE_ID"] = "propagation-sync-complete"
+        app.launchArguments += [
+            "-UIPreferredContentSizeCategoryName",
+            "UICTContentSizeCategoryAccessibilityXXXL",
+        ]
+        app.launch()
+        try captureTabs(app, prefix: "review-xxxl", assertPlacement: false)
+    }
+
+    /// Captures each primary tab and asserts that the first content element
+    /// starts within the top third of the screen at the default text size.
+    /// The fixture banner adds one row, so the live application starts higher.
+    private func captureTabs(
+        _ app: XCUIApplication,
+        prefix: String,
+        assertPlacement: Bool = true
+    ) throws {
         XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+        let screenHeight = XCUIScreen.main.screenshot().image.size.height
         func capture(_ name: String) {
             let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             shot.name = name
             shot.lifetime = .keepAlways
             add(shot)
         }
+        func assertNearTop(_ element: XCUIElement, _ label: String) {
+            guard assertPlacement else { return }
+            XCTAssertTrue(element.waitForExistence(timeout: 5), label)
+            XCTAssertLessThan(
+                element.frame.minY,
+                screenHeight / 3,
+                "\(label) content must begin within the top third of the screen"
+            )
+        }
         XCTAssertTrue(app.staticTexts["Conversations"].waitForExistence(timeout: 10))
-        capture("review-01-messages")
-        for (label, heading) in [("People", "People"), ("Network", "Network"), ("More", "More")] {
+        assertNearTop(app.staticTexts["Conversations"], "Messages")
+        capture("\(prefix)-01-messages")
+        let tabs: [(String, String, String)] = [
+            ("People", "People", "Discovered peers"),
+            ("Network", "Network", "TCP endpoint"),
+            ("More", "More", "Operational summary"),
+        ]
+        for (label, heading, firstContent) in tabs {
             let tab = app.buttons[label]
             XCTAssertTrue(tab.waitForExistence(timeout: 5), label)
             tab.tap()
             XCTAssertTrue(app.staticTexts[heading].waitForExistence(timeout: 5), heading)
+            let content = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label == %@", firstContent))
+                .firstMatch
+            assertNearTop(content, label)
             sleep(1)
-            capture("review-\(label.lowercased())")
+            capture("\(prefix)-\(label.lowercased())")
         }
     }
 
