@@ -33,10 +33,27 @@ const APPROVED_PERIPHERAL_KEY: &str = "io.styrene.mesh.approved-ble-peripheral";
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum IosBleEvent {
     AdapterChanged(BleAdapterState),
-    Candidate { generation: CoreBluetoothGeneration, candidate: BleCandidate },
-    Ready { generation: CoreBluetoothGeneration, write_limit: BleWriteLimit },
-    Failed { generation: CoreBluetoothGeneration, failure: CoreBluetoothFailure },
-    Disconnected { generation: CoreBluetoothGeneration, diagnostic_code: String },
+    Candidate {
+        generation: CoreBluetoothGeneration,
+        candidate: BleCandidate,
+    },
+    /// CoreBluetooth reported the peripheral connected. Service discovery
+    /// and any system pairing request follow without an application deadline.
+    Connected {
+        generation: CoreBluetoothGeneration,
+    },
+    Ready {
+        generation: CoreBluetoothGeneration,
+        write_limit: BleWriteLimit,
+    },
+    Failed {
+        generation: CoreBluetoothGeneration,
+        failure: CoreBluetoothFailure,
+    },
+    Disconnected {
+        generation: CoreBluetoothGeneration,
+        diagnostic_code: String,
+    },
 }
 
 pub struct IosBleEventStream {
@@ -129,6 +146,11 @@ define_class!(
         ) {
             if !self.is_active(peripheral) {
                 return;
+            }
+            let generation =
+                self.ivars().state.lock().ok().and_then(|state| state.active_generation);
+            if let Some(generation) = generation {
+                self.send_event(IosBleEvent::Connected { generation });
             }
             unsafe {
                 peripheral.setDelegate(Some(ProtocolObject::from_ref(self)));

@@ -260,6 +260,7 @@ fn BleShell(target: TargetClass, fixture: MobileFixture, state: BleControlState)
             ble_scan: move |()| {},
             ble_select: move |_id: BlePeripheralId| {},
             ble_retry: move |()| {},
+            ble_cancel: move |()| {},
             ble_forget: move |()| {},
         }
     }
@@ -438,7 +439,11 @@ fn bluetooth_controls_require_explicit_selection_and_keep_forget_reachable() {
     assert!(markup.contains("Approve and connect Field RNode"));
     assert!(markup.contains("approved-rnode-id"));
     assert!(opening_tag_with_id(&markup, "mobile.bluetooth-scan").contains("disabled"));
-    assert!(opening_tag_with_id(&markup, "mobile.bluetooth-retry").contains("disabled"));
+    assert!(
+        !markup.contains("id=\"mobile.bluetooth-retry\""),
+        "no reconnect control while a connection is in flight"
+    );
+    assert!(!opening_tag_with_id(&markup, "mobile.bluetooth-cancel").contains("disabled"));
     assert!(!opening_tag_with_id(&markup, "mobile.bluetooth-forget").contains("disabled"));
 }
 
