@@ -49,7 +49,7 @@ fn main() {
 fn App() -> Element {
     let initial_profile = backend::RuntimeProfile::from_environment().unwrap_or_else(|error| {
         tracing::warn!(target: "dx::session", %error, "invalid environment profile; showing explicit Live configuration");
-        backend::RuntimeProfile::Live { socket_path: styrene_ipc_server::default_socket_path() }
+        backend::RuntimeProfile::Live { socket_path: styrene_ipc_client::default_socket_path() }
     });
     let mut selected_profile = use_signal(|| initial_profile.clone());
     let profile_label = selected_profile.read().label().to_string();
@@ -57,7 +57,7 @@ fn App() -> Element {
     let mut profile_kind = use_signal(|| initial_profile.label().to_ascii_lowercase());
     let mut socket_path = use_signal(|| match &initial_profile {
         backend::RuntimeProfile::Live { socket_path } => socket_path.display().to_string(),
-        _ => styrene_ipc_server::default_socket_path().display().to_string(),
+        _ => styrene_ipc_client::default_socket_path().display().to_string(),
     });
     let mut fixture_id = use_signal(|| match &initial_profile {
         backend::RuntimeProfile::Fixture { fixture } => fixture_name(*fixture).to_string(),
@@ -1495,8 +1495,8 @@ async fn handle_ui_command(
                         .map(|conversation| state::ConversationEntry {
                             peer_hash: conversation.peer_hash,
                             peer_name: conversation.peer_name,
-                            last_message: conversation.last_message,
-                            last_timestamp: conversation.last_timestamp,
+                            last_message: conversation.last_message_content,
+                            last_timestamp: conversation.last_message_timestamp,
                             unread_count: conversation.unread_count,
                             message_count: conversation.message_count,
                             pinned: conversation.pinned,
