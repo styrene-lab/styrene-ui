@@ -32,6 +32,29 @@ final class StyreneMobileUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Conversations"].waitForExistence(timeout: 5))
     }
 
+    /// Retains one screenshot per primary tab for design review. Not an
+    /// assertion suite: it only verifies that each tab renders.
+    func testCaptureTabScreensForReview() throws {
+        let app = launchFixture()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+        func capture(_ name: String) {
+            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            shot.name = name
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+        XCTAssertTrue(app.staticTexts["Conversations"].waitForExistence(timeout: 10))
+        capture("review-01-messages")
+        for (label, heading) in [("People", "People"), ("Network", "Network"), ("More", "More")] {
+            let tab = app.buttons[label]
+            XCTAssertTrue(tab.waitForExistence(timeout: 5), label)
+            tab.tap()
+            XCTAssertTrue(app.staticTexts[heading].waitForExistence(timeout: 5), heading)
+            sleep(1)
+            capture("review-\(label.lowercased())")
+        }
+    }
+
     func testNavigationControlsMeetIOSMinimumSize() throws {
         let app = launchFixture()
         XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
