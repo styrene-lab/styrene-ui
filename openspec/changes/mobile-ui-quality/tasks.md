@@ -42,9 +42,9 @@ owned by the Nucleus host and is not part of this change.
 ## 6. RNode Reconnection
 <!-- specs: mobile-ui-quality -->
 
-- [ ] Add and run a failing test that a stored approved RNode produces no connect at startup
-- [ ] Publish the remembered peripheral with reconnect and cancel actions, and stop the deadline once CoreBluetooth reports the connection
-- [ ] Surface a lost bond as a diagnostic and repeat the physical launch capture with the RNode in range and out of range
+- [x] Add and run a failing test that a stored approved RNode produces no connect at startup
+- [x] Publish the remembered peripheral with reconnect and cancel actions, and stop the deadline once CoreBluetooth reports the connection
+- [ ] Surface a lost bond as a diagnostic and repeat the physical launch capture with the RNode in range and out of range (diagnostic `ios_ble_bond_lost` added; out-of-range launch capture pending, in-range capture needs the RNode)
 
 ## 7. Closure
 <!-- specs: mobile-ui-quality -->

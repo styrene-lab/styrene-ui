@@ -328,12 +328,12 @@ final class StyreneMobileUITests: XCTestCase {
             return
         }
 
-        let retry = app.buttons["Retry Bluetooth connection"]
+        let retry = app.buttons["Reconnect RNode"]
         XCTAssertTrue(retry.waitForExistence(timeout: 5))
         if !retry.isHittable {
             app.swipeUp()
         }
-        let visibleRetry = app.buttons["Retry Bluetooth connection"]
+        let visibleRetry = app.buttons["Reconnect RNode"]
         XCTAssertTrue(visibleRetry.isHittable)
         visibleRetry.tap()
 

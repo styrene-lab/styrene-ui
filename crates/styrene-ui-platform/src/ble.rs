@@ -305,6 +305,7 @@ pub enum BleControlDisabledReason {
     AlreadyConnected,
     NoApprovedPeripheral,
     NoRetryableFailure,
+    NoOperationToCancel,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -392,6 +393,34 @@ impl BleControlState {
             return Some(BleControlDisabledReason::NoRetryableFailure);
         }
         self.scan_disabled_reason()
+    }
+
+    /// Reconnecting to the remembered peripheral is an operator action that
+    /// is available whenever a peripheral is remembered and nothing is in
+    /// flight. Unlike [`Self::retry_disabled_reason`], it does not require a
+    /// prior failure: the application never connects on its own at launch.
+    #[must_use]
+    pub fn reconnect_disabled_reason(&self) -> Option<BleControlDisabledReason> {
+        if self.phase == BleControlPhase::Connected {
+            return Some(BleControlDisabledReason::AlreadyConnected);
+        }
+        if self.phase.is_busy() {
+            return Some(BleControlDisabledReason::OperationInProgress);
+        }
+        if self.approved.is_none() {
+            return Some(BleControlDisabledReason::NoApprovedPeripheral);
+        }
+        self.scan_disabled_reason()
+    }
+
+    /// Cancelling is available only while a connection attempt is in flight.
+    #[must_use]
+    pub fn cancel_disabled_reason(&self) -> Option<BleControlDisabledReason> {
+        if matches!(self.phase, BleControlPhase::Connecting | BleControlPhase::Reconnecting) {
+            None
+        } else {
+            Some(BleControlDisabledReason::NoOperationToCancel)
+        }
     }
 
     #[must_use]
@@ -534,6 +563,59 @@ mod tests {
         assert_eq!(NORDIC_UART_SERVICE_UUID.len(), 36);
         assert_eq!(NORDIC_UART_WRITE_UUID.len(), 36);
         assert_eq!(NORDIC_UART_NOTIFY_UUID.len(), 36);
+    }
+
+    #[test]
+    fn remembered_peripheral_offers_reconnect_without_a_failure_and_cancel_only_in_flight() {
+        let mut state = BleControlState {
+            permission: AuthorizationState::Granted,
+            adapter: BleAdapterState::Ready,
+            phase: BleControlPhase::Idle,
+            candidates: Vec::new(),
+            approved: Some(BleApprovedPeripheral {
+                id: BlePeripheralId::new("remembered-rnode").unwrap(),
+            }),
+            failure: None,
+            diagnostic_code: None,
+        };
+        assert_eq!(
+            state.reconnect_disabled_reason(),
+            None,
+            "launch state is idle and reconnectable"
+        );
+        assert_eq!(
+            state.retry_disabled_reason(),
+            Some(BleControlDisabledReason::NoRetryableFailure),
+            "retry still needs a failure"
+        );
+        assert_eq!(
+            state.cancel_disabled_reason(),
+            Some(BleControlDisabledReason::NoOperationToCancel)
+        );
+
+        state.phase = BleControlPhase::Reconnecting;
+        assert_eq!(state.cancel_disabled_reason(), None);
+        assert_eq!(
+            state.reconnect_disabled_reason(),
+            Some(BleControlDisabledReason::OperationInProgress)
+        );
+
+        state.phase = BleControlPhase::Connected;
+        assert_eq!(
+            state.reconnect_disabled_reason(),
+            Some(BleControlDisabledReason::AlreadyConnected)
+        );
+        assert_eq!(
+            state.cancel_disabled_reason(),
+            Some(BleControlDisabledReason::NoOperationToCancel)
+        );
+
+        state.phase = BleControlPhase::Idle;
+        state.approved = None;
+        assert_eq!(
+            state.reconnect_disabled_reason(),
+            Some(BleControlDisabledReason::NoApprovedPeripheral)
+        );
     }
 
     #[test]

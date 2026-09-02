@@ -39,6 +39,7 @@ enum IosBleCommand {
     Scan,
     Select(BlePeripheralId),
     Retry,
+    Cancel,
     Forget,
 }
 
@@ -65,6 +66,10 @@ impl IosBleHost {
         let _ = self.commands.try_send(IosBleCommand::Forget);
     }
 
+    pub fn cancel(&self) {
+        let _ = self.commands.try_send(IosBleCommand::Cancel);
+    }
+
     pub async fn next_update(&self) -> Option<BleControlState> {
         self.update_receiver.recv().await.ok()
     }
@@ -89,17 +94,13 @@ impl IosBleHost {
         let mut adapter = None::<IosBleAdapter>;
         let mut events = None::<IosBleEventStream>;
         let mut pending_scan = false;
-        let mut pending_connect = state.approved.as_ref().map(|approved| approved.id.clone());
+        // A remembered RNode is published for the operator to reconnect; the
+        // application never opens a Bluetooth connection on its own at launch,
+        // so no system pairing request can appear unasked.
+        let mut pending_connect = None::<BlePeripheralId>;
         let mut deadline = None;
         if state.permission == AuthorizationState::Granted {
             install_adapter(&mut adapter, &mut events);
-            if pending_connect.is_some() {
-                state.phase = BleControlPhase::Reconnecting;
-                deadline = Some((
-                    tokio::time::Instant::now() + CONNECTION_DEADLINE,
-                    PendingOperation::Connect,
-                ));
-            }
         }
         self.publish(state.clone());
 
@@ -185,6 +186,24 @@ impl IosBleHost {
                             deadline = Some((tokio::time::Instant::now() + CONNECTION_DEADLINE, PendingOperation::Connect));
                             self.publish(state.clone());
                         }
+                        IosBleCommand::Cancel => {
+                            if !matches!(
+                                state.phase,
+                                BleControlPhase::Connecting | BleControlPhase::Reconnecting
+                            ) {
+                                continue;
+                            }
+                            if let Some(mut current) = adapter.take() {
+                                current.close();
+                            }
+                            events = None;
+                            pending_connect = None;
+                            deadline = None;
+                            state.phase = BleControlPhase::Idle;
+                            state.failure = None;
+                            state.diagnostic_code = None;
+                            self.publish(state.clone());
+                        }
                         IosBleCommand::Forget => {
                             if let Some(mut current) = adapter.take() {
                                 current.close();
@@ -247,6 +266,13 @@ impl IosBleHost {
                             }
                             self.publish(state.clone());
                         }
+                        IosBleEvent::Connected { .. } => {
+                            // The link exists; service discovery and any system
+                            // pairing request now run without an application
+                            // deadline so the request is never dismissed by us.
+                            deadline = None;
+                            self.publish(state.clone());
+                        }
                         IosBleEvent::Ready { write_limit, .. } => {
                             deadline = None;
                             state.phase = BleControlPhase::Connecting;
@@ -284,7 +310,7 @@ impl IosBleHost {
                                 state.phase = BleControlPhase::Idle;
                                 state.failure = Some(BleControlFailure::ConnectionInterrupted);
                                 if state.diagnostic_code.is_none() {
-                                    state.diagnostic_code = Some(diagnostic_code);
+                                    state.diagnostic_code = Some(bond_diagnostic(diagnostic_code));
                                 }
                             }
                             self.publish(state.clone());
@@ -361,6 +387,17 @@ async fn run_connected(
                 }
             }
         }
+    }
+}
+
+/// CoreBluetooth reports a peer that dropped its pairing record as
+/// `CBErrorDomain` code 14 (`CBErrorPeerRemovedPairingInformation`). Name that
+/// case so a lost bond is visible instead of looking like an interruption.
+fn bond_diagnostic(diagnostic_code: String) -> String {
+    if diagnostic_code.ends_with("CBErrorDomain_14") {
+        "ios_ble_bond_lost".into()
+    } else {
+        diagnostic_code
     }
 }
 
