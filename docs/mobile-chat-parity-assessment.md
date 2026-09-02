@@ -2,9 +2,9 @@
 
 Assessment date: 2026-08-30
 
-UI assessment base revision: `6c6ace7652644c6bf6dc27922029a4cf311eb8bd`
+UI assessment base revision: `a79f38546884cee08f7067b882ff864d8045da3a`
 
-Backend integration revision: `899da81302c5f4e92f60a2fdaf396c26e813ba76`
+Backend integration revision: `d8c0569fc30dd49280a3246703a31c84bb646bf3`
 
 ## Scope
 
@@ -37,7 +37,7 @@ The current evidence inventory is:
 | Mobile minimum v1 | 8 fixtures | Shared reducer and rendered-state contract |
 
 The UI copy of the application corpus is byte-identical to backend revision
-`899da81302c5f4e92f60a2fdaf396c26e813ba76`. Copying the corpus does not add
+`d8c0569fc30dd49280a3246703a31c84bb646bf3`. Copying the corpus does not add
 application execution evidence or complete a parity row.
 
 ## Reference Applications
@@ -61,7 +61,7 @@ The backend P0 contract is 34 of 35 tasks complete. The remaining task requires
 physical iOS and Android custody handoffs. The broader mobile minimum remains 48
 of 73 tasks complete and retains separate packaged, RF, and application gates.
 
-Backend revision `899da81302c5f4e92f60a2fdaf396c26e813ba76` provides these UI-ready contracts:
+Backend revision `d8c0569fc30dd49280a3246703a31c84bb646bf3` provides these UI-ready contracts:
 
 - Fail-closed Keychain and Android Keystore selection with secret-free custody status.
 - A distinct offline-ready runtime state and generation-scoped session truth.

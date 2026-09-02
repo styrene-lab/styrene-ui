@@ -3,9 +3,9 @@
 `corpus.json` is copied byte-for-byte from `styrene-rs` at
 `tests/fixtures/mobile-destination-convergence-v1/corpus.json`.
 
-Source fixture revision: `21dec9ffd4a97e9647c951b52e3b4dfdd84e91f2`
+Source fixture revision: `726ef4f4c65725bcf24449e4b18387e6d322f1fa`
 
-Current mobile backend dependency revision: `23beb83dbed95165347debdaabb1a672febfdc92`
+Current mobile backend dependency revision: `6e43f9f8362d04a0c9b81c2e82a60457cfa30acd`
 
 File SHA-256: `533845aebb0e7b04b39d5957fa94856e113388b66d73903d919cc5a0ef37165f`
 

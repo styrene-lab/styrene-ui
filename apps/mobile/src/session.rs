@@ -1855,7 +1855,7 @@ mod tests {
         if value["schema_version"] != 1
             || value["corpus"] != "styrene-mobile-product-handoff-v1"
             || value["authority"]["repository"] != "https://github.com/styrene-lab/styrene-rs.git"
-            || value["authority"]["source_revision"] != "0d9dc04cab795f23f791278b019fe4c28430ab6f"
+            || value["authority"]["source_revision"] != "ae9b0f368aba4f8161c545ccf10069d630e5c69e"
         {
             return Err("invalid immutable backend authority".into());
         }

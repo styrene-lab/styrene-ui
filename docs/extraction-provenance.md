@@ -6,10 +6,10 @@ The repository began as a history-preserving extraction of
 - Source branch: `feat/mobile-platform-hosts`
 - Source revision at extraction: `4bcbc68f4424cc69a775a6508c5c069386ff776b`
 - Extracted path: `crates/apps/styrene-dx`
-- Initial extracted revision: `c640db4`
+- Initial extracted revision: `a769d2c`
 - Destination: `https://github.com/styrene-lab/styrene-ui.git`
-- Desktop synchronization revision: `899da81302c5f4e92f60a2fdaf396c26e813ba76`
-- Tested backend contract revision: `899da81302c5f4e92f60a2fdaf396c26e813ba76`
+- Desktop synchronization revision: `d8c0569fc30dd49280a3246703a31c84bb646bf3`
+- Tested backend contract revision: `d8c0569fc30dd49280a3246703a31c84bb646bf3`
 
 The extraction ran from an isolated clone with:
 

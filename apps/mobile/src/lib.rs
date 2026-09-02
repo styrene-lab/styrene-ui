@@ -802,8 +802,8 @@ mod tests {
         );
     }
 
-    const BACKEND_REVISION: &str = "2722ed0c8442f982498ac028a0d3b10325930eef";
-    const MINIMUM_FIXTURE_REVISION: &str = "899da81302c5f4e92f60a2fdaf396c26e813ba76";
+    const BACKEND_REVISION: &str = "354a91cd494a7bac5703f7d1b128a2af95d08d8c";
+    const MINIMUM_FIXTURE_REVISION: &str = "d8c0569fc30dd49280a3246703a31c84bb646bf3";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
     const FIXTURE_PROVENANCE: &str =
@@ -846,7 +846,7 @@ mod tests {
         assert_eq!(MOBILE_MANIFEST.matches(BACKEND_REVISION).count(), 4);
         assert!(FIXTURE_PROVENANCE.contains(MINIMUM_FIXTURE_REVISION));
         assert!(HANDOFF_PROVENANCE.contains(BACKEND_REVISION));
-        assert!(INTEGRATION_PROVENANCE.contains("0bcf5843208a9a2578836e26b4ac4e23a0f7b4e7"));
+        assert!(INTEGRATION_PROVENANCE.contains("bf5572b79f4bbc3aee5f5a0e1b02758346234c27"));
         let integration: serde_json::Value =
             serde_json::from_str(INTEGRATION_CORPUS).expect("integration corpus must deserialize");
         let identity_case = integration["cases"]
