@@ -28,6 +28,8 @@ codesign --force --sign - "$APP"
 
 xcrun simctl boot "$SIMULATOR" 2>/dev/null || true
 xcrun simctl bootstatus "$SIMULATOR" -b
+# Set STYRENE_XCUI_APPEARANCE=dark to review captures in the dark appearance.
+xcrun simctl ui "$SIMULATOR" appearance "${STYRENE_XCUI_APPEARANCE:-light}"
 xcrun simctl install "$SIMULATOR" "$APP"
 xcodebuild test \
   -project "$ROOT/tests/xcui/StyreneMobileUITests.xcodeproj" \
