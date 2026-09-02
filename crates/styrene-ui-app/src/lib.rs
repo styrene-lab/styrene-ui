@@ -94,12 +94,17 @@ impl MobileDestination {
         }
     }
 
-    fn mark(self) -> &'static str {
+    /// Outline icon path (24 by 24 viewBox) for the primary navigation.
+    fn icon_path(self) -> &'static str {
         match self {
-            Self::Messages => "M",
-            Self::People => "P",
-            Self::Network => "N",
-            Self::More => "...",
+            Self::Messages => "M4 5h16v11H8l-4 4V5z",
+            Self::People => {
+                "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 19c0-3 3-5 6-5s6 2 6 5H2zm12 0c0-2-1-3.5-2.5-4.5C12.5 14 14 14 16 14c3 0 6 2 6 5h-8z"
+            }
+            Self::Network => {
+                "M12 3v6m0 6v6M5 12H3m18 0h-2M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM5 5l2.5 2.5M19 5l-2.5 2.5M5 19l2.5-2.5M19 19l-2.5-2.5"
+            }
+            Self::More => "M6 12h.01M12 12h.01M18 12h.01",
         }
     }
 }
@@ -822,7 +827,6 @@ pub fn MobileShell(
                     "Fixture data. Network actions are disabled."
                 }
             }
-            OperationalSummaryPanel { summary: operational_summary }
             section {
                 id: "mobile.messages",
                 class: "app-surface messages-section",
@@ -835,10 +839,7 @@ pub fn MobileShell(
                         class: "conversation-pane",
                         div {
                             class: "section-heading",
-                            div {
-                                p { class: "section-kicker", "Inbox" }
-                                h2 { id: "mobile.messages-heading", "Conversations" }
-                            }
+                            h2 { id: "mobile.messages-heading", "Conversations" }
                             span {
                                 class: "count-badge",
                                 {conversation_count.clone()}
@@ -966,10 +967,7 @@ pub fn MobileShell(
                 hidden: active_destination != MobileDestination::People,
                 div {
                     class: "section-heading",
-                    div {
-                        p { class: "section-kicker", "Directory" }
-                        h2 { id: "mobile.people-heading", "People" }
-                    }
+                    h2 { id: "mobile.people-heading", "Discovered peers" }
                     span { class: "count-badge", {peer_count.clone()} }
                 }
                 if fixture.peers.is_empty() {
@@ -1092,13 +1090,7 @@ pub fn MobileShell(
                 class: "app-surface network-surface",
                 "aria-labelledby": "mobile.network-heading",
                 hidden: active_destination != MobileDestination::Network,
-                div {
-                    class: "section-heading",
-                    div {
-                        p { class: "section-kicker", "Connectivity" }
-                        h2 { id: "mobile.network-heading", "Network" }
-                    }
-                }
+                h2 { id: "mobile.network-heading", class: "visually-hidden", "Network" }
                 EndpointEditor {
                     key: "{fixture.generation}",
                     endpoint: fixture.session.endpoint.clone().unwrap_or_default(),
@@ -1244,13 +1236,8 @@ pub fn MobileShell(
                 class: "app-surface more-surface",
                 "aria-labelledby": "mobile.more-heading",
                 hidden: active_destination != MobileDestination::More,
-                div {
-                    class: "section-heading",
-                    div {
-                        p { class: "section-kicker", "This device" }
-                        h2 { id: "mobile.more-heading", "More" }
-                    }
-                }
+                h2 { id: "mobile.more-heading", class: "visually-hidden", "More" }
+                OperationalSummaryPanel { summary: operational_summary }
                 article {
                     class: "surface-card settings-card identity-card",
                     h3 { "Node identity" }
@@ -1518,7 +1505,19 @@ pub fn MobileShell(
                             }
                             destination.set(item);
                         },
-                        span { class: "destination-mark", "aria-hidden": "true", {item.mark()} }
+                        span {
+                            class: "destination-mark",
+                            "aria-hidden": "true",
+                            svg {
+                                view_box: "0 0 24 24",
+                                fill: "none",
+                                stroke: "currentColor",
+                                stroke_width: "1.75",
+                                stroke_linecap: "round",
+                                stroke_linejoin: "round",
+                                path { d: item.icon_path() }
+                            }
+                        }
                         span { {item.label()} }
                     }
                 }
