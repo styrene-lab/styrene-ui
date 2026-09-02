@@ -993,6 +993,7 @@ fn App() -> Element {
                     state::AppRoute::System => rsx! {
                         components::SystemPage {
                             profile: system_profile.clone(),
+                            backend_profile: view.runtime.backend_profile.clone(),
                             connected: view.runtime.connected,
                             connection_mode: view.runtime.connection_mode.clone(),
                             client_generation: view.runtime.generation.0,
