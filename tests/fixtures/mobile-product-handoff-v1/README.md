@@ -3,13 +3,13 @@
 `message.json` is copied byte-for-byte from `styrene-rs` at
 `tests/fixtures/mobile-product-handoff-v1/message.json`.
 
-Source fixture revision: `f0359c92ba9f6d63ce248bc97617fc3115a0f3c3`
+Source fixture revision: `73daf4414deb826d388a4ca2cc1bb53a4bfd32d5`
 
-Source contract revision: `0d9dc04cab795f23f791278b019fe4c28430ab6f`
+Source contract revision: `ae9b0f368aba4f8161c545ccf10069d630e5c69e`
 
-Current mobile backend dependency revision: `2722ed0c8442f982498ac028a0d3b10325930eef`
+Current mobile backend dependency revision: `354a91cd494a7bac5703f7d1b128a2af95d08d8c`
 
-File SHA-256: `96b6ea4456b88826099bf7b3fff55724f6dd6fe366db2bc751df4e5c4005c61f`
+File SHA-256: `00918cb8d369d8bc1622942bfebb92994b9ae56f5fe893047e3f111b198df014`
 
 The backend owns this fixture and its authoritative fields. Update this copy only
 from an immutable backend revision, then run the strict handoff tests in both

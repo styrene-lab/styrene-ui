@@ -2,7 +2,7 @@
 
 ## Reassessment
 
-UI PR #12 merged the initial implementation at `6a1143665ff2afbc3da076d6b1c3eb326f3fe527`.
+UI PR #12 merged the initial implementation at `c537f4e5f5f7b91f128743a890169296210e16eb`.
 Hosted checks passed, and the PR retained physical observations for setup, one
 default cold launch, and one same-boot once-per-boot relaunch. Those observations
 do not cover the complete policy matrix.

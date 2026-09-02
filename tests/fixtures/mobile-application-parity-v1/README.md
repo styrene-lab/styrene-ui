@@ -3,7 +3,7 @@
 `corpus.json` is copied from `styrene-rs` at
 `tests/fixtures/mobile-application-parity-v1/corpus.json`.
 
-Source baseline revision: `a6e4380117b9bdf509a944efd7fadb8ac6ccd225`
+Source baseline revision: `60a6ee3f02bb6e77e002c5e500a1e109243f8724`
 
 File SHA-256: `2e6ea065cc414cb4d5e35669eb690736f12561dd837dd139c56ee920938b81cd`
 
