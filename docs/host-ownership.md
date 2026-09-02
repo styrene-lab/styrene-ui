@@ -10,7 +10,7 @@ from `main` on 2026-09-02. Finished work lands on `main` through pull requests.
 | Nucleus (Linux) | `host/linux-android` | Linux desktop and Android work |
 
 The full assignment rule and per-host task lists are in
-`styrene-rs/docs/host-ownership.md`; this repository follows the same rule.
+`styrene-rs/docs/host-ownership.md`. This repository follows the same rule.
 
 ## macOS workstation
 
