@@ -17,6 +17,8 @@ use styrene_ui_platform::{
     not(feature = "ui-test")
 ))]
 use styrene_ui_platform::{AppLockPolicy, BleAdapterState, BleControlFailure, PermissionKind};
+#[cfg(feature = "ui-test")]
+use styrene_ui_platform::{OpaqueDocument, TextAcquisitionFailure};
 use styrene_ui_state::{
     IdentityRecoveryFailure, IdentityRecoveryPhase, IdentityRecoveryState, TargetClass,
 };
