@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
-use styrene_ipc::types::{ActiveCapabilitiesInfo, IdentityInfo, InterfaceDetail};
+use styrene_ipc::types::{
+    ActiveCapabilitiesInfo, IdentityInfo, InterfaceDetail, ProfileInfo, ProfileStorageKind,
+};
 
 use crate::backend::{FixtureId, RuntimeProfile};
 use crate::daemon_bridge::BrokerDiagnostics;
@@ -8,6 +10,7 @@ use crate::state::MeshStatusInfo;
 #[component]
 pub fn SystemPage(
     profile: Option<RuntimeProfile>,
+    backend_profile: Option<ProfileInfo>,
     connected: bool,
     connection_mode: String,
     client_generation: u64,
@@ -20,9 +23,9 @@ pub fn SystemPage(
     propagation_queue: Option<(u64, u64)>,
     diagnostics: BrokerDiagnostics,
 ) -> Element {
-    let profile_rows = profile_rows(profile.as_ref());
+    let profile_rows = profile_rows(profile.as_ref(), backend_profile.as_ref());
     let identity_rows = identity_rows(identity.as_ref());
-    let storage_rows = storage_rows(profile.as_ref(), propagation_queue);
+    let storage_rows = storage_rows(profile.as_ref(), backend_profile.as_ref(), propagation_queue);
     let config_update = capabilities
         .as_ref()
         .map(|active| authorized(active, "rpc.config_update"))
@@ -125,7 +128,67 @@ pub fn SystemPage(
     }
 }
 
-fn profile_rows(profile: Option<&RuntimeProfile>) -> Vec<(String, String)> {
+/// Rows from backend profile truth. Nothing here is derived from the
+/// desktop's own profile selection.
+fn backend_profile_rows(profile: &ProfileInfo) -> Vec<(String, String)> {
+    let storage = match profile.storage {
+        ProfileStorageKind::Quick => "Quick (temporary managed root)",
+        ProfileStorageKind::Local => "Local (persistent managed root)",
+        ProfileStorageKind::Portable => "Portable (encrypted removable root)",
+        ProfileStorageKind::Connected => "Connected (external daemon)",
+        _ => "Unknown",
+    };
+    let ownership = if profile.ownership.active {
+        "Active: this daemon runs from it"
+    } else if profile.ownership.held_by_daemon {
+        "Held by this daemon"
+    } else if profile.ownership.leased_elsewhere {
+        "Leased by another owner"
+    } else {
+        "Unowned"
+    };
+    let persistence = match (profile.persistence.durable, profile.persistence.removed_on_release) {
+        (true, _) => "Durable".to_string(),
+        (false, true) => "Temporary; removed when its owner releases it".to_string(),
+        (false, false) => "Not durable".to_string(),
+    };
+    let custody = format!(
+        "{} custody, fingerprint {}…, {} recovery slot(s){}",
+        profile.custody.backend,
+        &profile.custody.fingerprint[..8.min(profile.custody.fingerprint.len())],
+        profile.custody.recovery_slots,
+        if profile.custody.identity_available { "" } else { ", identity unavailable" }
+    );
+    let mut rows = vec![
+        ("Profile".into(), format!("{} ({})", profile.display_name, profile.id)),
+        ("Storage".into(), storage.into()),
+        ("Generation".into(), profile.generation.to_string()),
+        ("Ownership".into(), ownership.into()),
+        ("Persistence".into(), persistence),
+        ("Snapshots".into(), profile.persistence.snapshot_count.to_string()),
+        ("Identity custody".into(), custody),
+        (
+            "Network policy".into(),
+            if profile.network_policy.conservative_defaults {
+                "Conservative defaults (loopback unless configured)".into()
+            } else {
+                "Daemon defaults".into()
+            },
+        ),
+    ];
+    if let Some(selector) = &profile.volume_selector {
+        rows.push(("Volume selector".into(), selector.clone()));
+    }
+    rows
+}
+
+fn profile_rows(
+    profile: Option<&RuntimeProfile>,
+    backend: Option<&ProfileInfo>,
+) -> Vec<(String, String)> {
+    if let Some(backend) = backend {
+        return backend_profile_rows(backend);
+    }
     match profile {
         Some(RuntimeProfile::Live { socket_path }) => vec![
             ("Profile".into(), "Live".into()),
@@ -146,6 +209,12 @@ fn profile_rows(profile: Option<&RuntimeProfile>) -> Vec<(String, String)> {
             ("Lifecycle".into(), "Owned by this desktop session".into()),
             ("Persistence".into(), "Temporary database and identity".into()),
             ("Cleanup".into(), "Owned root removed on shutdown".into()),
+        ],
+        Some(RuntimeProfile::Local { root }) => vec![
+            ("Profile".into(), "Local".into()),
+            ("Root".into(), root.display().to_string()),
+            ("Lifecycle".into(), "Owned by this desktop session".into()),
+            ("Persistence".into(), "Persistent managed profile".into()),
         ],
         Some(RuntimeProfile::Fixture { fixture }) => vec![
             ("Profile".into(), "Fixture".into()),
@@ -175,13 +244,19 @@ fn identity_rows(identity: Option<&IdentityInfo>) -> Vec<(String, String)> {
 
 fn storage_rows(
     profile: Option<&RuntimeProfile>,
+    backend: Option<&ProfileInfo>,
     propagation_queue: Option<(u64, u64)>,
 ) -> Vec<(String, String)> {
-    let persistence = match profile {
-        Some(RuntimeProfile::Embedded { .. }) => "Temporary; removed on owned shutdown",
-        Some(RuntimeProfile::Fixture { .. }) => "No persistent storage",
-        Some(RuntimeProfile::Live { .. }) => "General location and retention not reported by IPC",
-        None => "Unavailable",
+    let persistence = match (backend, profile) {
+        (Some(backend), _) if backend.persistence.durable => "Durable managed profile root",
+        (Some(_), _) => "Temporary managed profile root; removed on release",
+        (None, Some(RuntimeProfile::Embedded { .. })) => "Temporary; removed on owned shutdown",
+        (None, Some(RuntimeProfile::Local { .. })) => "Persistent managed profile root",
+        (None, Some(RuntimeProfile::Fixture { .. })) => "No persistent storage",
+        (None, Some(RuntimeProfile::Live { .. })) => {
+            "General location and retention not reported by IPC"
+        }
+        (None, None) => "Unavailable",
     };
     let (count, bytes) = propagation_queue
         .map(|(count, bytes)| (count.to_string(), bytes.to_string()))
@@ -269,16 +344,18 @@ mod tests {
 
     #[test]
     fn profiles_explain_lifecycle_network_and_storage_without_guessing_live_paths() {
-        let live = profile_rows(Some(&RuntimeProfile::Live {
-            socket_path: PathBuf::from("/run/styrene.sock"),
-        }));
+        let live = profile_rows(
+            Some(&RuntimeProfile::Live { socket_path: PathBuf::from("/run/styrene.sock") }),
+            None,
+        );
         assert!(live.iter().any(|(label, value)| {
             label == "Socket" && value == "Configured local Unix socket"
         }));
         assert!(!format!("{live:?}").contains("/run/styrene.sock"));
         assert!(live.iter().any(|(_, value)| value == "Not reported by IPC"));
 
-        let fixture = profile_rows(Some(&RuntimeProfile::Fixture { fixture: FixtureId::Healthy }));
+        let fixture =
+            profile_rows(Some(&RuntimeProfile::Fixture { fixture: FixtureId::Healthy }), None);
         assert!(fixture.iter().any(|(_, value)| value == "External networking disabled"));
         assert!(fixture.iter().any(|(_, value)| value == "No daemon process"));
     }
@@ -309,5 +386,36 @@ mod tests {
     fn diagnostics_report_endpoint_presence_without_retaining_endpoint_values() {
         assert_eq!(endpoint_presence(Some("tcp://user:secret@example.test:1234")), "reported");
         assert_eq!(endpoint_presence(None), "Not reported");
+    }
+}
+
+#[cfg(test)]
+mod backend_profile_row_tests {
+    use super::*;
+
+    #[test]
+    fn backend_profile_truth_replaces_local_mode_rows() {
+        let mut profile = ProfileInfo::default();
+        profile.id = "p1".into();
+        profile.display_name = "Field kit".into();
+        profile.storage = ProfileStorageKind::Quick;
+        profile.generation = 1;
+        profile.ownership.active = true;
+        profile.persistence.removed_on_release = true;
+        profile.custody.backend = "file".into();
+        profile.custody.fingerprint = "0123456789abcdef0123456789abcdef".into();
+        profile.network_policy.conservative_defaults = true;
+        let rows =
+            profile_rows(Some(&RuntimeProfile::Live { socket_path: "/x".into() }), Some(&profile));
+        assert_eq!(rows[0].1, "Field kit (p1)");
+        assert!(rows.iter().any(|(k, v)| k == "Storage" && v.starts_with("Quick")));
+        assert!(rows.iter().any(|(k, v)| k == "Ownership" && v.starts_with("Active")));
+        assert!(
+            rows.iter().any(|(k, v)| k == "Identity custody"
+                && v.starts_with("file custody, fingerprint 01234567"))
+        );
+        assert!(!rows.iter().any(|(_, v)| v.contains("Configured local Unix socket")));
+        let storage = storage_rows(None, Some(&profile), None);
+        assert!(storage[0].1.starts_with("Temporary managed profile root"));
     }
 }

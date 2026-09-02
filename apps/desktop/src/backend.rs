@@ -42,9 +42,21 @@ impl FixtureId {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeProfile {
-    Live { socket_path: PathBuf },
-    Embedded { ephemeral: bool },
-    Fixture { fixture: FixtureId },
+    /// Connect to a daemon endpoint owned elsewhere.
+    Live {
+        socket_path: PathBuf,
+    },
+    /// Own a temporary managed Quick profile for this session.
+    Embedded {
+        ephemeral: bool,
+    },
+    /// Own a persistent managed Local profile at `root`.
+    Local {
+        root: PathBuf,
+    },
+    Fixture {
+        fixture: FixtureId,
+    },
 }
 
 impl RuntimeProfile {
@@ -53,6 +65,7 @@ impl RuntimeProfile {
             std::env::var("STYRENE_DX_PROFILE").ok().as_deref(),
             std::env::var_os("STYRENE_DX_SOCKET").map(PathBuf::from),
             std::env::var("STYRENE_DX_FIXTURE").ok().as_deref(),
+            std::env::var_os("STYRENE_DX_PROFILE_ROOT").map(PathBuf::from),
         )
     }
 
@@ -60,17 +73,25 @@ impl RuntimeProfile {
         profile: Option<&str>,
         socket_path: Option<PathBuf>,
         fixture: Option<&str>,
+        profile_root: Option<PathBuf>,
     ) -> Result<Self, String> {
         match profile.unwrap_or("live") {
             "live" => Ok(Self::Live {
                 socket_path: socket_path.unwrap_or_else(styrene_ipc_client::default_socket_path),
             }),
             "embedded" => Ok(Self::Embedded { ephemeral: true }),
+            "local" => {
+                let root =
+                    profile_root.filter(|root| !root.as_os_str().is_empty()).ok_or_else(|| {
+                        "STYRENE_DX_PROFILE=local requires STYRENE_DX_PROFILE_ROOT".to_string()
+                    })?;
+                Ok(Self::Local { root })
+            }
             "fixture" => {
                 Ok(Self::Fixture { fixture: FixtureId::parse(fixture.unwrap_or("healthy"))? })
             }
             value => Err(format!(
-                "unknown STYRENE_DX_PROFILE '{value}'; expected live, embedded, or fixture"
+                "unknown STYRENE_DX_PROFILE '{value}'; expected live, embedded, local, or fixture"
             )),
         }
     }
@@ -79,6 +100,7 @@ impl RuntimeProfile {
         match self {
             Self::Live { .. } => "Live",
             Self::Embedded { .. } => "Embedded",
+            Self::Local { .. } => "Local",
             Self::Fixture { .. } => "Fixture",
         }
     }
@@ -335,6 +357,18 @@ pub async fn open_session(
             Ok(OpenedSession {
                 backend: Arc::new(IpcBackend {
                     profile: RuntimeProfile::Embedded { ephemeral },
+                    broker,
+                    embedded: Mutex::new(Some(handle)),
+                }),
+                events,
+                generation,
+            })
+        }
+        RuntimeProfile::Local { root } => {
+            let (broker, events, handle) = daemon_bridge::connect_local(&root, generation).await?;
+            Ok(OpenedSession {
+                backend: Arc::new(IpcBackend {
+                    profile: RuntimeProfile::Local { root },
                     broker,
                     embedded: Mutex::new(Some(handle)),
                 }),
@@ -1020,19 +1054,29 @@ mod tests {
     #[test]
     fn default_profile_is_live() {
         assert!(matches!(
-            RuntimeProfile::from_values(None, Some(PathBuf::from("/tmp/live.sock")), None),
+            RuntimeProfile::from_values(None, Some(PathBuf::from("/tmp/live.sock")), None, None),
             Ok(RuntimeProfile::Live { .. })
         ));
     }
 
     #[test]
+    fn local_profiles_require_an_explicit_root() {
+        assert!(RuntimeProfile::from_values(Some("local"), None, None, None).is_err());
+        assert!(matches!(
+            RuntimeProfile::from_values(Some("local"), None, None, Some(PathBuf::from("/tmp/kit"))),
+            Ok(RuntimeProfile::Local { root }) if root == std::path::Path::new("/tmp/kit")
+        ));
+        assert_eq!(RuntimeProfile::Local { root: PathBuf::from("/tmp/kit") }.label(), "Local");
+    }
+
+    #[test]
     fn profiles_require_explicit_valid_names() {
         assert!(matches!(
-            RuntimeProfile::from_values(Some("embedded"), None, None),
+            RuntimeProfile::from_values(Some("embedded"), None, None, None),
             Ok(RuntimeProfile::Embedded { .. })
         ));
-        assert!(RuntimeProfile::from_values(Some("automatic"), None, None).is_err());
-        assert!(RuntimeProfile::from_values(Some("fixture"), None, Some("missing")).is_err());
+        assert!(RuntimeProfile::from_values(Some("automatic"), None, None, None).is_err());
+        assert!(RuntimeProfile::from_values(Some("fixture"), None, Some("missing"), None).is_err());
     }
 
     #[tokio::test]
