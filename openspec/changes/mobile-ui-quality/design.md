@@ -51,12 +51,12 @@ least 44 by 44 points, and the existing minimum-size UI test keeps guarding it.
 
 ### Explicit RNode reconnection
 
-`IosBleHost::run` no longer connects at start. It publishes the approved
-peripheral as a `Remembered` phase with a reconnect action. A connect in flight
-keeps its deadline only until CoreBluetooth reports the connection; after
-`didConnect`, service discovery and characteristic setup run without an
-application-side cancellation, so a system pairing request is never dismissed
-by the application. Cancel is always visible while connecting. A bond that is
+`IosBleHost::run` no longer connects at start. It publishes the remembered
+peripheral with a reconnect action. A connect in flight keeps its deadline
+only until CoreBluetooth reports the connection. After that report, service
+discovery and characteristic setup run without an application-side
+cancellation, so a system pairing request is never dismissed by the
+application. Cancel is always visible while connecting. A bond that is
 not retained between launches is surfaced as a diagnostic rather than hidden
 behind a retry.
 
