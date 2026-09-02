@@ -51,12 +51,12 @@ least 44 by 44 points, and the existing minimum-size UI test keeps guarding it.
 
 ### Explicit RNode reconnection
 
-`IosBleHost::run` no longer connects at start. It publishes the approved
-peripheral as a `Remembered` phase with a reconnect action. A connect in flight
-keeps its deadline only until CoreBluetooth reports the connection; after
-`didConnect`, service discovery and characteristic setup run without an
-application-side cancellation, so a system pairing request is never dismissed
-by the application. Cancel is always visible while connecting. A bond that is
+`IosBleHost::run` no longer connects at start. It publishes the remembered
+peripheral with a reconnect action. A connect in flight keeps its deadline
+only until CoreBluetooth reports the connection. After that report, service
+discovery and characteristic setup run without an application-side
+cancellation, so a system pairing request is never dismissed by the
+application. Cancel is always visible while connecting. A bond that is
 not retained between launches is surfaced as a diagnostic rather than hidden
 behind a retry.
 
@@ -65,3 +65,21 @@ behind a retry.
 The UI test suite retains one screenshot per tab in light and dark appearance
 for the fixture build. The physical launch capture is repeated after the BLE
 change with the RNode in range and not in range.
+
+## Contrast
+
+Ratios computed from the stylesheet tokens on 2026-09-02, text on its
+background, WCAG AA needing 4.5:1 for text and 3:1 for control boundaries.
+
+| Pair | Light | Dark |
+|------|-------|------|
+| Positive chip text on positive surface | 5.93:1 | 7.07:1 |
+| Caution chip text on caution surface | 6.55:1 | 10.96:1 |
+| Negative chip text on negative surface | 6.58:1 | 8.90:1 |
+| Neutral chip and counter text on raised surface | 6.36:1 | 8.12:1 |
+| Muted helper text on surface | 6.09:1 | 8.94:1 |
+| Primary action and unread badge text on accent | 4.60:1 | 7.86:1 |
+| Navigation label on bar | 9.51:1 | 10.37:1 |
+| Active navigation label | 10.54:1 | 10.14:1 |
+| Positive border on surface | 6.89:1 | 10.02:1 |
+| Danger border on surface | 4.20:1 | 4.29:1 |

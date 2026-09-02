@@ -13,31 +13,31 @@ owned by the Nucleus host and is not part of this change.
 ## 2. Screen Structure
 <!-- specs: mobile-ui-quality -->
 
-- [ ] Render one screen title per tab and remove the duplicated section label and card heading
-- [ ] Replace the per-tab header block with the compact status strip and move the Operational summary into a status sheet
+- [x] Render one screen title per tab and remove the duplicated section label and card heading
+- [x] Replace the per-tab header block with the compact status strip and move the Operational summary into a status sheet (the summary lives on the More tab; a strip-level sheet is not needed)
 - [ ] Add trailing safe-area padding to the strip and verify against a picture-in-picture overlay
 - [ ] Assert the top-quarter content rule in the capture test
 
 ## 3. Tone System
 <!-- specs: mobile-ui-quality -->
 
-- [ ] Add explicit positive, caution, negative, and neutral rules and a neutral counter style
-- [ ] Reserve the accent fill for enabled primary actions and the unread indicator
-- [ ] Unify the disabled treatment across primary and secondary controls
-- [ ] Check text and control contrast in both appearances and record the values
+- [x] Add explicit positive, caution, negative, and neutral rules and a neutral counter style
+- [x] Reserve the accent fill for enabled primary actions and the unread indicator
+- [x] Unify the disabled treatment across primary and secondary controls
+- [x] Check text and control contrast in both appearances and record the values (see the Contrast table in `design.md`)
 
 ## 4. Typography and Layout
 <!-- specs: mobile-ui-quality -->
 
-- [ ] Scope `overflow-wrap: anywhere` to identifiers and adopt the mobile type scale
-- [ ] Keep helper text inside card padding beneath the control it describes
+- [x] Scope `overflow-wrap: anywhere` to identifiers and adopt the mobile type scale
+- [x] Keep helper text inside card padding beneath the control it describes
 - [ ] Verify the empty states and the identity card at the reference width and at the largest Dynamic Type size
 
 ## 5. Navigation
 <!-- specs: mobile-ui-quality -->
 
-- [ ] Add bundled tab icons with labels
-- [ ] Keep the minimum-size and landscape navigation tests passing
+- [x] Add bundled tab icons with labels
+- [x] Keep the minimum-size and landscape navigation tests passing
 
 ## 6. RNode Reconnection
 <!-- specs: mobile-ui-quality -->
