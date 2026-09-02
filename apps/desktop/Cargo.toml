@@ -16,29 +16,25 @@ path = "src/main.rs"
 # Dioxus core + platform renderer
 dioxus = { workspace = true, features = ["desktop", "hooks", "launch"] }
 
-# Daemon integration (hybrid: IPC socket or embedded)
-styrened.workspace = true
+# Daemon integration through the public client and session contracts
 styrene-ipc.workspace = true
-styrene-ipc-server.workspace = true
+styrene-ipc-client.workspace = true
+styrene-ipc-wire.workspace = true
+styrene-session.workspace = true
 styrene-micron.workspace = true
 styrene-interop-runner.workspace = true
-
-# Protocol crates
-styrene-rns = { workspace = true }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
 
 # Utilities
-hex.workspace = true
 log.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 rmpv = { workspace = true, features = ["with-serde"] }
-rmp-serde.workspace = true
-rand_core = { workspace = true, features = ["getrandom"] }
 futures-util.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

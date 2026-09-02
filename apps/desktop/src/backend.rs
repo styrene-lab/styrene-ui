@@ -4,10 +4,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use styrene_ipc::types::{
-    ACTIVE_CAPABILITIES_VERSION, ActiveCapabilitiesInfo, ConfigApplyResult, DaemonStatusInfo,
-    DeviceInfo, ExecResult, IdentityInfo, MessageInfo, NetworkOperationInfo, PropagationQueueEntry,
-    PropagationSnapshot, RebootResult, RemoteStatusInfo, RequestObservationInfo,
-    ResourceTransferInfo, StandardPropagationSnapshot, StartNetworkOperationInfo, StartRequestInfo,
+    ACTIVE_CAPABILITIES_VERSION, ActiveCapabilitiesInfo, ConfigApplyResult, ConversationInfo,
+    DaemonStatusInfo, DeviceInfo, ExecResult, IdentityInfo, MessageInfo, NetworkOperationInfo,
+    PropagationQueueEntry, PropagationSnapshot, RebootResult, RemoteStatusInfo,
+    RequestObservationInfo, ResourceTransferInfo, StandardPropagationSnapshot,
+    StartNetworkOperationInfo, StartRequestInfo,
 };
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::{Duration, timeout};
@@ -62,7 +63,7 @@ impl RuntimeProfile {
     ) -> Result<Self, String> {
         match profile.unwrap_or("live") {
             "live" => Ok(Self::Live {
-                socket_path: socket_path.unwrap_or_else(styrene_ipc_server::default_socket_path),
+                socket_path: socket_path.unwrap_or_else(styrene_ipc_client::default_socket_path),
             }),
             "embedded" => Ok(Self::Embedded { ephemeral: true }),
             "fixture" => {
@@ -148,18 +149,6 @@ impl BackendCapabilities {
                 || authorized("rpc.exec"),
         }
     }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct ConversationInfo {
-    pub peer_hash: String,
-    pub peer_name: Option<String>,
-    pub last_message: Option<String>,
-    pub last_timestamp: Option<i64>,
-    pub unread_count: u32,
-    pub message_count: u32,
-    pub pinned: bool,
-    pub muted: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -487,8 +476,7 @@ impl BackendSession for IpcBackend {
     }
 
     async fn conversations(&self) -> Result<Vec<ConversationInfo>, String> {
-        let values = self.broker.query_conversations().await?;
-        Ok(parse_conversation_values(values))
+        self.broker.query_conversations().await
     }
 
     async fn messages(&self, peer_hash: &str, limit: u32) -> Result<Vec<MessageInfo>, String> {
@@ -503,13 +491,7 @@ impl BackendSession for IpcBackend {
         &self,
         cursor: Option<&str>,
     ) -> Result<BackendPage<ConversationInfo>, String> {
-        let page = self.broker.query_conversation_page(cursor).await?;
-        Ok(BackendPage {
-            items: parse_conversation_values(page.items),
-            next_cursor: page.next_cursor,
-            pagination_supported: page.pagination_supported,
-            reset: page.reset,
-        })
+        self.broker.query_conversation_page(cursor).await
     }
 
     async fn message_page(
@@ -609,43 +591,8 @@ impl BackendSession for IpcBackend {
         if let Some(handle) = self.embedded.lock().await.take() {
             handle.shutdown().await;
         }
+        self.broker.shutdown().await;
     }
-}
-
-fn parse_conversation_values(
-    values: Vec<std::collections::HashMap<String, rmpv::Value>>,
-) -> Vec<ConversationInfo> {
-    values
-        .into_iter()
-        .filter_map(|value| {
-            let peer_hash = value.get("peer_hash")?.as_str()?.to_string();
-            Some(ConversationInfo {
-                peer_hash,
-                peer_name: value
-                    .get("peer_name")
-                    .and_then(|item| item.as_str())
-                    .filter(|item| !item.is_empty())
-                    .map(ToOwned::to_owned),
-                last_message: value
-                    .get("last_message_content")
-                    .and_then(|item| item.as_str())
-                    .map(ToOwned::to_owned),
-                last_timestamp: value.get("last_message_timestamp").and_then(rmpv::Value::as_i64),
-                unread_count: value
-                    .get("unread_count")
-                    .and_then(rmpv::Value::as_u64)
-                    .and_then(|item| u32::try_from(item).ok())
-                    .unwrap_or(0),
-                message_count: value
-                    .get("message_count")
-                    .and_then(rmpv::Value::as_u64)
-                    .and_then(|item| u32::try_from(item).ok())
-                    .unwrap_or(0),
-                pinned: value.get("pinned").and_then(rmpv::Value::as_bool).unwrap_or(false),
-                muted: value.get("muted").and_then(rmpv::Value::as_bool).unwrap_or(false),
-            })
-        })
-        .collect()
 }
 
 #[derive(Clone)]
@@ -1021,16 +968,14 @@ fn fixture_data(fixture: FixtureId) -> FixtureData {
         interface.observation = fixture_observation();
         interfaces.push(interface);
         let peer_hash = devices[0].destination_hash.clone();
-        conversations.push(ConversationInfo {
-            peer_hash: peer_hash.clone(),
-            peer_name: Some(devices[0].name.clone()),
-            last_message: Some("Fixture message".into()),
-            last_timestamp: Some(1_700_000_100),
-            unread_count: 1,
-            message_count: 1,
-            pinned: false,
-            muted: false,
-        });
+        let mut conversation = ConversationInfo::default();
+        conversation.peer_hash = peer_hash.clone();
+        conversation.peer_name = Some(devices[0].name.clone());
+        conversation.last_message_content = Some("Fixture message".into());
+        conversation.last_message_timestamp = Some(1_700_000_100);
+        conversation.unread_count = 1;
+        conversation.message_count = 1;
+        conversations.push(conversation);
         let mut message = MessageInfo::default();
         message.id = "fixture-message-1".into();
         message.source_hash = peer_hash;
