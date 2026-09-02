@@ -44,10 +44,10 @@ owned by the Nucleus host and is not part of this change.
 
 - [x] Add and run a failing test that a stored approved RNode produces no connect at startup
 - [x] Publish the remembered peripheral with reconnect and cancel actions, and stop the deadline once CoreBluetooth reports the connection
-- [ ] Surface a lost bond as a diagnostic and repeat the physical launch capture with the RNode in range and out of range (diagnostic `ios_ble_bond_lost` added; out-of-range launch capture pending, in-range capture needs the RNode)
+- [ ] Surface a lost bond as a diagnostic and repeat the physical launch capture with the RNode in range and out of range (diagnostic `ios_ble_bond_lost` added; the out-of-range launch capture on the phone shows no pairing prompt and the Reconnect control; the in-range capture waits for the RNode)
 
 ## 7. Closure
 <!-- specs: mobile-ui-quality -->
 
 - [x] Retain after captures for every tab in both appearances and compare against the baseline (`target/ios-xcuitest/review-{light,dark}/`, 8 captures each, 17 XCUI tests passing per appearance)
-- [ ] Run the desktop and library validation commands and the packaged UI test suite
+- [x] Run the desktop and library validation commands and the packaged UI test suite (`cargo fmt --all --check`, workspace clippy and tests with the CI exclusions, `cargo test -p styrene-mobile`, iOS `cargo check`, XCUI suite in light and dark; recorded on PR #23)
