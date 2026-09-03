@@ -1608,7 +1608,8 @@ fn repeated_announces_render_one_person_and_live_empty_renders_none() {
     assert!(directory.contains("lxmf.delivery"));
     assert!(directory.contains("data-source=\"canonical_announce\""));
     assert!(directory.contains("4s ago"));
-    assert!(directory.contains("1 announce"));
+    assert!(directory.contains("×1<"));
+    assert!(directory.contains("aria-label=\"1 announce\""));
     assert!(!directory.contains("reachable"));
     assert!(directory.contains("data-action=\"start-conversation\""));
     assert!(directory.contains("Start conversation"));
