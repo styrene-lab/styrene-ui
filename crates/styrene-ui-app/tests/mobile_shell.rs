@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use styrene_ui_app::{
     BackNavigation, Composer, IdentityBootstrap, IdentityQrCode, IdentityRecoveryPanel,
-    LocalAnnounceStatus, MobileShell, NewMessageForm, PropagationPanel,
+    LocalAnnounceStatus, MobileShell, NewMessageForm, PropagationPanel, age_label,
 };
 use styrene_ui_platform::{
     AccessibilityPreferences, AndroidUsbAttachment, AppLockPolicy, Appearance,
@@ -178,7 +178,7 @@ fn app_lock_failure_offers_an_explicit_retry_without_touching_custody() {
         let retry = opening_tag_with_id(&markup, "mobile.app-unlock-retry");
         assert!(!retry.contains("disabled"), "{code}");
         assert!(retry.contains("aria-describedby=\"mobile.session-failure\""));
-        assert!(markup.contains("Retry unlock"));
+        assert!(markup.contains(">Unlock<"));
         assert!(markup.contains("Identity custody was not changed."));
         assert!(!markup.contains("Open Network to review connection settings"), "{code}");
     }
@@ -1216,7 +1216,13 @@ fn initial_thread_selection_filters_messages_without_inventing_ordering() {
     assert!(first.contains("aria-current=\"true\""));
     assert!(second.contains("aria-current=\"false\""));
     assert!(markup.contains("Direct message awaiting evidence"));
-    assert!(!markup.contains("Message belonging only to the second peer"));
+    // The list row may preview the second peer's latest message; the open
+    // thread must not show it.
+    let history_start = markup.find("id=\"mobile.message-history\"").expect("history");
+    let history_end = markup[history_start..].find("id=\"mobile.composer\"").expect("composer");
+    let history = &markup[history_start..history_start + history_end];
+    assert!(history.contains("Direct message awaiting evidence"));
+    assert!(!history.contains("Message belonging only to the second peer"));
 }
 
 #[test]
@@ -1558,7 +1564,15 @@ fn network_renders_independent_denied_interrupted_and_unverified_bearers() {
         bearer.state = serde_json::from_str(&format!("\"{state}\"")).unwrap();
         bearer.reason = Some(reason.into());
 
-        let markup = render(state_fixture);
+        // A bearer renders on the platform that can carry it; iOS has no USB host path.
+        let target = if kind == "android-usb" { TargetClass::Android } else { TargetClass::Ios };
+        if kind == "android-usb" {
+            let ios = render(state_fixture.clone());
+            assert!(!ios.contains("id=\"mobile.bearer.android-usb\""));
+        }
+        let markup = dioxus_ssr::render_element(rsx! {
+            MobileShell { target, fixture: state_fixture }
+        });
         let tcp = opening_tag_with_id(&markup, "mobile.bearer.tcp");
         assert!(tcp.contains("data-state=\"connected\""));
         let bearer = opening_tag_with_id(&markup, &format!("mobile.bearer.{kind}"));
@@ -1592,8 +1606,8 @@ fn repeated_announces_render_one_person_and_live_empty_renders_none() {
     assert_eq!(directory.matches("id=\"mobile.peer.e01b09b22ccc4e2755d29eead962677b\"").count(), 1);
     assert!(directory.contains("FPIG_SKYWAVE"));
     assert!(directory.contains("lxmf.delivery"));
-    assert!(directory.contains("Canonical announce"));
-    assert!(directory.contains("observed 4s ago"));
+    assert!(directory.contains("data-source=\"canonical_announce\""));
+    assert!(directory.contains("4s ago"));
     assert!(directory.contains("1 announce"));
     assert!(!directory.contains("reachable"));
     assert!(directory.contains("data-action=\"start-conversation\""));
@@ -1614,7 +1628,7 @@ fn old_peer_observation_exposes_age_without_claiming_reachability() {
     state.peers[0].age_secs = 86_400;
     let markup = dioxus_ssr::render_element(rsx! { ActionShell { fixture: state } });
 
-    assert!(markup.contains("observed 86400s ago"));
+    assert!(markup.contains("1d ago"));
     assert!(!markup.to_ascii_lowercase().contains("reachable"));
     assert!(!markup.to_ascii_lowercase().contains("online"));
 }
@@ -1922,4 +1936,53 @@ fn composer_exposes_disabled_send_reason_when_completion_is_blocked() {
     );
     assert!(markup.contains("id=\"mobile.send-disabled-reason\""));
     assert!(markup.contains("Choose a conversation before sending a message."));
+}
+
+#[test]
+fn conversation_rows_preview_the_latest_message_with_its_utc_time() {
+    let mut state = fixture("direct-message-queued");
+    let mut later = state.messages[0].clone();
+    later.id = "message-later".into();
+    later.content = "Later message wins the preview".into();
+    later.details.timestamp = state.messages[0].details.timestamp.max(1) + 3_600;
+    state.messages.push(later);
+    let peer_hash = state.conversations[0].peer_hash.clone();
+
+    let markup = render(state);
+    let row_start = markup.find(&format!("id=\"mobile.conversation.{peer_hash}\"")).expect("row");
+    let row_end = markup[row_start..].find("</button>").expect("row end");
+    let row = &markup[row_start..row_start + row_end];
+
+    assert!(row.contains("class=\"conversation-preview\""));
+    assert!(row.contains("Later message wins the preview"));
+    assert!(row.contains("class=\"conversation-time\""));
+    assert!(row.contains('Z'));
+}
+
+#[test]
+fn authenticating_session_shows_only_the_lock_screen_with_unlock_disabled() {
+    let mut state = fixture("live-empty-connected");
+    state.id = "embedded-live-authenticating".into();
+    state.session.failure = None;
+
+    let markup = render(state);
+
+    assert!(markup.contains("data-locked=\"true\""));
+    assert!(markup.contains("class=\"lock-screen\""));
+    assert!(markup.contains("Waiting for Face ID or the device passcode."));
+    assert!(opening_tag_with_id(&markup, "mobile.app-unlock-retry").contains("disabled"));
+    assert!(!markup.contains("id=\"mobile.session-failure\""));
+}
+
+#[test]
+fn roster_filter_and_age_labels_are_operator_readable() {
+    assert_eq!(age_label(4), "4s");
+    assert_eq!(age_label(59), "59s");
+    assert_eq!(age_label(60), "1m");
+    assert_eq!(age_label(52_925), "14h");
+    assert_eq!(age_label(86_400), "1d");
+    let markup = render(fixture("live-empty-connected"));
+    assert!(
+        !markup.contains("id=\"mobile.people-filter\"") || markup.contains("data-locked=\"false\"")
+    );
 }
