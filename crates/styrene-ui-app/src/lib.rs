@@ -2588,6 +2588,12 @@ pub fn PropagationPanel(
     } else {
         None
     };
+    let readiness_tone = match propagation.readiness {
+        styrene_ui_state::PropagationReadiness::Ready => "positive",
+        styrene_ui_state::PropagationReadiness::Unselected => "neutral",
+        styrene_ui_state::PropagationReadiness::Unavailable => "negative",
+        _ => "caution",
+    };
     rsx! {
         section {
             id: "mobile.propagation",
@@ -2596,16 +2602,32 @@ pub fn PropagationPanel(
             "data-ready": propagation.ready.to_string(),
             "data-readiness": propagation.readiness.as_str(),
             "data-sync-state": propagation.sync_state.as_str(),
-            h2 { id: "mobile.propagation-heading", "Propagation" }
+            div {
+                class: "settings-card-heading",
+                div {
+                    h2 { id: "mobile.propagation-heading", "Propagation" }
+                }
+                span {
+                    id: "mobile.propagation-readiness-chip",
+                    class: "state-chip",
+                    "data-tone": readiness_tone,
+                    "aria-label": format!("Propagation {}", propagation.readiness.as_str()),
+                    {propagation.readiness.as_str()}
+                }
+            }
             p {
                 id: "mobile.propagation-selected",
+                class: "propagation-selected technical-value",
                 strong { "Selected propagation node: " }
                 {selected}
             }
             label {
+                class: "visually-hidden",
                 r#for: "mobile.propagation-node",
                 "Propagation node"
             }
+            div {
+                class: "field-row",
             select {
                 id: "mobile.propagation-node",
                 disabled: !controls_enabled,
@@ -2641,6 +2663,27 @@ pub fn PropagationPanel(
                     }
                 }
             }
+            button {
+                id: "mobile.propagation-sync",
+                class: "primary-action",
+                disabled: !sync_enabled,
+                autofocus: propagation.sync_state == SyncState::Failed,
+                "aria-describedby": if sync_disabled_reason.is_some() {
+                    "mobile.propagation-status mobile.propagation-airtime-policy mobile.propagation-sync-disabled"
+                } else {
+                    "mobile.propagation-status mobile.propagation-airtime-policy"
+                },
+                onclick: move |_| {
+                    if sync_enabled && let Some(action_sink) = action_sink {
+                        action_sink.call(MobileAction::new(
+                            propagation.generation,
+                            MobileActionKind::SyncPropagation,
+                        ));
+                    }
+                },
+                {sync_label}
+            }
+            }
             if !controls_enabled {
                 p {
                     id: "mobile.propagation-node-disabled",
@@ -2648,6 +2691,9 @@ pub fn PropagationPanel(
                     "Propagation-node selection is unavailable in this view."
                 }
             }
+            details {
+                class: "propagation-notes",
+                summary { "Policy and evidence" }
             if let Some(policy) = &propagation.selected_policy {
                 p {
                     id: "mobile.propagation-policy",
@@ -2718,25 +2764,6 @@ pub fn PropagationPanel(
                 class: "field-hint",
                 "Manual synchronization contacts the selected propagation node and may consume network airtime."
             }
-            button {
-                id: "mobile.propagation-sync",
-                class: "primary-action",
-                disabled: !sync_enabled,
-                autofocus: propagation.sync_state == SyncState::Failed,
-                "aria-describedby": if sync_disabled_reason.is_some() {
-                    "mobile.propagation-status mobile.propagation-airtime-policy mobile.propagation-sync-disabled"
-                } else {
-                    "mobile.propagation-status mobile.propagation-airtime-policy"
-                },
-                onclick: move |_| {
-                    if sync_enabled && let Some(action_sink) = action_sink {
-                        action_sink.call(MobileAction::new(
-                            propagation.generation,
-                            MobileActionKind::SyncPropagation,
-                        ));
-                    }
-                },
-                {sync_label}
             }
             if let Some(reason) = sync_disabled_reason {
                 p {
