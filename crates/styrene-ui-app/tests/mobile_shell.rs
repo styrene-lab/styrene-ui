@@ -1987,3 +1987,13 @@ fn roster_filter_and_age_labels_are_operator_readable() {
         !markup.contains("id=\"mobile.people-filter\"") || markup.contains("data-locked=\"false\"")
     );
 }
+
+#[test]
+fn composer_send_is_not_marked_in_flight_before_a_submit() {
+    let state = fixture("direct-message-queued");
+    let markup = render(state);
+    let send = opening_tag_with_id(&markup, "mobile.send");
+    assert!(send.contains("data-sending=\"false\""));
+    assert!(markup.contains(">Send</button>"));
+    assert!(!markup.contains("Sending."));
+}

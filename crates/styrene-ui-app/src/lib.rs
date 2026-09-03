@@ -3257,6 +3257,11 @@ pub fn Composer(
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
     let mut draft_buffers = use_signal(HashMap::<String, (u64, String)>::new);
+    // The generation at which a send was requested. While the backend has not
+    // moved past it the composer shows the attempt in flight and refuses a
+    // second submit; the next snapshot clears it, whether the send was
+    // accepted or failed.
+    let mut sending_generation = use_signal(|| None::<u64>);
     let mut delivery_methods = use_signal(HashMap::<String, DeliveryMethod>::new);
     let draft_id = conversation.as_ref().map_or_else(
         || "mobile.draft".to_string(),
@@ -3287,8 +3292,9 @@ pub fn Composer(
         None
     };
     let selected_method_ready = delivery_method != DeliveryMethod::Propagated || propagated_ready;
+    let sending = *sending_generation.read() == Some(generation);
     let send_enabled =
-        enabled && editing_enabled && selected_method_ready && !draft.trim().is_empty();
+        enabled && editing_enabled && selected_method_ready && !draft.trim().is_empty() && !sending;
     let composer_status = if !has_conversation {
         "Choose a conversation before writing a message."
     } else if !editing_enabled {
@@ -3340,6 +3346,7 @@ pub fn Composer(
                     if send_enabled
                         && let (Some(action_sink), Some(peer_hash)) = (action_sink, &peer_hash)
                     {
+                        sending_generation.set(Some(generation));
                         action_sink.call(MobileAction::new(
                             generation,
                             MobileActionKind::SendMessage {
@@ -3392,13 +3399,14 @@ pub fn Composer(
                     class: "primary-action",
                     r#type: "submit",
                     "data-enabled": send_enabled.to_string(),
+                    "data-sending": sending.to_string(),
                     disabled: !send_enabled,
                     "aria-describedby": if send_disabled_reason.is_some() {
                         "mobile.composer-status mobile.send-disabled-reason"
                     } else {
                         "mobile.composer-status"
                     },
-                    "Send"
+                    if sending { "Sending…" } else { "Send" }
                 }
             }
             div {
@@ -3457,7 +3465,7 @@ pub fn Composer(
                     id: "mobile.composer-status",
                     class: "field-hint",
                     role: "status",
-                    {composer_status}
+                    if sending { "Sending. The message appears above once the backend accepts it." } else { {composer_status} }
                 }
                 if let Some(reason) = send_disabled_reason {
                     p {

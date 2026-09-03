@@ -1819,3 +1819,14 @@ label {
 .bluetooth-card .settings-card-heading .field-hint {
   margin: 0;
 }
+
+
+/* A send in flight reads as busy, not as disabled: the accent stays, the
+   label changes, and the button cannot be tapped again. */
+.composer .primary-action[data-sending="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  opacity: 0.7;
+  cursor: progress;
+}
