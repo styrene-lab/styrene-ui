@@ -680,9 +680,25 @@ pub fn MobileShell(
             .find(|conversation| &conversation.peer_hash == peer_hash)
             .cloned()
     });
-    let selected_messages = selected_hash.as_ref().map_or_else(Vec::new, |peer_hash| {
-        fixture.messages.iter().filter(|message| &message.peer_hash == peer_hash).cloned().collect()
+    // Newest first in the DOM; the stylesheet anchors the list to the bottom
+    // so the latest message sits beside the composer.
+    let mut selected_messages: Vec<Message> =
+        selected_hash.as_ref().map_or_else(Vec::new, |peer_hash| {
+            fixture
+                .messages
+                .iter()
+                .filter(|message| &message.peer_hash == peer_hash)
+                .cloned()
+                .collect()
+        });
+    selected_messages.sort_by(|a, b| {
+        b.details.timestamp.cmp(&a.details.timestamp).then_with(|| b.id.cmp(&a.id))
     });
+    let outbound_marker = selected_messages
+        .iter()
+        .find(|message| message.details.is_outgoing)
+        .map(|message| message.id.clone())
+        .unwrap_or_default();
     let selected_name = selected_hash
         .as_deref()
         .map_or_else(|| "Conversation".into(), |hash| peer_name(hash, &fixture.peers));
@@ -1019,6 +1035,7 @@ pub fn MobileShell(
                             enabled: composer_enabled,
                             propagation: propagation.clone(),
                             generation: fixture.generation,
+                            outbound_marker,
                             action_sink,
                         }
                     }
@@ -3136,6 +3153,16 @@ pub fn DeliveryDetail(
                 id: format!("mobile.message-state.{}", message.id),
                 {state}
             }
+            if let Some(detail) = &message.details.terminal_detail {
+                p {
+                    id: format!("mobile.message-terminal.{}", message.id),
+                    class: "field-error",
+                    "Terminal outcome: {detail}"
+                }
+            }
+            details {
+                class: "message-evidence delivery-more",
+                summary { "Delivery details" }
             if let Some(method) = &message.details.requested_delivery_method {
                 p {
                     class: "field-hint",
@@ -3149,13 +3176,6 @@ pub fn DeliveryDetail(
             }
             if let Some(reason) = &message.details.fallback_reason {
                 p { class: "field-hint", "Fallback: {reason}" }
-            }
-            if let Some(detail) = &message.details.terminal_detail {
-                p {
-                    id: format!("mobile.message-terminal.{}", message.id),
-                    class: "field-error",
-                    "Terminal outcome: {detail}"
-                }
             }
             if !message.details.attempts.is_empty() {
                 details {
@@ -3221,6 +3241,7 @@ pub fn DeliveryDetail(
                     }
                 }
             }
+            }
             if retry_eligible == Some(true) {
                 button {
                     id: format!("mobile.retry.{}", message.id),
@@ -3248,20 +3269,24 @@ pub fn DeliveryDetail(
     }
 }
 
+/// Longest a submitted send reads as in flight without a new outbound record.
+const SEND_IN_FLIGHT_LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
+
 #[component]
 pub fn Composer(
     conversation: Option<Conversation>,
     enabled: bool,
     propagation: PropagationUpdate,
     #[props(default)] generation: u64,
+    #[props(default)] outbound_marker: String,
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
     let mut draft_buffers = use_signal(HashMap::<String, (u64, String)>::new);
-    // The generation at which a send was requested. While the backend has not
-    // moved past it the composer shows the attempt in flight and refuses a
-    // second submit; the next snapshot clears it, whether the send was
-    // accepted or failed.
-    let mut sending_generation = use_signal(|| None::<u64>);
+    // The latest outbound message id at the moment Send was submitted, with
+    // the submit time. The attempt reads as in flight until a new outbound
+    // record appears (accepted or failed) or a bounded wait elapses, so a
+    // send can never be stuck "sending" for good.
+    let mut sending_marker = use_signal(|| None::<(String, std::time::Instant)>);
     let mut delivery_methods = use_signal(HashMap::<String, DeliveryMethod>::new);
     let draft_id = conversation.as_ref().map_or_else(
         || "mobile.draft".to_string(),
@@ -3292,7 +3317,9 @@ pub fn Composer(
         None
     };
     let selected_method_ready = delivery_method != DeliveryMethod::Propagated || propagated_ready;
-    let sending = *sending_generation.read() == Some(generation);
+    let sending = sending_marker.read().as_ref().is_some_and(|(marker, since)| {
+        *marker == outbound_marker && since.elapsed() < SEND_IN_FLIGHT_LIMIT
+    });
     let send_enabled =
         enabled && editing_enabled && selected_method_ready && !draft.trim().is_empty() && !sending;
     let composer_status = if !has_conversation {
@@ -3346,7 +3373,7 @@ pub fn Composer(
                     if send_enabled
                         && let (Some(action_sink), Some(peer_hash)) = (action_sink, &peer_hash)
                     {
-                        sending_generation.set(Some(generation));
+                        sending_marker.set(Some((outbound_marker.clone(), std::time::Instant::now())));
                         action_sink.call(MobileAction::new(
                             generation,
                             MobileActionKind::SendMessage {

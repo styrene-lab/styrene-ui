@@ -1997,3 +1997,21 @@ fn composer_send_is_not_marked_in_flight_before_a_submit() {
     assert!(markup.contains(">Send</button>"));
     assert!(!markup.contains("Sending."));
 }
+
+#[test]
+fn thread_renders_newest_message_first_in_the_dom_and_folds_delivery_detail() {
+    let mut state = fixture("direct-message-queued");
+    let mut later = state.messages[0].clone();
+    later.id = "message-later".into();
+    later.content = "Later message".into();
+    later.details.timestamp = state.messages[0].details.timestamp.max(1) + 60;
+    state.messages.push(later);
+
+    let markup = render(state);
+    let history_start = markup.find("id=\"mobile.message-history\"").expect("history");
+    let history = &markup[history_start..];
+    let later_at = history.find("id=\"mobile.message.message-later\"").expect("later card");
+    let first_at = history.find("id=\"mobile.message.message-direct-1\"").expect("first card");
+    assert!(later_at < first_at, "the newest message is first in the DOM");
+    assert!(markup.contains("Delivery details"));
+}
