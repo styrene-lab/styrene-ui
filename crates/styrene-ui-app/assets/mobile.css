@@ -205,7 +205,8 @@ label {
    the border so the card reads as a framed panel rather than a rounded tile. */
 .surface-card,
 .message-workspace,
-.people-list .peer-card {
+.people-list,
+.lock-screen {
   background-image:
     linear-gradient(var(--tick-ink), var(--tick-ink)),
     linear-gradient(var(--tick-ink), var(--tick-ink)),
@@ -1275,4 +1276,347 @@ label {
   button:not(:disabled):active {
     translate: none;
   }
+}
+
+/* Screen pass: lock screen, roster, conversation previews, status boards */
+
+/* App Lock: while the gate is closed nothing but the lock screen renders. */
+.mobile-shell[data-locked="true"] > :not(.lock-screen) {
+  display: none !important;
+}
+
+.lock-screen {
+  display: grid;
+  min-block-size: calc(100dvh - 2rem);
+  place-content: center;
+  justify-items: center;
+  gap: 0.6rem;
+  padding: 2rem 1.25rem;
+  border: var(--stroke) solid var(--line);
+  background-color: var(--surface);
+  text-align: center;
+}
+
+.lock-title {
+  font-size: clamp(1.6rem, 6vw, 2.2rem);
+  letter-spacing: 0.12em;
+}
+
+.lock-title::before {
+  content: "○ ";
+  color: var(--ink-muted);
+}
+
+.lock-screen[data-code] .lock-title::before {
+  content: "✕ ";
+  color: var(--danger);
+}
+
+.lock-status {
+  max-inline-size: 24rem;
+  margin-block-end: 0.5rem;
+}
+
+.lock-screen .primary-action {
+  min-inline-size: 12rem;
+}
+
+/* Roster: one framed list, hairline rows, machine metadata in one line. */
+.roster-filter {
+  margin-block-end: 0.6rem;
+}
+
+.roster-filter input {
+  font-family: var(--font-technical);
+  font-size: 0.9rem;
+}
+
+.people-list {
+  gap: 0;
+  border: var(--stroke) solid var(--line);
+  background-color: var(--surface);
+}
+
+.people-list .peer-card {
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border: 0;
+  border-block-end: var(--stroke) solid var(--line);
+  background: transparent;
+  gap: 0.6rem;
+}
+
+.people-list li:last-child .peer-card {
+  border-block-end: 0;
+}
+
+.people-list .hash-glyph {
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  font-size: 0.7rem;
+}
+
+.directory-copy {
+  gap: 0.1rem;
+}
+
+.directory-copy strong {
+  font-size: 0.95rem;
+}
+
+.directory-copy .technical-value {
+  color: var(--ink-muted);
+}
+
+.directory-copy .field-hint {
+  margin: 0;
+  font-family: var(--font-technical);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* The row action keeps its accessible name; visually it is a chevron. */
+.row-action {
+  font-size: 0;
+}
+
+.row-action::after {
+  content: "›";
+  color: var(--ink-muted);
+  font-size: 1.6rem;
+  line-height: 1;
+}
+
+/* Conversation rows: name, hash, and time on one line, preview beneath. */
+.conversation-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-inline-size: 0;
+}
+
+.conversation-line strong {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+}
+
+.conversation-line .technical-value {
+  color: var(--ink-muted);
+}
+
+.conversation-time {
+  margin-inline-start: auto;
+  color: var(--ink-muted);
+  font-family: var(--font-technical);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.conversation-preview {
+  overflow: hidden;
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status boards: compact cards, definition grids in the technical face. */
+.settings-card {
+  padding: 0.75rem 0.85rem;
+}
+
+.settings-card > h3,
+.settings-card-heading h3 {
+  margin-block-end: 0.5rem;
+}
+
+.settings-card dl,
+.operational-summary dl {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) minmax(0, 1fr);
+  gap: 0.3rem 0.75rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.settings-card dt,
+.operational-summary dt {
+  color: var(--ink-muted);
+  font-family: var(--font-technical);
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-card dd,
+.operational-summary dd {
+  min-inline-size: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-card dd[data-state] {
+  font-family: var(--font-technical);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-card dd[data-state]::before {
+  content: "○ ";
+  color: var(--ink-muted);
+}
+
+.settings-card dd[data-state="granted"]::before,
+.settings-card dd[data-state="available"]::before {
+  content: "● ";
+  color: var(--signal);
+}
+
+.settings-card dd[data-state="denied"]::before,
+.settings-card dd[data-state="restricted"]::before {
+  content: "✕ ";
+  color: var(--danger);
+}
+
+.settings-card dd[data-state="unavailable"]::before {
+  content: "▲ ";
+  color: var(--warning);
+}
+
+.operational-summary summary {
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  font-variant-caps: all-small-caps;
+}
+
+.operational-summary dl {
+  margin-block-start: 0.6rem;
+}
+
+/* Field rows: the input and its action share one line. */
+.endpoint-card,
+.identity-name-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "label label"
+    "input action"
+    "hint hint";
+  gap: 0.35rem 0.5rem;
+  align-items: end;
+}
+
+.endpoint-card > label,
+.identity-name-form > label {
+  grid-area: label;
+  margin: 0;
+}
+
+.endpoint-card > input,
+.identity-name-form > input {
+  grid-area: input;
+}
+
+.endpoint-card > button,
+.identity-name-form > button {
+  grid-area: action;
+}
+
+.endpoint-card > p,
+.identity-name-form > p {
+  grid-area: hint;
+  margin: 0;
+}
+
+.identity-name-form {
+  margin-block-end: 0.75rem;
+}
+
+.identity-actions {
+  margin-block-start: 0.5rem;
+}
+
+/* Bearers: one board, one row per bearer. */
+.bearer-list {
+  display: grid;
+}
+
+.bearer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding-block: 0.5rem;
+  border-block-start: var(--stroke) solid var(--line);
+}
+
+.bearer-row h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.bearer-row .field-hint {
+  margin: 0;
+}
+
+/* Bluetooth: actions sit side by side under the status line. */
+.bluetooth-card > button {
+  display: inline-flex;
+  margin-block-start: 0.5rem;
+  margin-inline-end: 0.5rem;
+}
+
+.approved-peripheral {
+  gap: 0.5rem;
+}
+
+.approved-peripheral button {
+  margin: 0;
+}
+
+.product-section p,
+.product-section .field-hint {
+  font-size: 0.88rem;
+}
+
+/* Rows are buttons for the tap target only; they read as list rows. */
+.conversation-row,
+.peer-card {
+  font-weight: 400;
+  letter-spacing: 0;
+  font-variant-caps: normal;
+  text-transform: none;
+}
+
+.conversation-row strong,
+.peer-card strong {
+  font-weight: 800;
+}
+
+/* Identity: the full destination hash needs the whole line. */
+.identity-card > dl {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.15rem;
+}
+
+.identity-recovery {
+  gap: 0.5rem;
+  margin-block-start: 0.85rem;
+  padding-block-start: 0.85rem;
+}
+
+.identity-recovery h4,
+.identity-custody h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-variant-caps: all-small-caps;
+}
+
+.identity-recovery .field-hint {
+  margin: 0;
 }

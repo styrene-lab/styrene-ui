@@ -165,6 +165,28 @@ fn short_hash(hash: &str) -> String {
     hash.chars().take(8).collect()
 }
 
+/// Compact age label for observation times: seconds under a minute, then
+/// minutes, hours, and days. Operators compare recency, not raw seconds.
+#[must_use]
+pub fn age_label(age_secs: u64) -> String {
+    match age_secs {
+        0..=59 => format!("{age_secs}s"),
+        60..=3_599 => format!("{}m", age_secs / 60),
+        3_600..=86_399 => format!("{}h", age_secs / 3_600),
+        _ => format!("{}d", age_secs / 86_400),
+    }
+}
+
+/// Short roster label for an announce aspect.
+fn aspect_label(aspect: &str) -> String {
+    match aspect {
+        "lxmf.delivery" => "LXMF".to_string(),
+        "lxmf.propagation" => "Propagation".to_string(),
+        "nomadnetwork.node" => "NomadNet".to_string(),
+        other => other.to_string(),
+    }
+}
+
 fn hash_glyph(hash: &str) -> String {
     hash.chars().take(2).flat_map(char::to_uppercase).collect()
 }
@@ -625,6 +647,7 @@ pub fn MobileShell(
     let mut destination = use_signal(|| MobileDestination::Messages);
     let mut selected_peer = use_signal(|| None::<String>);
     let mut compact_thread_open = use_signal(|| false);
+    let mut people_filter = use_signal(String::new);
     let mut new_message_open = use_signal(|| false);
     let mut new_message_trigger = use_signal(|| None::<Event<MountedData>>);
     let mut identity_qr_open = use_signal(|| false);
@@ -669,7 +692,41 @@ pub fn MobileShell(
     let compact_pane = if *compact_thread_open.read() { "thread" } else { "list" };
     let compact_thread_is_open = *compact_thread_open.read();
     let conversation_count = fixture.conversations.len().to_string();
-    let peer_count = fixture.peers.len().to_string();
+    let people_query = people_filter.read().trim().to_ascii_lowercase();
+    let mut visible_peers: Vec<Peer> = fixture
+        .peers
+        .iter()
+        .filter(|peer| {
+            people_query.is_empty()
+                || peer
+                    .display_name
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .contains(&people_query)
+                || peer.destination_hash.to_ascii_lowercase().contains(&people_query)
+                || peer.aspect.to_ascii_lowercase().contains(&people_query)
+        })
+        .cloned()
+        .collect();
+    visible_peers.sort_by(|left, right| {
+        left.age_secs
+            .cmp(&right.age_secs)
+            .then_with(|| left.destination_hash.cmp(&right.destination_hash))
+    });
+    let peer_count = if people_query.is_empty() {
+        fixture.peers.len().to_string()
+    } else {
+        format!("{} of {}", visible_peers.len(), fixture.peers.len())
+    };
+    let app_lock_failure = fixture
+        .session
+        .failure
+        .as_ref()
+        .filter(|failure| is_app_lock_failure_code(&failure.code))
+        .cloned();
+    let authenticating = fixture.id == "embedded-live-authenticating";
+    let locked = authenticating || app_lock_failure.is_some();
     let window_class = platform_snapshot.as_ref().map(|snapshot| match snapshot.window.class {
         WindowClass::Compact => "compact",
         WindowClass::Wide => "wide",
@@ -738,6 +795,7 @@ pub fn MobileShell(
             class: "mobile-shell",
             "aria-labelledby": "mobile.app-title",
             "data-compact-thread": compact_thread_is_open.to_string(),
+            "data-locked": locked.to_string(),
             "data-target": target.as_str(),
             "data-fixture-id": fixture.id.clone(),
             "data-generation": fixture.generation.to_string(),
@@ -789,7 +847,21 @@ pub fn MobileShell(
                     {format!("Session {}", fixture.session.phase.as_str())}
                 }
             }
-            if let Some(failure) = &fixture.session.failure {
+            if let Some(failure) = app_lock_failure.clone() {
+                LockScreen {
+                    code: Some(failure.code.clone()),
+                    retryable: failure.retryable,
+                    retry: app_unlock_retry,
+                }
+            } else if authenticating {
+                LockScreen { code: None, retryable: false, retry: app_unlock_retry }
+            }
+            if let Some(failure) = fixture
+                .session
+                .failure
+                .as_ref()
+                .filter(|failure| !is_app_lock_failure_code(&failure.code))
+            {
                 div {
                     id: "mobile.session-failure",
                     class: "failure-banner",
@@ -797,22 +869,7 @@ pub fn MobileShell(
                     "aria-live": "polite",
                     "data-code": failure.code.clone(),
                     "data-retryable": failure.retryable.to_string(),
-                    if is_app_lock_failure_code(&failure.code) {
-                        p { "App Lock did not unlock this session. Identity custody was not changed." }
-                        button {
-                            id: "mobile.app-unlock-retry",
-                            class: "primary-action",
-                            r#type: "button",
-                            disabled: app_unlock_retry.is_none(),
-                            "aria-describedby": "mobile.session-failure",
-                            onclick: move |_| {
-                                if let Some(handler) = app_unlock_retry {
-                                    handler.call(());
-                                }
-                            },
-                            "Retry unlock"
-                        }
-                    } else if fixture.session.phase == SessionPhase::Failed {
+                    if fixture.session.phase == SessionPhase::Failed {
                         p { "Session unavailable. Open Network to review connection settings." }
                     } else {
                         p { "The last operation failed. Current session state is unchanged." }
@@ -897,6 +954,7 @@ pub fn MobileShell(
                         ConversationList {
                             conversations: fixture.conversations.clone(),
                             peers: fixture.peers.clone(),
+                            messages: fixture.messages.clone(),
                             selected_peer: selected_hash.clone(),
                             on_select: move |peer_hash: String| {
                                 selected_peer.set(Some(peer_hash.clone()));
@@ -980,6 +1038,30 @@ pub fn MobileShell(
                         p { "Announced peers will appear here." }
                     }
                 }
+                if !fixture.peers.is_empty() {
+                    div {
+                        class: "roster-filter",
+                        label { class: "visually-hidden", r#for: "mobile.people-filter", "Filter peers" }
+                        input {
+                            id: "mobile.people-filter",
+                            r#type: "search",
+                            placeholder: "Filter by name, hash, or aspect",
+                            autocomplete: "off",
+                            autocapitalize: "off",
+                            spellcheck: "false",
+                            "aria-controls": "mobile.people-list",
+                            value: people_filter.read().clone(),
+                            oninput: move |event| people_filter.set(event.value()),
+                        }
+                    }
+                }
+                if !fixture.peers.is_empty() && visible_peers.is_empty() {
+                    div {
+                        class: "empty-state",
+                        h3 { "No peers match" }
+                        p { "Widen the filter to see the roster." }
+                    }
+                }
                 if !fixture.peers.is_empty() && action_sink.is_none() {
                     p {
                         id: "mobile.people-actions-disabled",
@@ -989,9 +1071,10 @@ pub fn MobileShell(
                 }
                 if !fixture.peers.is_empty() {
                     ul {
+                        id: "mobile.people-list",
                         class: "people-list",
                         "aria-label": "Discovered people",
-                    for peer in &fixture.peers {
+                    for peer in &visible_peers {
                     {
                         let has_conversation = fixture.conversations.iter().any(|conversation| {
                             conversation.peer_hash == peer.destination_hash
@@ -1000,6 +1083,12 @@ pub fn MobileShell(
                             format!("Peer {}", short_hash(&peer.destination_hash))
                         });
                         let announce_label = if peer.announce_count == 1 { "announce" } else { "announces" };
+                        let roster_meta = format!(
+                            "{} · {} ago · {} {announce_label}",
+                            aspect_label(&peer.aspect),
+                            age_label(peer.age_secs),
+                            peer.announce_count
+                        );
                         if has_conversation {
                             let peer_hash = peer.destination_hash.clone();
                             rsx! {
@@ -1033,7 +1122,7 @@ pub fn MobileShell(
                                         span { class: "technical-value", {short_hash(&peer.destination_hash)} }
                                         span {
                                             class: "field-hint",
-                                            "{peer.aspect} · Canonical announce · observed {peer.age_secs}s ago · {peer.announce_count} {announce_label}"
+                                            {roster_meta.clone()}
                                         }
                                     }
                                     span { class: "row-action", "Open conversation" }
@@ -1076,7 +1165,7 @@ pub fn MobileShell(
                                         span { class: "technical-value", {short_hash(&peer.destination_hash)} }
                                         span {
                                             class: "field-hint",
-                                            "{peer.aspect} · Canonical announce · observed {peer.age_secs}s ago · {peer.announce_count} {announce_label}"
+                                            {roster_meta.clone()}
                                         }
                                     }
                                     span { class: "row-action", "Start conversation" }
@@ -1094,6 +1183,44 @@ pub fn MobileShell(
                 "aria-labelledby": "mobile.network-heading",
                 hidden: active_destination != MobileDestination::Network,
                 h2 { id: "mobile.network-heading", class: "visually-hidden", "Network" }
+                article {
+                    id: "mobile.bearers",
+                    class: "surface-card bearer-board",
+                    "aria-labelledby": "mobile.bearers-heading",
+                    h3 { id: "mobile.bearers-heading", "Bearers" }
+                    div {
+                        class: "bearer-list",
+                // A bearer that cannot exist on this platform is not a status worth
+                // a row; iOS has no USB host path.
+                for bearer in fixture.bearers.iter().filter(|bearer| {
+                    target != TargetClass::Ios || bearer.kind != BearerKind::AndroidUsb
+                }) {
+                    article {
+                        id: format!("mobile.bearer.{}", bearer.kind.as_str()),
+                        class: "bearer-row",
+                        "data-state": bearer.state.to_string(),
+                        "data-reason": bearer.reason.clone().unwrap_or_default(),
+                        div {
+                            h3 { {bearer_label(bearer.kind)} }
+                            if let Some(reason) = &bearer.reason {
+                                p { class: "field-hint", {bearer_reason_label(reason)} }
+                            }
+                        }
+                        span {
+                            id: format!("mobile.bearer.{}.state", bearer.kind.as_str()),
+                            class: "state-chip",
+                            "data-tone": StatusTone::for_bearer(bearer.state).as_str(),
+                            "aria-label": format!(
+                                "{} bearer {}",
+                                bearer_label(bearer.kind),
+                                bearer.state
+                            ),
+                            {bearer.state.to_string()}
+                        }
+                    }
+                }
+                    }
+                }
                 EndpointEditor {
                     key: "{fixture.generation}",
                     endpoint: fixture.session.endpoint.clone().unwrap_or_default(),
@@ -1199,32 +1326,6 @@ pub fn MobileShell(
                         }
                         if let Some(failure) = &android_usb_failure {
                             p { class: "field-error", role: "alert", {failure.clone()} }
-                        }
-                    }
-                }
-                h3 { class: "group-heading", "Bearers" }
-                for bearer in &fixture.bearers {
-                    article {
-                        id: format!("mobile.bearer.{}", bearer.kind.as_str()),
-                        class: "surface-card bearer-card",
-                        "data-state": bearer.state.to_string(),
-                        "data-reason": bearer.reason.clone().unwrap_or_default(),
-                        div {
-                            h3 { {bearer_label(bearer.kind)} }
-                            if let Some(reason) = &bearer.reason {
-                                p { class: "field-hint", {bearer_reason_label(reason)} }
-                            }
-                        }
-                        span {
-                            id: format!("mobile.bearer.{}.state", bearer.kind.as_str()),
-                            class: "state-chip",
-                            "data-tone": StatusTone::for_bearer(bearer.state).as_str(),
-                            "aria-label": format!(
-                                "{} bearer {}",
-                                bearer_label(bearer.kind),
-                                bearer.state
-                            ),
-                            {bearer.state.to_string()}
                         }
                     }
                 }
@@ -2064,7 +2165,7 @@ fn IdentityDisplayNameEditor(
                 r#type: "submit",
                 disabled: !can_save,
                 "aria-describedby": "mobile.identity-display-name-status",
-                "Save display name"
+                "Save"
             }
         }
     }
@@ -2390,7 +2491,7 @@ fn EndpointEditor(
         && endpoint_value != configured_endpoint.trim();
     rsx! {
         div {
-            class: "surface-card settings-card",
+            class: "surface-card settings-card endpoint-card",
             label { r#for: "mobile.tcp-endpoint", "TCP endpoint" }
             input {
                 id: "mobile.tcp-endpoint",
@@ -2430,7 +2531,7 @@ fn EndpointEditor(
                         ));
                     }
                 },
-                "Apply endpoint"
+                "Apply"
             }
         }
     }
@@ -2695,6 +2796,7 @@ pub fn PropagationPanel(
 pub fn ConversationList(
     conversations: Vec<Conversation>,
     peers: Vec<Peer>,
+    #[props(default)] messages: Vec<Message>,
     selected_peer: Option<String>,
     on_select: EventHandler<String>,
 ) -> Element {
@@ -2718,6 +2820,20 @@ pub fn ConversationList(
                     let peer_short_hash = short_hash(&conversation.peer_hash);
                     let hash_glyph = hash_glyph(&conversation.peer_hash);
                     let selected_hash = conversation.peer_hash.clone();
+                    let latest = messages
+                        .iter()
+                        .filter(|message| message.peer_hash == conversation.peer_hash)
+                        .max_by_key(|message| message.details.timestamp);
+                    let preview = latest.map(|message| {
+                        let mut preview: String = message.content.chars().take(120).collect();
+                        if message.content.chars().count() > 120 {
+                            preview.push('…');
+                        }
+                        preview
+                    });
+                    let latest_time = latest
+                        .filter(|message| message.details.timestamp != 0)
+                        .map(|message| zulu_timestamp(message.details.timestamp));
                     rsx! {
                 button {
                     id: format!("mobile.conversation.{}", conversation.peer_hash),
@@ -2729,8 +2845,17 @@ pub fn ConversationList(
                     span { class: "hash-glyph", {hash_glyph} }
                     span {
                         class: "conversation-copy",
-                        strong { {name} }
-                        span { class: "technical-value", {peer_short_hash} }
+                        span {
+                            class: "conversation-line",
+                            strong { {name} }
+                            span { class: "technical-value", {peer_short_hash} }
+                            if let Some(time) = latest_time {
+                                time { class: "conversation-time", {time} }
+                            }
+                        }
+                        if let Some(preview) = preview {
+                            span { class: "conversation-preview", {preview} }
+                        }
                     }
                     if conversation.unread_count > 0 {
                         span {
@@ -2833,6 +2958,54 @@ pub fn MessageHistory(
                     }
                 }
                 }
+            }
+        }
+    }
+}
+
+/// The App Lock screen: the only thing the shell shows until device
+/// authentication opens the gate. It never touches identity custody.
+#[component]
+pub fn LockScreen(
+    code: Option<String>,
+    retryable: bool,
+    #[props(default)] retry: Option<EventHandler<()>>,
+) -> Element {
+    let status = match code.as_deref() {
+        None => "Waiting for Face ID or the device passcode.",
+        Some("app_unlock_cancelled") => "Unlock was cancelled.",
+        Some("app_unlock_unavailable") => "Device authentication is unavailable on this device.",
+        Some(_) => "Device authentication failed.",
+    };
+    let retry_enabled = code.is_some() && retry.is_some();
+    rsx! {
+        section {
+            id: code.as_ref().map(|_| "mobile.session-failure"),
+            class: "lock-screen",
+            role: "status",
+            "aria-live": "polite",
+            "aria-atomic": "true",
+            "data-code": code.clone(),
+            "data-retryable": code.as_ref().map(|_| retryable.to_string()),
+            p { class: "app-kicker", "Styrene" }
+            h2 { class: "lock-title", "Locked" }
+            p { class: "lock-status", {status} }
+            button {
+                id: "mobile.app-unlock-retry",
+                class: "primary-action",
+                r#type: "button",
+                disabled: !retry_enabled,
+                "aria-describedby": code.as_ref().map(|_| "mobile.session-failure"),
+                onclick: move |_| {
+                    if let Some(handler) = retry {
+                        handler.call(());
+                    }
+                },
+                "Unlock"
+            }
+            p { class: "field-hint", "Identity custody was not changed." }
+            if let Some(code) = code.clone() {
+                p { class: "technical-value", "Diagnostic: {code}" }
             }
         }
     }

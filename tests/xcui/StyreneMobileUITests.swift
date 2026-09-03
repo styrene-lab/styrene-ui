@@ -95,7 +95,7 @@ final class StyreneMobileUITests: XCTestCase {
         }
         let tabs: [(String, String, String)] = [
             ("People", "People", "Discovered peers"),
-            ("Network", "Network", "TCP endpoint"),
+            ("Network", "Network", "Bearers"),
             ("More", "More", "Operational summary"),
         ]
         for (label, heading, firstContent) in tabs {
