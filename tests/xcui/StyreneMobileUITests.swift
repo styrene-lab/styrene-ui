@@ -39,6 +39,23 @@ final class StyreneMobileUITests: XCTestCase {
         try captureTabs(app, prefix: "review")
     }
 
+    /// The roster only shows on a fixture with announced peers.
+    func testCapturePeopleRosterForReview() throws {
+        let app = XCUIApplication(bundleIdentifier: "io.styrene.mesh")
+        app.launchEnvironment["STYRENE_UI_FIXTURE_ID"] = "canonical-peer-discovery"
+        app.launch()
+        XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
+        let people = app.buttons["People"]
+        XCTAssertTrue(people.waitForExistence(timeout: 5))
+        people.tap()
+        XCTAssertTrue(app.staticTexts["Discovered peers"].waitForExistence(timeout: 5))
+        sleep(1)
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "review-people-roster"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+
     /// The same capture at the largest accessibility text size, so reflow is
     /// reviewed alongside the default size.
     func testCaptureTabScreensAtLargestTextSize() throws {

@@ -1747,3 +1747,75 @@ label {
 .new-message-peer-list .peer-card {
   padding: 0.5rem 0.25rem;
 }
+
+/* Roster fields: identity left, facts right, nothing wraps. */
+.people-list .peer-card {
+  grid-template-columns: 2.25rem minmax(0, 1fr) max-content 1.25rem;
+}
+
+.people-list .row-action {
+  justify-self: end;
+}
+
+.roster-ident {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.5rem;
+  min-inline-size: 0;
+}
+
+.roster-aspect {
+  padding-inline: 0.3rem;
+  border: var(--stroke) solid var(--line);
+  color: var(--ink-muted);
+  font: -apple-system-caption2;
+  font-family: var(--font-technical);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.roster-facts {
+  display: grid;
+  justify-items: end;
+  gap: 0.15rem;
+  color: var(--ink-muted);
+  font: -apple-system-caption2;
+  font-family: var(--font-technical);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Network: each bearer row carries its configuration beneath its status. */
+.bearer-config {
+  flex-basis: 100%;
+  margin-block-start: 0.5rem;
+  padding-block-start: 0.5rem;
+  border-block-start: var(--stroke) dashed var(--line);
+}
+
+.endpoint-card {
+  grid-template-areas:
+    "active active"
+    "label label"
+    "input action"
+    "hint hint";
+}
+
+.endpoint-card > .endpoint-active {
+  grid-area: active;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.bluetooth-card .settings-card-heading {
+  align-items: start;
+}
+
+.bluetooth-card .settings-card-heading .field-hint {
+  margin: 0;
+}

@@ -340,6 +340,7 @@ pub fn BleRNodeControls(
     #[props(default)] retry: Option<EventHandler<()>>,
     #[props(default)] cancel: Option<EventHandler<()>>,
     #[props(default)] forget: Option<EventHandler<()>>,
+    #[props(default)] embedded: bool,
 ) -> Element {
     let scan_reason = state.scan_disabled_reason();
     let selection_reason = state.selection_disabled_reason();
@@ -394,7 +395,7 @@ pub fn BleRNodeControls(
     rsx! {
         article {
             id: "mobile.bluetooth-rnode",
-            class: "surface-card settings-card bluetooth-card",
+            class: if embedded { "bearer-config bluetooth-card" } else { "surface-card settings-card bluetooth-card" },
             "aria-labelledby": "mobile.bluetooth-rnode-heading",
             "data-phase": ble_phase(state.phase),
             "data-permission": authorization_state(state.permission),
@@ -402,8 +403,10 @@ pub fn BleRNodeControls(
             div {
                 class: "settings-card-heading",
                 div {
-                    h3 { id: "mobile.bluetooth-rnode-heading", "Bluetooth RNode" }
-                    p { class: "field-hint", "Scan only when your RNode is in its pairing window. Selection is required before connection." }
+                    if !embedded {
+                        h3 { id: "mobile.bluetooth-rnode-heading", "Bluetooth RNode" }
+                    }
+                    p { class: "field-hint", "Scan only while the RNode is in its pairing window." }
                 }
                 span {
                     id: "mobile.bluetooth-phase",
@@ -1083,12 +1086,6 @@ pub fn MobileShell(
                             format!("Peer {}", short_hash(&peer.destination_hash))
                         });
                         let announce_label = if peer.announce_count == 1 { "announce" } else { "announces" };
-                        let roster_meta = format!(
-                            "{} · {} ago · {} {announce_label}",
-                            aspect_label(&peer.aspect),
-                            age_label(peer.age_secs),
-                            peer.announce_count
-                        );
                         if has_conversation {
                             let peer_hash = peer.destination_hash.clone();
                             rsx! {
@@ -1119,10 +1116,19 @@ pub fn MobileShell(
                                     span {
                                         class: "directory-copy",
                                         strong { {display_name} }
-                                        span { class: "technical-value", {short_hash(&peer.destination_hash)} }
                                         span {
-                                            class: "field-hint",
-                                            {roster_meta.clone()}
+                                            class: "roster-ident",
+                                            span { class: "technical-value", {short_hash(&peer.destination_hash)} }
+                                            span { class: "roster-aspect", {aspect_label(&peer.aspect)} }
+                                        }
+                                    }
+                                    span {
+                                        class: "roster-facts",
+                                        span { class: "roster-age", "{age_label(peer.age_secs)} ago" }
+                                        span {
+                                            class: "roster-count",
+                                            "aria-label": format!("{} {announce_label}", peer.announce_count),
+                                            "×{peer.announce_count}"
                                         }
                                     }
                                     span { class: "row-action", "Open conversation" }
@@ -1162,10 +1168,19 @@ pub fn MobileShell(
                                     span {
                                         class: "directory-copy",
                                         strong { {display_name} }
-                                        span { class: "technical-value", {short_hash(&peer.destination_hash)} }
                                         span {
-                                            class: "field-hint",
-                                            {roster_meta.clone()}
+                                            class: "roster-ident",
+                                            span { class: "technical-value", {short_hash(&peer.destination_hash)} }
+                                            span { class: "roster-aspect", {aspect_label(&peer.aspect)} }
+                                        }
+                                    }
+                                    span {
+                                        class: "roster-facts",
+                                        span { class: "roster-age", "{age_label(peer.age_secs)} ago" }
+                                        span {
+                                            class: "roster-count",
+                                            "aria-label": format!("{} {announce_label}", peer.announce_count),
+                                            "×{peer.announce_count}"
                                         }
                                     }
                                     span { class: "row-action", "Start conversation" }
@@ -1191,7 +1206,8 @@ pub fn MobileShell(
                     div {
                         class: "bearer-list",
                 // A bearer that cannot exist on this platform is not a status worth
-                // a row; iOS has no USB host path.
+                // a row; iOS has no USB host path. Each row carries the bearer's own
+                // configuration so state and settings live in one place.
                 for bearer in fixture.bearers.iter().filter(|bearer| {
                     target != TargetClass::Ios || bearer.kind != BearerKind::AndroidUsb
                 }) {
@@ -1217,25 +1233,31 @@ pub fn MobileShell(
                             ),
                             {bearer.state.to_string()}
                         }
+                        if bearer.kind == BearerKind::Tcp {
+                            EndpointEditor {
+                                key: "{fixture.generation}",
+                                endpoint: fixture.session.endpoint.clone().unwrap_or_default(),
+                                generation: fixture.generation,
+                                enabled: live_actions_enabled,
+                                connected: bearer.state.to_string() == "connected",
+                                action_sink,
+                            }
+                        }
+                        if bearer.kind == BearerKind::BluetoothRnode {
+                            BleRNodeControls {
+                                state: ble_controls.clone(),
+                                actions_enabled: live_actions_enabled,
+                                embedded: true,
+                                scan: ble_scan,
+                                select: ble_select,
+                                retry: ble_retry,
+                                cancel: ble_cancel,
+                                forget: ble_forget,
+                            }
+                        }
                     }
                 }
                     }
-                }
-                EndpointEditor {
-                    key: "{fixture.generation}",
-                    endpoint: fixture.session.endpoint.clone().unwrap_or_default(),
-                    generation: fixture.generation,
-                    enabled: live_actions_enabled,
-                    action_sink,
-                }
-                BleRNodeControls {
-                    state: ble_controls,
-                    actions_enabled: live_actions_enabled,
-                    scan: ble_scan,
-                    select: ble_select,
-                    retry: ble_retry,
-                    cancel: ble_cancel,
-                    forget: ble_forget,
                 }
                 if target == TargetClass::Android
                     && (android_usb_refresh.is_some() || !android_usb_attachments.is_empty())
@@ -2480,6 +2502,7 @@ fn EndpointEditor(
     endpoint: String,
     generation: u64,
     enabled: bool,
+    #[props(default)] connected: bool,
     action_sink: Option<EventHandler<MobileAction>>,
 ) -> Element {
     let configured_endpoint = endpoint.clone();
@@ -2491,13 +2514,22 @@ fn EndpointEditor(
         && endpoint_value != configured_endpoint.trim();
     rsx! {
         div {
-            class: "surface-card settings-card endpoint-card",
-            label { r#for: "mobile.tcp-endpoint", "TCP endpoint" }
+            class: "bearer-config endpoint-card",
+            if connected && !configured_endpoint.trim().is_empty() {
+                p {
+                    id: "mobile.tcp-endpoint-active",
+                    class: "endpoint-active",
+                    span { class: "state-chip", "data-tone": "positive", "active" }
+                    span { class: "technical-value", {configured_endpoint.clone()} }
+                }
+            }
+            label { class: "visually-hidden", r#for: "mobile.tcp-endpoint", "TCP endpoint" }
             input {
                 id: "mobile.tcp-endpoint",
                 name: "tcp-endpoint",
                 r#type: "text",
                 inputmode: "url",
+                placeholder: "host:port",
                 "aria-describedby": "mobile.tcp-endpoint-hint",
                 disabled: !editing_enabled,
                 value: endpoint_buffer,
