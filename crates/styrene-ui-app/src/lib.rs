@@ -737,6 +737,7 @@ pub fn MobileShell(
         main {
             class: "mobile-shell",
             "aria-labelledby": "mobile.app-title",
+            "data-compact-thread": compact_thread_is_open.to_string(),
             "data-target": target.as_str(),
             "data-fixture-id": fixture.id.clone(),
             "data-generation": fixture.generation.to_string(),
@@ -934,9 +935,11 @@ pub fn MobileShell(
                                         ));
                                     }
                                 },
-                                "Back"
+                                span { "aria-hidden": "true", "‹" }
+                                span { class: "visually-hidden", "Back" }
                             }
                             div {
+                                class: "thread-title",
                                 h2 { {selected_name.clone()} }
                                 if !selected_short_hash.is_empty() {
                                     p { class: "technical-value", {selected_short_hash.clone()} }
@@ -2813,7 +2816,7 @@ pub fn MessageHistory(
                                     time {
                                         class: "technical-value",
                                         "data-unix-seconds": message.details.timestamp.to_string(),
-                                        "Unix {message.details.timestamp}"
+                                        {zulu_timestamp(message.details.timestamp)}
                                     }
                                 }
                             }
@@ -2833,6 +2836,31 @@ pub fn MessageHistory(
             }
         }
     }
+}
+
+/// Render a Unix timestamp as a compact UTC date-time group, for example
+/// `2023-11-14 22:13Z`. UTC is the shared clock of a mesh whose peers span
+/// zones, and the trailing Z says so.
+#[must_use]
+pub fn zulu_timestamp(unix_seconds: i64) -> String {
+    let days = unix_seconds.div_euclid(86_400);
+    let seconds_of_day = unix_seconds.rem_euclid(86_400);
+    // Civil-from-days (Howard Hinnant), proleptic Gregorian calendar.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let day_of_era = z.rem_euclid(146_097);
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02} {:02}:{:02}Z",
+        seconds_of_day / 3_600,
+        (seconds_of_day % 3_600) / 60
+    )
 }
 
 #[component]
@@ -3029,6 +3057,19 @@ pub fn Composer(
     let selected_method_ready = delivery_method != DeliveryMethod::Propagated || propagated_ready;
     let send_enabled =
         enabled && editing_enabled && selected_method_ready && !draft.trim().is_empty();
+    let composer_status = if !has_conversation {
+        "Choose a conversation before writing a message."
+    } else if !editing_enabled {
+        "Draft editing is unavailable in this view."
+    } else if !enabled {
+        "No bearer is connected. You can continue editing this saved draft."
+    } else if !selected_method_ready {
+        propagation_unavailable_reason.unwrap_or("Propagated delivery is currently unavailable.")
+    } else if draft.trim().is_empty() {
+        "Write a message to enable Send."
+    } else {
+        "Ready to send."
+    };
     let send_disabled_reason = if !has_conversation {
         Some("Choose a conversation before sending a message.")
     } else if !editing_enabled {
@@ -3042,6 +3083,10 @@ pub fn Composer(
     } else {
         None
     };
+    // The status line already carries the reason when both say the same thing.
+    let send_disabled_reason = send_disabled_reason.filter(|reason| *reason != composer_status);
+    let show_propagation_status =
+        propagation_unavailable_reason.is_some() || delivery_method == DeliveryMethod::Propagated;
     rsx! {
         form {
             key: "{draft_id}",
@@ -3081,7 +3126,7 @@ pub fn Composer(
                 textarea {
                     id: draft_id,
                     name: "message",
-                    rows: "2",
+                    rows: "1",
                     placeholder: "Message",
                     disabled: !editing_enabled,
                     "aria-describedby": "mobile.composer-status",
@@ -3159,17 +3204,19 @@ pub fn Composer(
                     }
                 }
             }
-            if let Some(reason) = propagation_unavailable_reason {
-                p {
-                    id: "mobile.delivery-method-status",
-                    class: "field-hint",
-                    "Propagated unavailable: {reason}"
-                }
-            } else {
-                p {
-                    id: "mobile.delivery-method-status",
-                    class: "field-hint",
-                    "Propagated delivery is available through the selected node."
+            if show_propagation_status {
+                if let Some(reason) = propagation_unavailable_reason {
+                    p {
+                        id: "mobile.delivery-method-status",
+                        class: "field-hint",
+                        "Propagated unavailable: {reason}"
+                    }
+                } else {
+                    p {
+                        id: "mobile.delivery-method-status",
+                        class: "field-hint",
+                        "Propagated delivery is available through the selected node."
+                    }
                 }
             }
             div {
@@ -3178,21 +3225,7 @@ pub fn Composer(
                     id: "mobile.composer-status",
                     class: "field-hint",
                     role: "status",
-                    if !has_conversation {
-                        "Choose a conversation before writing a message."
-                    } else if !editing_enabled {
-                        "Draft editing is unavailable in this view."
-                    } else if !enabled {
-                        "No bearer is connected. You can continue editing this saved draft."
-                    } else if !selected_method_ready {
-                        {propagation_unavailable_reason.unwrap_or(
-                            "Propagated delivery is currently unavailable."
-                        )}
-                    } else if draft.trim().is_empty() {
-                        "Write a message to enable Send."
-                    } else {
-                        "Ready to send."
-                    }
+                    {composer_status}
                 }
                 if let Some(reason) = send_disabled_reason {
                     p {

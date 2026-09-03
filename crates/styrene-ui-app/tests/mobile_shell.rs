@@ -1283,7 +1283,10 @@ fn composer_enables_propagated_delivery_only_for_a_ready_selected_node() {
         .expect("propagated option");
 
     assert!(!propagated.split('>').next().unwrap().contains("disabled"));
-    assert!(markup.contains("Propagated delivery is available through the selected node."));
+    // The availability line only appears once Propagated is the selected
+    // method; while Direct is selected it would be noise under the composer.
+    assert!(!markup.contains("Propagated delivery is available through the selected node."));
+    assert!(!markup.contains("id=\"mobile.delivery-method-status\""));
 }
 
 #[test]
@@ -1325,7 +1328,9 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
         "flex-wrap: wrap",
         "overflow-wrap: anywhere",
         "@media (max-width: 30rem)",
-        ".composer button,",
+        ".composer .primary-action {",
+        "[data-compact-thread=\"true\"]",
+        "[data-direction=\"outgoing\"]",
         ".new-message-actions > button",
         "@media (min-width: 52rem)",
         "@media (prefers-color-scheme: dark)",
@@ -1721,7 +1726,7 @@ fn message_history_renders_direction_chronology_and_independent_delivery_evidenc
     assert!(markup.contains("<h4 id=\"mobile.message-heading.message-direct-1\">Sent</h4>"));
     for expected in [
         "Sent",
-        "Unix 1700000000",
+        "2023-11-14 22:13Z",
         "Requested method: propagated",
         "Actual method: direct",
         "Fallback: selected node stale",
