@@ -1620,3 +1620,130 @@ label {
 .identity-recovery .field-hint {
   margin: 0;
 }
+
+/* Panel pass: Dynamic Type on the boards, chips that wrap, propagation board */
+
+/* Text on the boards follows the system text styles so the largest
+   accessibility sizes scale every row, not only the chips. */
+.bearer-row h3 {
+  font: -apple-system-headline;
+  font-family: var(--font-interface);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  font-variant-caps: all-small-caps;
+}
+
+.session-status,
+.state-chip,
+.count-badge,
+.unread-badge {
+  max-inline-size: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+
+.directory-copy strong {
+  font: -apple-system-body;
+  font-family: var(--font-interface);
+  font-weight: 800;
+}
+
+.directory-copy .field-hint,
+.conversation-time,
+.message-context,
+.settings-card dt,
+.operational-summary dt,
+.propagation-notes summary {
+  font: -apple-system-caption2;
+  font-family: var(--font-technical);
+}
+
+.conversation-preview,
+.settings-card dl,
+.operational-summary dl,
+.product-section p,
+.product-section [role="status"] {
+  font: -apple-system-footnote;
+}
+
+.settings-card dd[data-state] {
+  font: -apple-system-caption1;
+  font-family: var(--font-technical);
+}
+
+/* Propagation: heading with readiness chip, node and sync on one line,
+   the policy and evidence sentences behind a disclosure. */
+.product-section h2 {
+  margin: 0;
+  font: -apple-system-headline;
+  font-family: var(--font-interface);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-variant-caps: all-small-caps;
+}
+
+.propagation-selected {
+  margin-block: 0.4rem 0.5rem;
+  color: var(--ink-muted);
+}
+
+.propagation-selected strong {
+  font-weight: 700;
+}
+
+.product-section .field-row {
+  margin-block-end: 0.35rem;
+}
+
+.product-section .field-row select {
+  min-inline-size: 0;
+}
+
+.product-section [role="status"] {
+  margin-block-start: 0.5rem;
+  color: var(--ink-muted);
+}
+
+.propagation-notes {
+  margin-block-start: 0.5rem;
+}
+
+.propagation-notes summary {
+  color: var(--ink-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.propagation-notes p {
+  margin-block: 0.4rem 0;
+  color: var(--ink-muted);
+}
+
+/* Bluetooth and recovery: tighter rows, actions in a row. */
+.bluetooth-card > .field-hint {
+  margin-block: 0.35rem 0;
+}
+
+.peripheral-list {
+  gap: 0.35rem;
+  margin-block: 0.6rem 0;
+}
+
+.peripheral-row {
+  padding: 0.5rem 0.6rem;
+}
+
+.identity-recovery-form,
+.identity-restore-actions {
+  gap: 0.5rem;
+}
+
+.new-message h3 {
+  margin-block-end: 0.5rem;
+}
+
+.new-message-peer-list .peer-card {
+  padding: 0.5rem 0.25rem;
+}
