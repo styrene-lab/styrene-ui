@@ -802,7 +802,7 @@ mod tests {
         );
     }
 
-    const BACKEND_REVISION: &str = "776a099eb6a84fd4a052088322a0dcc7723a74e4";
+    const BACKEND_REVISION: &str = "fb2e913f955173ed84d6ab826d81232fad5819bc";
     const MINIMUM_FIXTURE_REVISION: &str = "d8c0569fc30dd49280a3246703a31c84bb646bf3";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");
