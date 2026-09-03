@@ -80,6 +80,19 @@ final class StyreneMobileUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Conversations"].waitForExistence(timeout: 10))
         assertNearTop(app.staticTexts["Conversations"], "Messages")
         capture("\(prefix)-01-messages")
+        // The open thread is its own screen in compact mode; capture it when
+        // the fixture offers a conversation, then return to the list.
+        let conversation = app.buttons
+            .matching(NSPredicate(format: "label CONTAINS 'Peer'"))
+            .firstMatch
+        if assertPlacement, conversation.waitForExistence(timeout: 3) {
+            conversation.tap()
+            XCTAssertTrue(app.buttons["Back to conversations"].waitForExistence(timeout: 5))
+            sleep(1)
+            capture("\(prefix)-02-thread")
+            app.buttons["Back to conversations"].tap()
+            XCTAssertTrue(app.staticTexts["Conversations"].waitForExistence(timeout: 5))
+        }
         let tabs: [(String, String, String)] = [
             ("People", "People", "Discovered peers"),
             ("Network", "Network", "TCP endpoint"),
