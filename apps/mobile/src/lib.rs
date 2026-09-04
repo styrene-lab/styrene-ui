@@ -59,6 +59,19 @@ pub const MOBILE_INDEX: &str = r#"<!DOCTYPE html>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
         <meta name="color-scheme" content="light dark">
+        <script>
+            // A tap anywhere that is not a form control dismisses the
+            // keyboard. iOS never blurs a text field on its own, and the
+            // tab bar is hidden while the keyboard is up, so without this
+            // the operator has no way out of a draft but to send it.
+            document.addEventListener("pointerdown", function (event) {
+                var active = document.activeElement;
+                if (!active || !/^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) { return; }
+                var target = event.target;
+                if (target && target.closest && target.closest("input, textarea, select, label, [contenteditable]")) { return; }
+                active.blur();
+            }, { capture: true, passive: true });
+        </script>
     </head>
     <body>
         <div id="main"></div>
@@ -834,6 +847,8 @@ mod tests {
         assert!(MOBILE_INDEX.contains("width=device-width"));
         assert!(MOBILE_INDEX.contains("viewport-fit=cover"));
         assert!(MOBILE_INDEX.contains("name=\"color-scheme\" content=\"light dark\""));
+        assert!(MOBILE_INDEX.contains("addEventListener(\"pointerdown\""));
+        assert!(MOBILE_INDEX.contains("active.blur()"));
         assert!(!MOBILE_INDEX.contains("user-scalable=no"));
         assert!(!MOBILE_INDEX.contains("maximum-scale"));
     }
