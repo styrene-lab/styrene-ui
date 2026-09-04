@@ -975,9 +975,9 @@ label {
 
 .empty-state {
   display: grid;
-  min-block-size: 10rem;
+  min-block-size: 8rem;
   place-content: center;
-  padding: 1.25rem;
+  padding: 1rem 1.25rem;
   color: var(--ink-muted);
   text-align: center;
 }

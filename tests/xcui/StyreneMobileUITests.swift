@@ -126,8 +126,8 @@ final class StyreneMobileUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Conversations"].waitForExistence(timeout: 5))
         }
         let tabs: [(String, String, String)] = [
-            ("Contacts", "Contacts", "Contacts"),
-            ("Pages", "Pages", "Pages"),
+            ("Contacts", "Contacts", "Add by destination"),
+            ("Pages", "Pages", "No pages yet"),
             ("Network", "Network", "Bearers"),
             ("More", "More", "Operational summary"),
         ]
@@ -138,7 +138,10 @@ final class StyreneMobileUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts[heading].waitForExistence(timeout: 5), heading)
             // The destination bar carries the same word as the heading, so the
             // first content is looked up among static texts only.
-            let content = app.staticTexts
+            // First-content anchors must not repeat a tab label, because the
+            // destination bar would match; disclosure summaries are exposed as
+            // buttons, so the lookup stays on any element type.
+            let content = app.descendants(matching: .any)
                 .matching(NSPredicate(format: "label == %@", firstContent))
                 .firstMatch
             assertNearTop(content, label)
