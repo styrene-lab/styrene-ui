@@ -772,9 +772,19 @@ label {
 
 .composer-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: end;
   gap: 0.5rem;
+}
+
+/* Keyboard dismissal: hidden until the keyboard is up, then a plain control
+   beside Send that any tap-outside also satisfies. */
+.composer .keyboard-done {
+  display: none;
+}
+
+.mobile-shell[data-keyboard-visible="true"] .composer .keyboard-done {
+  display: inline-flex;
 }
 
 .composer textarea {

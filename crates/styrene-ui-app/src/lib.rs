@@ -3435,6 +3435,16 @@ pub fn Composer(
                     },
                     if sending { "Sending…" } else { "Send" }
                 }
+                // Visible only while the keyboard is up (see the stylesheet);
+                // the page's tap-outside listener does the actual blur, this
+                // gives the operator something obvious to tap.
+                button {
+                    id: "mobile.keyboard-done",
+                    class: "keyboard-done secondary-action",
+                    r#type: "button",
+                    "aria-label": "Dismiss keyboard",
+                    "Done"
+                }
             }
             div {
                 class: "delivery-method-row",

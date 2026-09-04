@@ -2015,3 +2015,12 @@ fn thread_renders_newest_message_first_in_the_dom_and_folds_delivery_detail() {
     assert!(later_at < first_at, "the newest message is first in the DOM");
     assert!(markup.contains("Delivery details"));
 }
+
+#[test]
+fn composer_offers_a_keyboard_dismiss_control() {
+    let markup = render(fixture("direct-message-queued"));
+    let done = opening_tag_with_id(&markup, "mobile.keyboard-done");
+    assert!(done.contains("type=\"button\""));
+    assert!(done.contains("aria-label=\"Dismiss keyboard\""));
+    assert!(MOBILE_CSS.contains("[data-keyboard-visible=\"true\"] .composer .keyboard-done"));
+}
