@@ -1,5 +1,7 @@
 # Tasks
 
+## 1. Roster and bearers
+
 - [x] 1.1 Render roster rows as fixed fields with an aspect tag and a facts column
 - [x] 1.2 Fold the endpoint editor into the TCP bearer row with an active-endpoint line
 - [x] 1.3 Fold the Bluetooth RNode controls into their bearer row

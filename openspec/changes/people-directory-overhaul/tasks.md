@@ -1,5 +1,7 @@
 # Tasks
 
+## 1. Directory
+
 - [ ] 1.1 Split People into Contacts and Discovered, with Discovered collapsed and counted
 - [ ] 1.2 Filter by aspect with delivery destinations as the default and other aspects behind a toggle
 - [ ] 1.3 Make the filter search name, hash prefix, and aspect and show the result count in the heading
