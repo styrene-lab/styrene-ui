@@ -3,6 +3,8 @@
 ## 1. Model
 
 - [ ] 1.1 Define the contact projection in the session: name, destinations, capabilities, link modes, presence, preference
+- [ ] 1.1a Group announces by identity and derive roles from aspects: person, page host, relay, tunnel peer, unknown
+- [ ] 1.1b Offer verbs from roles only: Message for a person, Browse for a page host, Use as relay for a relay; no composer for an identity without a person role
 - [ ] 1.2 Expose a link-mode summary per peer from the daemon: RNS path and hops, direct reachability, tunnel state
 
 ## 2. Screens
