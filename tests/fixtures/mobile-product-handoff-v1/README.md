@@ -7,7 +7,7 @@ Source fixture revision: `73daf4414deb826d388a4ca2cc1bb53a4bfd32d5`
 
 Source contract revision: `ae9b0f368aba4f8161c545ccf10069d630e5c69e`
 
-Current mobile backend dependency revision: `fb2e913f955173ed84d6ab826d81232fad5819bc`
+Current mobile backend dependency revision: `ab46aa1f13de5663c684225dc27dfcba330d965f`
 
 File SHA-256: `00918cb8d369d8bc1622942bfebb92994b9ae56f5fe893047e3f111b198df014`
 

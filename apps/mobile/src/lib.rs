@@ -815,7 +815,7 @@ mod tests {
         );
     }
 
-    const BACKEND_REVISION: &str = "fb2e913f955173ed84d6ab826d81232fad5819bc";
+    const BACKEND_REVISION: &str = "ab46aa1f13de5663c684225dc27dfcba330d965f";
     const MINIMUM_FIXTURE_REVISION: &str = "d8c0569fc30dd49280a3246703a31c84bb646bf3";
     const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
     const MOBILE_MANIFEST: &str = include_str!("../Cargo.toml");

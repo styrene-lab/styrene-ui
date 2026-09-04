@@ -1257,11 +1257,9 @@ async fn project(
                     age_secs: peer.age_secs,
                     source: PeerSource::CanonicalAnnounce,
                     announce_count: peer.announce_count,
-                    // TODO(contact-centric-shell): populated once the pin
-                    // carries MobilePeer identity and route fields.
-                    identity_hash: String::new(),
-                    hops: None,
-                    interface_kind: None,
+                    identity_hash: peer.identity_hash.clone(),
+                    hops: peer.hops,
+                    interface_kind: peer.interface_kind.clone(),
                 })
                 .collect(),
             conversations,
