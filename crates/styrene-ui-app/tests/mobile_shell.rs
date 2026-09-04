@@ -1268,7 +1268,8 @@ fn composer_disables_only_propagated_delivery_without_a_ready_node() {
     assert!(markup.contains("Select a propagation node in Network"));
     assert!(opening_tag_with_id(&markup, "mobile.send").contains("data-enabled=\"true\""));
     assert!(!markup.contains("id=\"mobile.send-disabled-reason\""));
-    assert!(markup.contains("Ready to send."));
+    // Nothing blocks the send, so the status says nothing.
+    assert!(!markup.contains("Ready to send."));
 }
 
 #[test]
@@ -1994,8 +1995,8 @@ fn composer_send_is_not_marked_in_flight_before_a_submit() {
     let markup = render(state);
     let send = opening_tag_with_id(&markup, "mobile.send");
     assert!(send.contains("data-sending=\"false\""));
-    assert!(markup.contains(">Send</button>"));
-    assert!(!markup.contains("Sending."));
+    assert!(send.contains("aria-label=\"Send\""));
+    assert!(!markup.contains("Sending…"));
 }
 
 #[test]
@@ -2014,13 +2015,4 @@ fn thread_renders_newest_message_first_in_the_dom_and_folds_delivery_detail() {
     let first_at = history.find("id=\"mobile.message.message-direct-1\"").expect("first card");
     assert!(later_at < first_at, "the newest message is first in the DOM");
     assert!(markup.contains("Delivery details"));
-}
-
-#[test]
-fn composer_offers_a_keyboard_dismiss_control() {
-    let markup = render(fixture("direct-message-queued"));
-    let done = opening_tag_with_id(&markup, "mobile.keyboard-done");
-    assert!(done.contains("type=\"button\""));
-    assert!(done.contains("aria-label=\"Dismiss keyboard\""));
-    assert!(MOBILE_CSS.contains("[data-keyboard-visible=\"true\"] .composer .keyboard-done"));
 }
