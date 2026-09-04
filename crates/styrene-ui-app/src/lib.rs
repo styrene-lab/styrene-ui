@@ -12,16 +12,16 @@ use styrene_ui_platform::{
     WindowClass, is_app_lock_failure_code,
 };
 use styrene_ui_state::{
-    BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
+    BearerKind, BearerState, Contact, ContactRole, Conversation, DeliveryEvidence, DeliveryMethod,
     DestinationEntryConstraint, IdentityBackupProtection, IdentityCustodyAuthentication,
     IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
     IdentityCustodyProtection, IdentityRecoveryFailure, IdentityRecoveryPhase,
-    IdentityRecoveryState, LXMF_DESTINATION_INPUT_MAX_BYTES, LocalAnnounceOutcome, Message,
-    MobileAction, MobileActionKind, MobileFixture, MobileStore, OperationalSummary,
+    IdentityRecoveryState, LXMF_DESTINATION_INPUT_MAX_BYTES, LinkMode, LocalAnnounceOutcome,
+    Message, MobileAction, MobileActionKind, MobileFixture, MobileStore, OperationalSummary,
     PEER_SEARCH_INPUT_MAX_BYTES, Peer, PropagationEvidence, PropagationUpdate, RuntimeBoundary,
     SessionPhase, SyncState, TargetClass, TransportEvidence, TypedFailure,
-    bounded_destination_input, bounded_peer_search_input, destination_entry_constraint,
-    peer_matches_search, start_conversation_action,
+    bounded_destination_input, bounded_peer_search_input, contact_lists,
+    destination_entry_constraint, peer_matches_search, project_contacts, start_conversation_action,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -70,7 +70,8 @@ impl BackNavigation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MobileDestination {
     Messages,
-    People,
+    Contacts,
+    Pages,
     Network,
     More,
 }
@@ -79,7 +80,8 @@ impl MobileDestination {
     fn label(self) -> &'static str {
         match self {
             Self::Messages => "Messages",
-            Self::People => "People",
+            Self::Contacts => "Contacts",
+            Self::Pages => "Pages",
             Self::Network => "Network",
             Self::More => "More",
         }
@@ -88,7 +90,8 @@ impl MobileDestination {
     fn id(self) -> &'static str {
         match self {
             Self::Messages => "messages",
-            Self::People => "people",
+            Self::Contacts => "contacts",
+            Self::Pages => "pages",
             Self::Network => "network",
             Self::More => "more",
         }
@@ -98,9 +101,10 @@ impl MobileDestination {
     fn icon_path(self) -> &'static str {
         match self {
             Self::Messages => "M4 5h16v11H8l-4 4V5z",
-            Self::People => {
+            Self::Contacts => {
                 "M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 19c0-3 3-5 6-5s6 2 6 5H2zm12 0c0-2-1-3.5-2.5-4.5C12.5 14 14 14 16 14c3 0 6 2 6 5h-8z"
             }
+            Self::Pages => "M7 3h7l3.5 3.5V21H7V3zm7 0v3.5h3.5M10 11h6M10 15h6",
             Self::Network => {
                 "M12 3v6m0 6v6M5 12H3m18 0h-2M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM5 5l2.5 2.5M19 5l-2.5 2.5M5 19l2.5-2.5M19 19l-2.5-2.5"
             }
@@ -189,6 +193,160 @@ fn aspect_label(aspect: &str) -> String {
 
 fn hash_glyph(hash: &str) -> String {
     hash.chars().take(2).flat_map(char::to_uppercase).collect()
+}
+
+/// Where a contact belongs in the Contacts screen. The operator reads link
+/// quality first: what is up now, what has a path, and what is only known.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ContactGroup {
+    Active,
+    Reachable,
+    Known,
+}
+
+impl ContactGroup {
+    const fn heading(self) -> &'static str {
+        match self {
+            Self::Active => "Active",
+            Self::Reachable => "Reachable",
+            Self::Known => "Known",
+        }
+    }
+}
+
+/// A direct RNS path of no more than one hop is an active link; a longer path
+/// is reachable but not immediate. A tunnel is always active, and an identity
+/// with no path at all is only known.
+const fn contact_group(contact: &Contact) -> ContactGroup {
+    match contact.link {
+        LinkMode::Tunnel => ContactGroup::Active,
+        LinkMode::RnsDirect => match contact.hops {
+            Some(0 | 1) => ContactGroup::Active,
+            _ => ContactGroup::Reachable,
+        },
+        LinkMode::ViaNode => ContactGroup::Reachable,
+        LinkMode::Unreachable => ContactGroup::Known,
+    }
+}
+
+/// One glyph per link mode, so a row states reachability without a sentence.
+const fn link_glyph(link: LinkMode) -> &'static str {
+    match link {
+        LinkMode::RnsDirect => "●",
+        LinkMode::ViaNode => "◍",
+        LinkMode::Tunnel => "⇄",
+        LinkMode::Unreachable => "○",
+    }
+}
+
+/// The accessible name for the link glyph. The glyph itself is decorative.
+const fn link_mode_label(link: LinkMode) -> &'static str {
+    match link {
+        LinkMode::RnsDirect => "RNS direct",
+        LinkMode::ViaNode => "Via node",
+        LinkMode::Tunnel => "Tunnel",
+        LinkMode::Unreachable => "No path",
+    }
+}
+
+/// Path length as the operator reads it, or the absence of one.
+fn hops_label(hops: Option<u8>) -> String {
+    match hops {
+        Some(1) => "1 hop".to_owned(),
+        Some(hops) => format!("{hops} hops"),
+        None => "no path".to_owned(),
+    }
+}
+
+/// The thread header states the link, not the delivery method.
+fn link_summary(link: LinkMode, hops: Option<u8>) -> String {
+    match link {
+        LinkMode::RnsDirect => match hops {
+            Some(hops) => format!("RNS · {}", hops_label(Some(hops))),
+            None => "RNS".to_owned(),
+        },
+        LinkMode::ViaNode => "via node".to_owned(),
+        LinkMode::Tunnel => "tunnel".to_owned(),
+        LinkMode::Unreachable => "no path".to_owned(),
+    }
+}
+
+/// Filter a contact by the operator's own vocabulary: the name they see, the
+/// identity, or any destination it has announced.
+fn contact_matches(contact: &Contact, query: &str) -> bool {
+    query.is_empty()
+        || contact.name.to_ascii_lowercase().contains(query)
+        || contact.id.to_ascii_lowercase().contains(query)
+        || contact.destinations.iter().any(|(_, hash)| hash.to_ascii_lowercase().contains(query))
+}
+
+/// The directory sections a contact belongs to, chosen by its primary role.
+/// Roles arrive in precedence order, so the first one decides the section.
+fn directory_group(contact: &Contact) -> &'static str {
+    match contact.roles.first() {
+        Some(ContactRole::Person) => "People",
+        Some(ContactRole::PageHost) => "Page hosts",
+        Some(ContactRole::Relay) => "Relays",
+        _ => "Other",
+    }
+}
+
+/// Every announced aspect for a contact, space separated, so provenance stays
+/// queryable on the row even though the visible tag names the role.
+fn contact_aspects(contact: &Contact) -> String {
+    let mut aspects: Vec<&str> = Vec::new();
+    for (aspect, _) in &contact.destinations {
+        if !aspects.contains(&aspect.as_str()) {
+            aspects.push(aspect);
+        }
+    }
+    aspects.join(" ")
+}
+
+/// The visible tag for one role. An unrecognised aspect offers no verb, so the
+/// row states the aspect itself rather than the empty word "Unknown".
+fn role_tag(contact: &Contact, role: ContactRole) -> String {
+    if role != ContactRole::Unknown {
+        return role.label().to_owned();
+    }
+    contact
+        .destinations
+        .iter()
+        .find(|(aspect, _)| ContactRole::from_aspect(aspect) == ContactRole::Unknown)
+        .map_or_else(|| role.label().to_owned(), |(aspect, _)| aspect_label(aspect))
+}
+
+/// The identity block shared by every contact row: glyph, name, short hash,
+/// role tags, and the facts column.
+fn contact_identity(contact: &Contact) -> Element {
+    // A person is named by the destination that receives messages; anything
+    // else by the destination it announced. The identity hash is the last
+    // resort, and only when nothing was announced under it.
+    let hash = contact
+        .delivery_destination
+        .clone()
+        .or_else(|| contact.destinations.first().map(|(_, hash)| hash.clone()))
+        .unwrap_or_else(|| contact.id.clone());
+    let tags: Vec<String> = contact.roles.iter().map(|role| role_tag(contact, *role)).collect();
+    rsx! {
+        span { class: "hash-glyph", {hash_glyph(&hash)} }
+        span {
+            class: "directory-copy",
+            strong { {contact.name.clone()} }
+            span {
+                class: "roster-ident",
+                span { class: "technical-value", {short_hash(&hash)} }
+                for tag in tags {
+                    span { class: "roster-aspect", {tag} }
+                }
+            }
+        }
+        span {
+            class: "roster-facts",
+            span { class: "roster-age", "{age_label(contact.age_secs)} ago" }
+            span { class: "roster-hops", {hops_label(contact.hops)} }
+        }
+    }
 }
 
 fn peer_name(hash: &str, peers: &[Peer]) -> String {
@@ -650,7 +808,9 @@ pub fn MobileShell(
     let mut destination = use_signal(|| MobileDestination::Messages);
     let mut selected_peer = use_signal(|| None::<String>);
     let mut compact_thread_open = use_signal(|| false);
-    let mut people_filter = use_signal(String::new);
+    let mut contacts_filter = use_signal(String::new);
+    let mut directory_filter = use_signal(String::new);
+    let mut contact_destination = use_signal(String::new);
     let mut new_message_open = use_signal(|| false);
     let mut new_message_trigger = use_signal(|| None::<Event<MountedData>>);
     let mut identity_qr_open = use_signal(|| false);
@@ -711,33 +871,105 @@ pub fn MobileShell(
     let compact_pane = if *compact_thread_open.read() { "thread" } else { "list" };
     let compact_thread_is_open = *compact_thread_open.read();
     let conversation_count = fixture.conversations.len().to_string();
-    let people_query = people_filter.read().trim().to_ascii_lowercase();
-    let mut visible_peers: Vec<Peer> = fixture
-        .peers
+
+    // One projection feeds every screen: Messages reads the link mode,
+    // Contacts and Pages read the operator's own lists, and the Network
+    // directory keeps the whole announce firehose.
+    let contacts = project_contacts(&fixture.peers, &fixture.conversations, &fixture.contact_book);
+    let lists = contact_lists(&contacts);
+    let selected_contact = selected_hash.as_deref().and_then(|hash| {
+        contacts.iter().find(|contact| contact.delivery_destination.as_deref() == Some(hash))
+    });
+    let selected_link = selected_contact.map_or(LinkMode::Unreachable, |contact| contact.link);
+    let selected_hops = selected_contact.and_then(|contact| contact.hops);
+    let selected_link_summary = link_summary(selected_link, selected_hops);
+
+    let contacts_query = contacts_filter.read().trim().to_ascii_lowercase();
+    let visible_contacts: Vec<Contact> = lists
+        .contacts
         .iter()
-        .filter(|peer| {
-            people_query.is_empty()
-                || peer
-                    .display_name
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase()
-                    .contains(&people_query)
-                || peer.destination_hash.to_ascii_lowercase().contains(&people_query)
-                || peer.aspect.to_ascii_lowercase().contains(&people_query)
-        })
+        .filter(|contact| contact_matches(contact, &contacts_query))
         .cloned()
         .collect();
-    visible_peers.sort_by(|left, right| {
-        left.age_secs
-            .cmp(&right.age_secs)
-            .then_with(|| left.destination_hash.cmp(&right.destination_hash))
-    });
-    let peer_count = if people_query.is_empty() {
-        fixture.peers.len().to_string()
+    let contact_count = if contacts_query.is_empty() {
+        lists.contacts.len().to_string()
     } else {
-        format!("{} of {}", visible_peers.len(), fixture.peers.len())
+        format!("{} of {}", visible_contacts.len(), lists.contacts.len())
     };
+    let contact_groups: Vec<(ContactGroup, Vec<Contact>)> =
+        [ContactGroup::Active, ContactGroup::Reachable, ContactGroup::Known]
+            .into_iter()
+            .map(|group| {
+                let members = visible_contacts
+                    .iter()
+                    .filter(|contact| contact_group(contact) == group)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                (group, members)
+            })
+            .collect();
+
+    let contact_destination_value = contact_destination.read().clone();
+    let contact_constraint = destination_entry_constraint(&contact_destination_value);
+    let contact_add_enabled = action_sink.is_some() && contact_constraint.permits_submission();
+    let contact_add_message = if action_sink.is_none() {
+        "Adding a contact is unavailable in this view.".to_owned()
+    } else {
+        match contact_constraint {
+            DestinationEntryConstraint::Empty => {
+                format!("Enter a {LXMF_DESTINATION_INPUT_MAX_BYTES}-character LXMF destination.")
+            }
+            DestinationEntryConstraint::Incomplete => format!(
+                "Destination must contain {LXMF_DESTINATION_INPUT_MAX_BYTES} characters before backend validation."
+            ),
+            DestinationEntryConstraint::Ready => {
+                "The backend will validate this destination before creating a conversation."
+                    .to_owned()
+            }
+            DestinationEntryConstraint::Oversized => {
+                format!(
+                    "Destination exceeds the {LXMF_DESTINATION_INPUT_MAX_BYTES}-byte input limit."
+                )
+            }
+        }
+    };
+
+    // Recently seen page hosts are the browse equivalent of an unread list:
+    // newest first, and bounded so the screen stays readable.
+    let mut recent_pages: Vec<Contact> = contacts
+        .iter()
+        .filter(|contact| contact.roles.contains(&ContactRole::PageHost) && !contact.bookmarked)
+        .cloned()
+        .collect();
+    recent_pages.sort_by_key(|contact| std::cmp::Reverse(contact.last_seen));
+    recent_pages.truncate(20);
+    let page_groups: Vec<(&str, Vec<Contact>)> =
+        vec![("Bookmarked", lists.pages.clone()), ("Recently seen", recent_pages)];
+    let page_count = page_groups.iter().map(|(_, group)| group.len()).sum::<usize>().to_string();
+
+    let directory_query = directory_filter.read().trim().to_ascii_lowercase();
+    let visible_directory: Vec<Contact> = lists
+        .directory
+        .iter()
+        .filter(|contact| contact_matches(contact, &directory_query))
+        .cloned()
+        .collect();
+    let directory_count = if directory_query.is_empty() {
+        lists.directory.len().to_string()
+    } else {
+        format!("{} of {}", visible_directory.len(), lists.directory.len())
+    };
+    let directory_groups: Vec<(&str, Vec<Contact>)> = ["People", "Page hosts", "Relays", "Other"]
+        .into_iter()
+        .map(|title| {
+            let members = visible_directory
+                .iter()
+                .filter(|contact| directory_group(contact) == title)
+                .cloned()
+                .collect::<Vec<_>>();
+            (title, members)
+        })
+        .collect();
     let app_lock_failure = fixture
         .session
         .failure
@@ -974,6 +1206,7 @@ pub fn MobileShell(
                             conversations: fixture.conversations.clone(),
                             peers: fixture.peers.clone(),
                             messages: fixture.messages.clone(),
+                            contacts: contacts.clone(),
                             selected_peer: selected_hash.clone(),
                             on_select: move |peer_hash: String| {
                                 selected_peer.set(Some(peer_hash.clone()));
@@ -1021,6 +1254,17 @@ pub fn MobileShell(
                                 if !selected_short_hash.is_empty() {
                                     p { class: "technical-value", {selected_short_hash.clone()} }
                                 }
+                                span {
+                                    id: "mobile.thread-link",
+                                    class: "thread-link",
+                                    "data-link": selected_link.as_str(),
+                                    span {
+                                        class: "link-mode",
+                                        "aria-hidden": "true",
+                                        {link_glyph(selected_link)}
+                                    }
+                                    {selected_link_summary.clone()}
+                                }
                             }
                         }
                         MessageHistory {
@@ -1042,171 +1286,289 @@ pub fn MobileShell(
                 }
             }
             section {
-                id: "mobile.people",
+                id: "mobile.contacts",
                 class: "app-surface directory-surface",
-                "aria-labelledby": "mobile.people-heading",
-                hidden: active_destination != MobileDestination::People,
+                "aria-labelledby": "mobile.contacts-heading",
+                hidden: active_destination != MobileDestination::Contacts,
                 div {
                     class: "section-heading",
-                    h2 { id: "mobile.people-heading", "Discovered peers" }
-                    span { class: "count-badge", {peer_count.clone()} }
+                    h2 { id: "mobile.contacts-heading", "Contacts" }
+                    span { class: "count-badge", {contact_count.clone()} }
                 }
-                if fixture.peers.is_empty() {
-                    div {
-                        class: "empty-state",
-                        h3 { "No peers discovered" }
-                        p { "Announced peers will appear here." }
+                form {
+                    class: "contact-add-form",
+                    onsubmit: move |event: FormEvent| {
+                        event.prevent_default();
+                        let candidate = contact_destination.read().clone();
+                        if let Some(action_sink) = action_sink
+                            && let Some(action) = start_conversation_action(
+                                fixture.generation,
+                                &candidate,
+                            )
+                        {
+                            let peer_hash = candidate.trim().to_owned();
+                            action_sink.call(action);
+                            selected_peer.set(Some(peer_hash));
+                            if !compact_thread_is_open {
+                                back_navigation.open_thread();
+                            }
+                            compact_thread_open.set(true);
+                            destination.set(MobileDestination::Messages);
+                            contact_destination.set(String::new());
+                        }
+                    },
+                    label { r#for: "mobile.contact-destination", "Add by destination" }
+                    input {
+                        id: "mobile.contact-destination",
+                        name: "contact-destination",
+                        r#type: "text",
+                        autocomplete: "off",
+                        autocapitalize: "off",
+                        spellcheck: "false",
+                        maxlength: LXMF_DESTINATION_INPUT_MAX_BYTES.to_string(),
+                        disabled: action_sink.is_none(),
+                        "aria-describedby": "mobile.contact-add-status",
+                        value: contact_destination_value.clone(),
+                        oninput: move |event| {
+                            contact_destination.set(bounded_destination_input(&event.value()));
+                        },
+                    }
+                    button {
+                        id: "mobile.contact-add",
+                        class: "secondary-action",
+                        r#type: "submit",
+                        disabled: !contact_add_enabled,
+                        "aria-describedby": "mobile.contact-add-status",
+                        "Add"
+                    }
+                    p {
+                        id: "mobile.contact-add-status",
+                        class: "field-hint",
+                        role: "status",
+                        {contact_add_message.clone()}
                     }
                 }
-                if !fixture.peers.is_empty() {
+                if !lists.contacts.is_empty() {
                     div {
                         class: "roster-filter",
-                        label { class: "visually-hidden", r#for: "mobile.people-filter", "Filter peers" }
+                        label {
+                            class: "visually-hidden",
+                            r#for: "mobile.contacts-filter",
+                            "Filter contacts"
+                        }
                         input {
-                            id: "mobile.people-filter",
+                            id: "mobile.contacts-filter",
                             r#type: "search",
-                            placeholder: "Filter by name, hash, or aspect",
+                            placeholder: "Filter contacts",
                             autocomplete: "off",
                             autocapitalize: "off",
                             spellcheck: "false",
-                            "aria-controls": "mobile.people-list",
-                            value: people_filter.read().clone(),
-                            oninput: move |event| people_filter.set(event.value()),
+                            "aria-controls": "mobile.contacts-list",
+                            value: contacts_filter.read().clone(),
+                            oninput: move |event| contacts_filter.set(event.value()),
                         }
                     }
                 }
-                if !fixture.peers.is_empty() && visible_peers.is_empty() {
+                if lists.contacts.is_empty() {
+                    div {
+                        id: "mobile.contacts-empty",
+                        class: "empty-state",
+                        h3 { "No contacts yet" }
+                        p { "Message a peer or favourite one in the Network directory." }
+                    }
+                }
+                if !lists.contacts.is_empty() && visible_contacts.is_empty() {
                     div {
                         class: "empty-state",
-                        h3 { "No peers match" }
+                        h3 { "No contacts match" }
                         p { "Widen the filter to see the roster." }
                     }
                 }
-                if !fixture.peers.is_empty() && action_sink.is_none() {
+                if !lists.contacts.is_empty() && action_sink.is_none() {
                     p {
-                        id: "mobile.people-actions-disabled",
+                        id: "mobile.contacts-actions-disabled",
                         class: "field-hint",
                         "Starting a conversation is unavailable in this view."
                     }
                 }
-                if !fixture.peers.is_empty() {
-                    ul {
-                        id: "mobile.people-list",
-                        class: "people-list",
-                        "aria-label": "Discovered people",
-                    for peer in &visible_peers {
-                    {
-                        let has_conversation = fixture.conversations.iter().any(|conversation| {
-                            conversation.peer_hash == peer.destination_hash
-                        });
-                        let display_name = peer.display_name.clone().unwrap_or_else(|| {
-                            format!("Peer {}", short_hash(&peer.destination_hash))
-                        });
-                        let announce_label = if peer.announce_count == 1 { "announce" } else { "announces" };
-                        if has_conversation {
-                            let peer_hash = peer.destination_hash.clone();
-                            rsx! {
-                                li { button {
-                                    id: format!("mobile.peer.{}", peer.destination_hash),
-                                    class: "peer-card",
-                                    r#type: "button",
-                                    "data-aspect": peer.aspect.clone(),
-                                    "data-source": "canonical_announce",
-                                    "data-action": "open-conversation",
-                                    onclick: move |_| {
-                                        selected_peer.set(Some(peer_hash.clone()));
-                                        if let Some(action_sink) = action_sink {
-                                            action_sink.call(MobileAction::new(
-                                                fixture.generation,
-                                                MobileActionKind::SetActiveConversation {
-                                                    peer_hash: Some(peer_hash.clone()),
-                                                },
-                                            ));
-                                        }
-                                        if !compact_thread_is_open {
-                                            back_navigation.open_thread();
-                                        }
-                                        compact_thread_open.set(true);
-                                        destination.set(MobileDestination::Messages);
-                                    },
-                                    span { class: "hash-glyph", {hash_glyph(&peer.destination_hash)} }
-                                    span {
-                                        class: "directory-copy",
-                                        strong { {display_name} }
-                                        span {
-                                            class: "roster-ident",
-                                            span { class: "technical-value", {short_hash(&peer.destination_hash)} }
-                                            span { class: "roster-aspect", {aspect_label(&peer.aspect)} }
-                                        }
-                                    }
-                                    span {
-                                        class: "roster-facts",
-                                        span { class: "roster-age", "{age_label(peer.age_secs)} ago" }
-                                        span {
-                                            class: "roster-count",
-                                            "aria-label": format!("{} {announce_label}", peer.announce_count),
-                                            "×{peer.announce_count}"
-                                        }
-                                    }
-                                    span { class: "row-action", "Open conversation" }
-                                } }
+                div {
+                    id: "mobile.contacts-list",
+                    for (group , members) in contact_groups.clone() {
+                        if !members.is_empty() {
+                            div {
+                                class: "contact-group",
+                                h3 { {group.heading()} }
+                                span { class: "count-badge", {members.len().to_string()} }
                             }
-                        } else {
-                            let peer_hash = peer.destination_hash.clone();
-                            rsx! {
-                                li { button {
-                                    id: format!("mobile.peer.{}", peer.destination_hash),
-                                    class: "peer-card",
-                                    r#type: "button",
-                                    "data-aspect": peer.aspect.clone(),
-                                    "data-source": "canonical_announce",
-                                    "data-action": "start-conversation",
-                                    disabled: action_sink.is_none(),
-                                    "aria-describedby": action_sink
-                                        .is_none()
-                                        .then_some("mobile.people-actions-disabled"),
-                                    onclick: move |_| {
-                                        selected_peer.set(Some(peer_hash.clone()));
-                                        if let Some(action_sink) = action_sink {
-                                            action_sink.call(MobileAction::new(
-                                                fixture.generation,
-                                                MobileActionKind::StartConversation {
-                                                    peer_hash: peer_hash.clone(),
-                                                },
-                                            ));
-                                        }
-                                        if !compact_thread_is_open {
-                                            back_navigation.open_thread();
-                                        }
-                                        compact_thread_open.set(true);
-                                        destination.set(MobileDestination::Messages);
-                                    },
-                                    span { class: "hash-glyph", {hash_glyph(&peer.destination_hash)} }
-                                    span {
-                                        class: "directory-copy",
-                                        strong { {display_name} }
-                                        span {
-                                            class: "roster-ident",
-                                            span { class: "technical-value", {short_hash(&peer.destination_hash)} }
-                                            span { class: "roster-aspect", {aspect_label(&peer.aspect)} }
+                            ul {
+                                class: "people-list",
+                                "aria-label": format!("{} contacts", group.heading()),
+                                for contact in members {
+                                    {
+                                        let contact_id = contact.id.clone();
+                                        let favourite_label = format!("Favourite {}", contact.name);
+                                        let peer_hash = contact
+                                            .delivery_destination
+                                            .clone()
+                                            .unwrap_or_else(|| contact.id.clone());
+                                        let row_id = format!("mobile.peer.{peer_hash}");
+                                        let open = contact.has_conversation;
+                                        let action_disabled = !open && action_sink.is_none();
+                                        rsx! {
+                                            li {
+                                                class: "contact-entry",
+                                                button {
+                                                    id: row_id,
+                                                    class: "peer-card",
+                                                    r#type: "button",
+                                                    "data-contact": contact.id.clone(),
+                                                    "data-aspects": contact_aspects(&contact),
+                                                    "data-link": contact.link.as_str(),
+                                                    "data-source": "canonical_announce",
+                                                    "data-action": if open { "open-conversation" } else { "start-conversation" },
+                                                    disabled: action_disabled,
+                                                    "aria-describedby": action_disabled
+                                                        .then_some("mobile.contacts-actions-disabled"),
+                                                    onclick: move |_| {
+                                                        selected_peer.set(Some(peer_hash.clone()));
+                                                        if let Some(action_sink) = action_sink {
+                                                            let kind = if open {
+                                                                MobileActionKind::SetActiveConversation {
+                                                                    peer_hash: Some(peer_hash.clone()),
+                                                                }
+                                                            } else {
+                                                                MobileActionKind::StartConversation {
+                                                                    peer_hash: peer_hash.clone(),
+                                                                }
+                                                            };
+                                                            action_sink
+                                                                .call(MobileAction::new(fixture.generation, kind));
+                                                        }
+                                                        if !compact_thread_is_open {
+                                                            back_navigation.open_thread();
+                                                        }
+                                                        compact_thread_open.set(true);
+                                                        destination.set(MobileDestination::Messages);
+                                                    },
+                                                    {contact_identity(&contact)}
+                                                    span {
+                                                        class: "row-action",
+                                                        if open { "Open conversation" } else { "Start conversation" }
+                                                    }
+                                                }
+                                                button {
+                                                    id: format!("mobile.contact-favourite.{contact_id}"),
+                                                    class: "contact-toggle",
+                                                    r#type: "button",
+                                                    "aria-pressed": contact.favourite.to_string(),
+                                                    "aria-label": favourite_label,
+                                                    disabled: action_sink.is_none(),
+                                                    onclick: move |_| {
+                                                        if let Some(action_sink) = action_sink {
+                                                            action_sink.call(MobileAction::new(
+                                                                fixture.generation,
+                                                                MobileActionKind::ToggleFavourite {
+                                                                    contact_id: contact_id.clone(),
+                                                                },
+                                                            ));
+                                                        }
+                                                    },
+                                                    span {
+                                                        "aria-hidden": "true",
+                                                        if contact.favourite { "★" } else { "☆" }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
-                                    span {
-                                        class: "roster-facts",
-                                        span { class: "roster-age", "{age_label(peer.age_secs)} ago" }
-                                        span {
-                                            class: "roster-count",
-                                            "aria-label": format!("{} {announce_label}", peer.announce_count),
-                                            "×{peer.announce_count}"
-                                        }
-                                    }
-                                    span { class: "row-action", "Start conversation" }
-                                } }
+                                }
                             }
                         }
                     }
+                }
+            }
+            section {
+                id: "mobile.pages",
+                class: "app-surface directory-surface",
+                "aria-labelledby": "mobile.pages-heading",
+                hidden: active_destination != MobileDestination::Pages,
+                div {
+                    class: "section-heading",
+                    h2 { id: "mobile.pages-heading", "Pages" }
+                    span { class: "count-badge", {page_count.clone()} }
+                }
+                if page_count == "0" {
+                    div {
+                        id: "mobile.pages-empty",
+                        class: "empty-state",
+                        h3 { "No pages yet" }
+                        p { "Bookmark a page host in the Network directory." }
+                    }
+                } else {
+                    p {
+                        id: "mobile.pages-browse-disabled",
+                        class: "field-hint",
+                        "Browsing pages is not available in this build."
                     }
                 }
+                for (title , members) in page_groups.clone() {
+                    if !members.is_empty() {
+                        div {
+                            class: "contact-group",
+                            h3 { {title} }
+                            span { class: "count-badge", {members.len().to_string()} }
+                        }
+                        ul {
+                            class: "people-list",
+                            "aria-label": format!("{title} pages"),
+                            for contact in members {
+                                {
+                                    let contact_id = contact.id.clone();
+                                    let bookmark_label = format!("Bookmark {}", contact.name);
+                                    rsx! {
+                                        li {
+                                            class: "contact-entry",
+                                            button {
+                                                id: format!("mobile.page.{}", contact.id),
+                                                class: "peer-card",
+                                                r#type: "button",
+                                                "data-contact": contact.id.clone(),
+                                                "data-aspects": contact_aspects(&contact),
+                                                "data-link": contact.link.as_str(),
+                                                "data-action": "browse",
+                                                disabled: true,
+                                                "aria-describedby": "mobile.pages-browse-disabled",
+                                                {contact_identity(&contact)}
+                                                span { class: "row-action", "Browse" }
+                                            }
+                                            button {
+                                                id: format!("mobile.contact-bookmark.{contact_id}"),
+                                                class: "contact-toggle",
+                                                r#type: "button",
+                                                "aria-pressed": contact.bookmarked.to_string(),
+                                                "aria-label": bookmark_label,
+                                                disabled: action_sink.is_none(),
+                                                onclick: move |_| {
+                                                    if let Some(action_sink) = action_sink {
+                                                        action_sink.call(MobileAction::new(
+                                                            fixture.generation,
+                                                            MobileActionKind::ToggleBookmark {
+                                                                contact_id: contact_id.clone(),
+                                                            },
+                                                        ));
+                                                    }
+                                                },
+                                                span {
+                                                    "aria-hidden": "true",
+                                                    if contact.bookmarked { "▣" } else { "▢" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             section {
@@ -1372,6 +1734,202 @@ pub fn MobileShell(
                     propagation,
                     actions_enabled: live_actions_enabled,
                     action_sink,
+                }
+                details {
+                    id: "mobile.directory",
+                    class: "surface-card directory-card",
+                    summary { {format!("Directory · {directory_count}")} }
+                    if lists.directory.is_empty() {
+                        div {
+                            id: "mobile.directory-empty",
+                            class: "empty-state",
+                            h3 { "No announces yet" }
+                            p { "Announced nodes and pages will appear here." }
+                        }
+                    }
+                    if !lists.directory.is_empty() {
+                        div {
+                            class: "roster-filter",
+                            label {
+                                class: "visually-hidden",
+                                r#for: "mobile.directory-filter",
+                                "Filter the directory"
+                            }
+                            input {
+                                id: "mobile.directory-filter",
+                                r#type: "search",
+                                placeholder: "Filter by name, identity, or destination",
+                                autocomplete: "off",
+                                autocapitalize: "off",
+                                spellcheck: "false",
+                                "aria-controls": "mobile.directory-list",
+                                value: directory_filter.read().clone(),
+                                oninput: move |event| directory_filter.set(event.value()),
+                            }
+                        }
+                    }
+                    if !lists.directory.is_empty() && visible_directory.is_empty() {
+                        div {
+                            class: "empty-state",
+                            h3 { "No entries match" }
+                            p { "Widen the filter to see the directory." }
+                        }
+                    }
+                    div {
+                        id: "mobile.directory-list",
+                        for (title , members) in directory_groups.clone() {
+                            if !members.is_empty() {
+                                div {
+                                    class: "contact-group",
+                                    h3 { {title} }
+                                    span { class: "count-badge", {members.len().to_string()} }
+                                }
+                                ul {
+                                    class: "people-list",
+                                    "aria-label": format!("{title} directory"),
+                                    for contact in members {
+                                        {
+                                            let contact_id = contact.id.clone();
+                                            let is_person = contact.roles.contains(&ContactRole::Person);
+                                            let is_page_host =
+                                                contact.roles.contains(&ContactRole::PageHost);
+                                            let favourite_label = format!("Favourite {}", contact.name);
+                                            let bookmark_label = format!("Bookmark {}", contact.name);
+                                            let bookmark_id = contact_id.clone();
+                                            let peer_hash = contact.delivery_destination.clone();
+                                            let open = contact.has_conversation;
+                                            let entry_id = format!("mobile.directory-entry.{contact_id}");
+                                            rsx! {
+                                                li {
+                                                    class: "contact-entry",
+                                                    if let Some(peer_hash) = peer_hash {
+                                                        button {
+                                                            id: entry_id,
+                                                            class: "peer-card",
+                                                            r#type: "button",
+                                                            "data-contact": contact.id.clone(),
+                                                            "data-aspects": contact_aspects(&contact),
+                                                            "data-link": contact.link.as_str(),
+                                                            "data-source": "canonical_announce",
+                                                            "data-action": if open { "open-conversation" } else { "start-conversation" },
+                                                            disabled: action_sink.is_none(),
+                                                            onclick: move |_| {
+                                                                selected_peer.set(Some(peer_hash.clone()));
+                                                                if let Some(action_sink) = action_sink {
+                                                                    let kind = if open {
+                                                                        MobileActionKind::SetActiveConversation {
+                                                                            peer_hash: Some(peer_hash.clone()),
+                                                                        }
+                                                                    } else {
+                                                                        MobileActionKind::StartConversation {
+                                                                            peer_hash: peer_hash.clone(),
+                                                                        }
+                                                                    };
+                                                                    action_sink
+                                                                        .call(MobileAction::new(fixture.generation, kind));
+                                                                }
+                                                                if !compact_thread_is_open {
+                                                                    back_navigation.open_thread();
+                                                                }
+                                                                compact_thread_open.set(true);
+                                                                destination.set(MobileDestination::Messages);
+                                                            },
+                                                            {contact_identity(&contact)}
+                                                            span {
+                                                                class: "row-action",
+                                                                if open { "Open conversation" } else { "Start conversation" }
+                                                            }
+                                                        }
+                                                    } else if is_page_host {
+                                                        button {
+                                                            id: entry_id,
+                                                            class: "peer-card",
+                                                            r#type: "button",
+                                                            "data-contact": contact.id.clone(),
+                                                            "data-aspects": contact_aspects(&contact),
+                                                            "data-link": contact.link.as_str(),
+                                                            "data-source": "canonical_announce",
+                                                            "data-action": "browse",
+                                                            disabled: true,
+                                                            "aria-describedby": "mobile.directory-browse-disabled",
+                                                            {contact_identity(&contact)}
+                                                            span { class: "row-action", "Browse" }
+                                                        }
+                                                    } else {
+                                                        div {
+                                                            id: entry_id,
+                                                            class: "peer-card",
+                                                            "data-contact": contact.id.clone(),
+                                                            "data-aspects": contact_aspects(&contact),
+                                                            "data-link": contact.link.as_str(),
+                                                            "data-source": "canonical_announce",
+                                                            {contact_identity(&contact)}
+                                                        }
+                                                    }
+                                                    if is_person {
+                                                        button {
+                                                            id: format!("mobile.directory-favourite.{contact_id}"),
+                                                            class: "contact-toggle",
+                                                            r#type: "button",
+                                                            "aria-pressed": contact.favourite.to_string(),
+                                                            "aria-label": favourite_label,
+                                                            disabled: action_sink.is_none(),
+                                                            onclick: move |_| {
+                                                                if let Some(action_sink) = action_sink {
+                                                                    action_sink.call(MobileAction::new(
+                                                                        fixture.generation,
+                                                                        MobileActionKind::ToggleFavourite {
+                                                                            contact_id: contact_id.clone(),
+                                                                        },
+                                                                    ));
+                                                                }
+                                                            },
+                                                            span {
+                                                                "aria-hidden": "true",
+                                                                if contact.favourite { "★" } else { "☆" }
+                                                            }
+                                                        }
+                                                    } else if is_page_host {
+                                                        button {
+                                                            id: format!("mobile.directory-bookmark.{bookmark_id}"),
+                                                            class: "contact-toggle",
+                                                            r#type: "button",
+                                                            "aria-pressed": contact.bookmarked.to_string(),
+                                                            "aria-label": bookmark_label,
+                                                            disabled: action_sink.is_none(),
+                                                            onclick: move |_| {
+                                                                if let Some(action_sink) = action_sink {
+                                                                    action_sink.call(MobileAction::new(
+                                                                        fixture.generation,
+                                                                        MobileActionKind::ToggleBookmark {
+                                                                            contact_id: bookmark_id.clone(),
+                                                                        },
+                                                                    ));
+                                                                }
+                                                            },
+                                                            span {
+                                                                "aria-hidden": "true",
+                                                                if contact.bookmarked { "▣" } else { "▢" }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if directory_groups.iter().any(|(title, members)| {
+                        *title == "Page hosts" && !members.is_empty()
+                    }) {
+                        p {
+                            id: "mobile.directory-browse-disabled",
+                            class: "field-hint",
+                            "Browsing pages is not available in this build."
+                        }
+                    }
                 }
             }
             section {
@@ -1624,7 +2182,8 @@ pub fn MobileShell(
                 "aria-label": "Primary",
                 for item in [
                     MobileDestination::Messages,
-                    MobileDestination::People,
+                    MobileDestination::Contacts,
+                    MobileDestination::Pages,
                     MobileDestination::Network,
                     MobileDestination::More,
                 ] {
@@ -2873,6 +3432,9 @@ pub fn ConversationList(
     conversations: Vec<Conversation>,
     peers: Vec<Peer>,
     #[props(default)] messages: Vec<Message>,
+    /// The contact projection, so each row can state the link that carries it.
+    #[props(default)]
+    contacts: Vec<Contact>,
     selected_peer: Option<String>,
     on_select: EventHandler<String>,
 ) -> Element {
@@ -2886,7 +3448,7 @@ pub fn ConversationList(
                     id: "mobile.messages-empty",
                     class: "empty-state",
                     h3 { "No conversations yet" }
-                    p { "Open People to review discovered peers and existing conversations." }
+                    p { "Open Contacts to review people and existing conversations." }
                 }
             }
             for conversation in conversations {
@@ -2896,6 +3458,13 @@ pub fn ConversationList(
                     let peer_short_hash = short_hash(&conversation.peer_hash);
                     let hash_glyph = hash_glyph(&conversation.peer_hash);
                     let selected_hash = conversation.peer_hash.clone();
+                    let link = contacts
+                        .iter()
+                        .find(|contact| {
+                            contact.delivery_destination.as_deref()
+                                == Some(conversation.peer_hash.as_str())
+                        })
+                        .map_or(LinkMode::Unreachable, |contact| contact.link);
                     let latest = messages
                         .iter()
                         .filter(|message| message.peer_hash == conversation.peer_hash)
@@ -2924,6 +3493,13 @@ pub fn ConversationList(
                         span {
                             class: "conversation-line",
                             strong { {name} }
+                            span {
+                                class: "link-mode",
+                                role: "img",
+                                "data-link": link.as_str(),
+                                "aria-label": link_mode_label(link),
+                                {link_glyph(link)}
+                            }
                             span { class: "technical-value", {peer_short_hash} }
                             if let Some(time) = latest_time {
                                 time { class: "conversation-time", {time} }

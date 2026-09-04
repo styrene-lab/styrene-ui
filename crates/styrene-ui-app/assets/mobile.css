@@ -975,9 +975,9 @@ label {
 
 .empty-state {
   display: grid;
-  min-block-size: 10rem;
+  min-block-size: 8rem;
   place-content: center;
-  padding: 1.25rem;
+  padding: 1rem 1.25rem;
   color: var(--ink-muted);
   text-align: center;
 }
@@ -1116,7 +1116,7 @@ label {
   z-index: 10;
   display: grid;
   inline-size: 100%;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   padding: 0.35rem max(0.35rem, env(safe-area-inset-right)) max(0.35rem, env(safe-area-inset-bottom)) max(0.35rem, env(safe-area-inset-left));
   border: 0;
   border-block-start: var(--stroke) solid rgb(255 255 255 / 18%);
@@ -1796,7 +1796,7 @@ label {
   font: -apple-system-caption2;
   font-family: var(--font-technical);
   letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-variant-caps: all-small-caps;
 }
 
 .roster-facts {
@@ -1807,7 +1807,7 @@ label {
   font: -apple-system-caption2;
   font-family: var(--font-technical);
   letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-variant-caps: all-small-caps;
   white-space: nowrap;
 }
 
@@ -1904,4 +1904,137 @@ label {
 
 .delivery-detail button {
   margin-block-start: 0.25rem;
+}
+
+
+/* Contacts and Pages: the operator's own lists, grouped by link quality and
+   by list membership. The group heading is a technical label beside a count,
+   never a transformed one, so the rendered text is the accessible name. */
+.contact-group {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-block: 0.9rem 0.35rem;
+}
+
+.contact-group h3 {
+  margin: 0;
+  color: var(--ink-muted);
+  font: -apple-system-caption1;
+  font-family: var(--font-technical);
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  font-variant-caps: all-small-caps;
+}
+
+/* A row is a button plus its toggle, side by side; nesting them would nest
+   two controls. The hairline belongs to the pair, not to the row button. */
+.people-list .contact-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  border-block-end: var(--stroke) solid var(--line);
+}
+
+.people-list .contact-entry:last-child {
+  border-block-end: 0;
+}
+
+.people-list .contact-entry .peer-card {
+  border-block-end: 0;
+}
+
+.contact-toggle {
+  display: inline-grid;
+  inline-size: var(--size-touch-ios);
+  block-size: var(--size-touch-ios);
+  place-items: center;
+  margin-inline-end: 0.4rem;
+  border: var(--stroke) solid var(--line);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--ink-muted);
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.contact-toggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.contact-toggle:disabled {
+  opacity: 0.55;
+}
+
+/* Link mode: one glyph, named for assistive technology by its own label. */
+.link-mode {
+  color: var(--ink-muted);
+  font-family: var(--font-technical);
+  line-height: 1;
+}
+
+.link-mode[data-link="rns_direct"],
+.link-mode[data-link="tunnel"] {
+  color: var(--signal);
+}
+
+.thread-link {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  color: var(--ink-muted);
+  font: -apple-system-caption2;
+  font-family: var(--font-technical);
+  letter-spacing: 0.06em;
+  font-variant-caps: all-small-caps;
+}
+
+/* Add by destination sits above the roster: label, field, action, status. */
+.contact-add-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 0.4rem 0.5rem;
+  margin-block-end: 0.7rem;
+}
+
+.contact-add-form > label {
+  grid-column: 1 / -1;
+  color: var(--ink-muted);
+  font: -apple-system-caption1;
+  font-family: var(--font-technical);
+  letter-spacing: 0.06em;
+  font-variant-caps: all-small-caps;
+}
+
+.contact-add-form > input {
+  min-inline-size: 0;
+  font-family: var(--font-technical);
+  font-size: 1rem;
+}
+
+.contact-add-form > p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+/* The network directory keeps the announce firehose on purpose, folded away
+   behind one disclosure so it never crowds the operator's own lists. */
+.directory-card > summary {
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  font-variant-caps: all-small-caps;
+  cursor: pointer;
+}
+
+.directory-card .roster-filter {
+  margin-block-start: 0.7rem;
+}
+
+.directory-card .people-list {
+  margin-block-end: 0.7rem;
+}
+
+.directory-card .contact-group:first-of-type {
+  margin-block-start: 0.5rem;
 }
