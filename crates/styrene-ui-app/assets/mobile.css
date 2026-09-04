@@ -772,19 +772,9 @@ label {
 
 .composer-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) var(--size-touch-ios);
   align-items: end;
   gap: 0.5rem;
-}
-
-/* Keyboard dismissal: hidden until the keyboard is up, then a plain control
-   beside Send that any tap-outside also satisfies. */
-.composer .keyboard-done {
-  display: none;
-}
-
-.mobile-shell[data-keyboard-visible="true"] .composer .keyboard-done {
-  display: inline-flex;
 }
 
 .composer textarea {
@@ -794,29 +784,48 @@ label {
   resize: none;
 }
 
+/* Send is an icon the size of one touch target; the label is its
+   accessible name. */
 .composer .primary-action {
-  min-inline-size: 4.5rem;
-  padding-inline: 0.75rem;
+  display: inline-grid;
+  inline-size: var(--size-touch-ios);
+  min-inline-size: 0;
+  block-size: var(--size-touch-ios);
+  padding: 0;
+  place-items: center;
 }
 
+.composer .primary-action svg {
+  inline-size: 1.3rem;
+  block-size: 1.3rem;
+}
+
+/* One quiet line under the field: the method as a small technical control,
+   nothing else unless something needs saying. */
 .delivery-method-row {
   display: flex;
   align-items: center;
   justify-content: start;
   gap: 0.5rem;
-  margin-block-start: 0.4rem;
-}
-
-.delivery-method-row label {
-  margin: 0;
-  color: var(--ink-muted);
+  margin-block-start: 0.3rem;
 }
 
 .delivery-method-row select {
   inline-size: auto;
-  min-block-size: 2.25rem;
-  padding-block: 0.25rem;
-  font-size: 0.85rem;
+  min-block-size: 1.75rem;
+  padding: 0.1rem 0.4rem;
+  border-color: var(--line);
+  background: transparent;
+  color: var(--ink-muted);
+  font: -apple-system-caption1;
+  font-family: var(--font-technical);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.composer .field-hint:empty,
+.composer-status-stack:has(> .field-hint:empty:only-child) {
+  display: none;
 }
 
 .composer-status-stack {

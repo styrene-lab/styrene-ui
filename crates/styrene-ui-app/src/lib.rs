@@ -3433,22 +3433,23 @@ pub fn Composer(
                     } else {
                         "mobile.composer-status"
                     },
-                    if sending { "Sending…" } else { "Send" }
-                }
-                // Visible only while the keyboard is up (see the stylesheet);
-                // the page's tap-outside listener does the actual blur, this
-                // gives the operator something obvious to tap.
-                button {
-                    id: "mobile.keyboard-done",
-                    class: "keyboard-done secondary-action",
-                    r#type: "button",
-                    "aria-label": "Dismiss keyboard",
-                    "Done"
+                    "aria-label": if sending { "Sending" } else { "Send" },
+                    svg {
+                        "aria-hidden": "true",
+                        view_box: "0 0 24 24",
+                        fill: "none",
+                        stroke: "currentColor",
+                        stroke_width: "2",
+                        stroke_linecap: "round",
+                        stroke_linejoin: "round",
+                        path { d: "M22 2L11 13" }
+                        path { d: "M22 2l-7 20-4-9-9-4 20-7z" }
+                    }
                 }
             }
             div {
                 class: "delivery-method-row",
-                label { r#for: "mobile.delivery-method", "Delivery" }
+                label { class: "visually-hidden", r#for: "mobile.delivery-method", "Delivery" }
                 select {
                     id: "mobile.delivery-method",
                     name: "delivery-method",
@@ -3502,7 +3503,11 @@ pub fn Composer(
                     id: "mobile.composer-status",
                     class: "field-hint",
                     role: "status",
-                    if sending { "Sending. The message appears above once the backend accepts it." } else { {composer_status} }
+                    if sending {
+                        "Sending…"
+                    } else if composer_status != "Ready to send." {
+                        {composer_status}
+                    }
                 }
                 if let Some(reason) = send_disabled_reason {
                     p {
