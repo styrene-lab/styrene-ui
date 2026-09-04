@@ -14,6 +14,7 @@
 - [x] 2.2a Pages: recent and bookmarked page hosts with the browser as the primary action (section `mobile.pages` groups Bookmarked and Recently seen, newest first and capped at twenty; Browse is rendered disabled with a hint because mobile has no page viewer yet)
 - [x] 2.2b Favourite on every directory entry, routed to Contacts or Pages by role, with removal that leaves history alone (`mobile.contact-favourite.<id>` and `mobile.contact-bookmark.<id>` on the operator's own lists, `mobile.directory-favourite.<id>` and `mobile.directory-bookmark.<id>` in the directory; both dispatch a toggle that only edits the contact book)
 - [ ] 2.2c Persist favourites, messaged people, and browsed hosts in the session store
+- [x] 2.2d A conversation with a peer that has never announced still projects a Person contact, so Contacts never shows zero while Messages lists a plain peer (found on live data)
 - [x] 2.3 Network: move the announce directory here with search, aspect filter, and sort (a `details` card `mobile.directory` under Propagation holds every announce grouped by primary role as People, Page hosts, Relays, and Other, each with a count, behind the shared `mobile.directory-filter`; the People screen no longer carries the firehose)
 - [ ] 2.4 Thread header and message cards: show the link mode and reachability
 
