@@ -28,6 +28,32 @@ A **contact** is an identity with:
 Messages, the contact sheet, and the thread header all render from that
 object.
 
+## Roles
+
+A destination announces an aspect, and the aspect decides what the operator
+can do with it. A NomadNet page is not something to send a message to.
+
+| Role | Aspect | Verbs |
+|---|---|---|
+| Person | `lxmf.delivery` | Message, with receipts. The only role that belongs in Messages and Contacts by default. |
+| Page host | `nomadnetwork.node`, Styrene page host | Browse pages and files. |
+| Relay | `lxmf.propagation` | Select as propagation node, sync. |
+| Tunnel peer | tunnel capability (roadmap) | Open or close a tunnel; message over it only if the identity also has a person role. |
+| Unknown | anything else | Show the raw aspect; offer no verb. |
+
+One identity often announces several destinations, so the contact is the
+identity and its roles are the set of aspects seen for that identity. The
+projection must group announces by identity before anything renders. The
+primary action follows the roles: a person gets Message, a page host gets
+Browse, a relay gets Use as relay, and an identity with several roles gets
+each. An identity with no person role never shows a composer and never
+appears in Messages.
+
+Where each role lives: Contacts holds identities with a person role or that
+the operator saved; the Network directory holds everything, sectioned by
+role, with person entries offering "add to contacts"; the thread header
+notes when the person's identity is also a relay in use.
+
 ## Screens
 
 - **Messages**: conversations sorted by activity, one row per contact with name, last line, time, and a link-mode glyph.
