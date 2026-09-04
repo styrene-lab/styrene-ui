@@ -2,8 +2,8 @@
 
 ## 1. Model
 
-- [ ] 1.1 Define the contact projection in the session: name, destinations, capabilities, link modes, presence, preference
-- [ ] 1.1a Group announces by identity and derive roles from aspects: person, page host, relay, tunnel peer, unknown
+- [x] 1.1 Define the contact projection in the session: name, destinations, capabilities, link modes, presence, preference (`Contact`, `ContactRole`, `LinkMode`, `DeliveryPreference`, `ContactBook`, and `project_contacts`/`contact_lists` landed in `styrene-ui-state`; `Peer` carries `identity_hash`/`hops`/`interface_kind`; the contact book persists through a new `PreferenceStore` in `styrene-ui-platform`, backed by `NSUserDefaults` on iOS and in-memory elsewhere; `MobileActionKind` gained `ToggleFavourite`/`ToggleBookmark`/`SetAlias`/`SetDeliveryPreference`, wired through the mobile session)
+- [x] 1.1a Group announces by identity and derive roles from aspects: person, page host, relay, tunnel peer, unknown (`project_contacts` groups by `identity_hash`, falling back to `destination_hash`; `ContactRole::from_aspect` derives roles)
 - [ ] 1.1b Offer verbs from roles only: Message for a person, Browse for a page host, Use as relay for a relay; no composer for an identity without a person role
 - [ ] 1.2 Expose a link-mode summary per peer from the daemon: RNS path and hops, direct reachability, tunnel state
 

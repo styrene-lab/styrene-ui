@@ -5295,6 +5295,7 @@ dependencies = [
  "quircs",
  "serde",
  "serde_json",
+ "styrene-ui-state",
 ]
 
 [[package]]

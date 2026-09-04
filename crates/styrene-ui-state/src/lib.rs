@@ -1,5 +1,6 @@
 //! Renderer-neutral presentation state for Styrene Dioxus applications.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -140,6 +141,11 @@ pub struct MobileFixture {
     pub propagation: Propagation,
     pub event: Option<GenerationEvent>,
     pub expected: ExpectedProjection,
+    /// The operator's contact book: favourites, bookmarks, aliases, and
+    /// per-contact delivery preferences. Absent in fixtures recorded before
+    /// the contact-centric shell; those load with an empty book.
+    #[serde(default)]
+    pub contact_book: ContactBook,
 }
 
 impl MobileFixture {
@@ -204,6 +210,20 @@ pub enum MobileActionKind {
         destination_hash: Option<String>,
     },
     SyncPropagation,
+    ToggleFavourite {
+        contact_id: String,
+    },
+    ToggleBookmark {
+        contact_id: String,
+    },
+    SetAlias {
+        contact_id: String,
+        alias: Option<String>,
+    },
+    SetDeliveryPreference {
+        contact_id: String,
+        preference: DeliveryPreference,
+    },
 }
 
 pub const LXMF_DESTINATION_INPUT_MAX_BYTES: usize = 32;
@@ -757,6 +777,17 @@ pub struct Peer {
     pub age_secs: u64,
     pub source: PeerSource,
     pub announce_count: u32,
+    /// The announcing identity, when known. Empty when the backend has not
+    /// resolved an identity for this destination, in which case the
+    /// destination hash stands in for identity grouping.
+    #[serde(default)]
+    pub identity_hash: String,
+    /// RNS path length in hops, when a path is known.
+    #[serde(default)]
+    pub hops: Option<u8>,
+    /// The interface kind carrying this peer's freshest announce, when known.
+    #[serde(default)]
+    pub interface_kind: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -769,6 +800,317 @@ pub struct PeerSnapshot {
 pub struct PeerEvent {
     pub generation: u64,
     pub peer: Peer,
+}
+
+/// What an announced destination lets the operator do, derived from its
+/// aspect. One identity can hold several roles at once; the projection
+/// groups announces by identity before roles are derived.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContactRole {
+    /// `lxmf.delivery`. Message, with receipts. The only role that belongs
+    /// in Messages and Contacts by default.
+    Person,
+    /// `nomadnetwork.node`. Browse pages and files.
+    PageHost,
+    /// `lxmf.propagation`. Select as propagation node, sync.
+    Relay,
+    /// Reserved for the roadmap tunnel capability. Nothing produces this yet.
+    TunnelPeer,
+    /// Any other announced aspect. Shown raw, with no verb offered.
+    Unknown,
+}
+
+impl ContactRole {
+    #[must_use]
+    pub fn from_aspect(aspect: &str) -> Self {
+        match aspect {
+            "lxmf.delivery" => Self::Person,
+            "nomadnetwork.node" => Self::PageHost,
+            "lxmf.propagation" => Self::Relay,
+            _ => Self::Unknown,
+        }
+    }
+
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Person => "person",
+            Self::PageHost => "page_host",
+            Self::Relay => "relay",
+            Self::TunnelPeer => "tunnel_peer",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Person => "Person",
+            Self::PageHost => "Page host",
+            Self::Relay => "Relay",
+            Self::TunnelPeer => "Tunnel peer",
+            Self::Unknown => "Unknown",
+        }
+    }
+}
+
+/// How a contact is reachable right now.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LinkMode {
+    /// A known RNS path exists, with a hop count.
+    RnsDirect,
+    /// Reachable only by handing off to a propagation node.
+    ViaNode,
+    /// Reachable over a direct tunnel.
+    Tunnel,
+    /// No known path, node, or tunnel right now.
+    Unreachable,
+}
+
+impl LinkMode {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::RnsDirect => "rns_direct",
+            Self::ViaNode => "via_node",
+            Self::Tunnel => "tunnel",
+            Self::Unreachable => "unreachable",
+        }
+    }
+}
+
+/// The operator's delivery policy for one contact. See `delivery-policy`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryPreference {
+    /// Deliver now when reachable; hand to a node otherwise. The default.
+    #[default]
+    DirectThenNode,
+    /// Always hand off to the selected propagation node.
+    AlwaysViaNode,
+}
+
+impl DeliveryPreference {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DirectThenNode => "direct_then_node",
+            Self::AlwaysViaNode => "always_via_node",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "direct_then_node" => Some(Self::DirectThenNode),
+            "always_via_node" => Some(Self::AlwaysViaNode),
+            _ => None,
+        }
+    }
+}
+
+/// One identity, the destinations it has announced, and what the operator
+/// has decided about it. Messages, the contact sheet, and the thread header
+/// all render from this projection rather than from raw peers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Contact {
+    /// The identity hash, or the destination hash when identity is unknown.
+    pub id: String,
+    pub name: String,
+    pub alias: Option<String>,
+    pub roles: Vec<ContactRole>,
+    pub delivery_destination: Option<String>,
+    /// Every announced destination for this identity, as (aspect, hash).
+    pub destinations: Vec<(String, String)>,
+    pub link: LinkMode,
+    pub hops: Option<u8>,
+    pub interface_kind: Option<String>,
+    pub last_seen: i64,
+    pub age_secs: u64,
+    pub announce_count: u32,
+    pub favourite: bool,
+    pub bookmarked: bool,
+    pub has_conversation: bool,
+    pub unread_count: u32,
+    pub delivery_preference: DeliveryPreference,
+}
+
+/// The operator-built lists and preferences that `project_contacts` cannot
+/// derive from announces alone. Keyed by contact id (see [`Contact::id`]).
+/// Every field defaults so a store persisted before a field existed still
+/// loads.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ContactBook {
+    #[serde(default)]
+    pub favourites: BTreeSet<String>,
+    #[serde(default)]
+    pub bookmarks: BTreeSet<String>,
+    #[serde(default)]
+    pub aliases: BTreeMap<String, String>,
+    #[serde(default)]
+    pub delivery_preferences: BTreeMap<String, DeliveryPreference>,
+}
+
+const CONTACT_ROLE_ORDER: [ContactRole; 5] = [
+    ContactRole::Person,
+    ContactRole::PageHost,
+    ContactRole::Relay,
+    ContactRole::TunnelPeer,
+    ContactRole::Unknown,
+];
+
+fn peer_group_key(peer: &Peer) -> String {
+    if peer.identity_hash.is_empty() {
+        format!("destination:{}", peer.destination_hash)
+    } else {
+        format!("identity:{}", peer.identity_hash)
+    }
+}
+
+/// Group announced peers by identity and project them into contacts.
+///
+/// Peers group by [`Peer::identity_hash`] when it is non-empty, and by
+/// [`Peer::destination_hash`] otherwise, so an identity that has not been
+/// resolved yet still becomes its own contact rather than being dropped.
+///
+/// `link` reflects only what this projection can see today: [`LinkMode::Tunnel`]
+/// is never produced (the roadmap capability that would produce it does not
+/// exist yet), [`LinkMode::RnsDirect`] is used whenever a hop count is known,
+/// and everything else falls back to [`LinkMode::Unreachable`].
+/// [`LinkMode::ViaNode`] is intentionally left unset here; it depends on
+/// whether a propagation node is selected and ready, which is session state
+/// this projection does not see, so the session sets it after calling this
+/// function.
+#[must_use]
+pub fn project_contacts(
+    peers: &[Peer],
+    conversations: &[Conversation],
+    book: &ContactBook,
+) -> Vec<Contact> {
+    let mut groups: BTreeMap<String, Vec<&Peer>> = BTreeMap::new();
+    for peer in peers {
+        groups.entry(peer_group_key(peer)).or_default().push(peer);
+    }
+
+    let mut contacts: Vec<Contact> = groups
+        .into_values()
+        .map(|group| project_contact_group(&group, conversations, book))
+        .collect();
+
+    contacts.sort_by_key(|contact| {
+        (!(contact.has_conversation || contact.favourite), std::cmp::Reverse(contact.last_seen))
+    });
+    contacts
+}
+
+fn project_contact_group(
+    group: &[&Peer],
+    conversations: &[Conversation],
+    book: &ContactBook,
+) -> Contact {
+    let roles: Vec<ContactRole> = CONTACT_ROLE_ORDER
+        .into_iter()
+        .filter(|role| group.iter().any(|peer| ContactRole::from_aspect(&peer.aspect) == *role))
+        .collect();
+
+    let identity_hash =
+        group.iter().find(|peer| !peer.identity_hash.is_empty()).map(|peer| &peer.identity_hash);
+    let id = identity_hash.cloned().unwrap_or_else(|| {
+        group.first().map_or_else(String::new, |peer| peer.destination_hash.clone())
+    });
+
+    let delivery_destination = group
+        .iter()
+        .find(|peer| ContactRole::from_aspect(&peer.aspect) == ContactRole::Person)
+        .map(|peer| peer.destination_hash.clone());
+
+    let alias = book.aliases.get(&id).cloned();
+    let name = alias.clone().unwrap_or_else(|| {
+        group
+            .iter()
+            .filter(|peer| ContactRole::from_aspect(&peer.aspect) == ContactRole::Person)
+            .find_map(|peer| peer.display_name.clone().filter(|name| !name.is_empty()))
+            .or_else(|| {
+                group
+                    .iter()
+                    .find_map(|peer| peer.display_name.clone().filter(|name| !name.is_empty()))
+            })
+            .unwrap_or_else(|| {
+                let basis = delivery_destination.as_deref().unwrap_or(id.as_str());
+                format!("Peer {}", &basis[..basis.len().min(8)])
+            })
+    });
+
+    let destinations: Vec<(String, String)> =
+        group.iter().map(|peer| (peer.aspect.clone(), peer.destination_hash.clone())).collect();
+
+    let last_seen = group.iter().map(|peer| peer.observed_at).max().unwrap_or_default();
+    let age_secs = group.iter().map(|peer| peer.age_secs).min().unwrap_or_default();
+    let announce_count = group.iter().map(|peer| peer.announce_count).sum();
+
+    let freshest = group.iter().max_by_key(|peer| peer.observed_at).copied();
+    let hops = freshest.and_then(|peer| peer.hops);
+    let interface_kind = freshest.and_then(|peer| peer.interface_kind.clone());
+
+    let link = if hops.is_some() { LinkMode::RnsDirect } else { LinkMode::Unreachable };
+
+    let has_conversation = delivery_destination
+        .as_deref()
+        .is_some_and(|destination| conversations.iter().any(|c| c.peer_hash == destination));
+    let unread_count = delivery_destination
+        .as_deref()
+        .and_then(|destination| conversations.iter().find(|c| c.peer_hash == destination))
+        .map_or(0, |conversation| conversation.unread_count);
+
+    Contact {
+        favourite: book.favourites.contains(&id),
+        bookmarked: book.bookmarks.contains(&id),
+        delivery_preference: book.delivery_preferences.get(&id).copied().unwrap_or_default(),
+        id,
+        name,
+        alias,
+        roles,
+        delivery_destination,
+        destinations,
+        link,
+        hops,
+        interface_kind,
+        last_seen,
+        age_secs,
+        announce_count,
+        has_conversation,
+        unread_count,
+    }
+}
+
+/// The operator-built lists a contact-centric shell renders. See
+/// `openspec/changes/contact-centric-shell/proposal.md`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContactLists {
+    /// People the operator has messaged or favourited.
+    pub contacts: Vec<Contact>,
+    /// Page hosts the operator has bookmarked.
+    pub pages: Vec<Contact>,
+    /// Everything announced, for the Network directory.
+    pub directory: Vec<Contact>,
+}
+
+#[must_use]
+pub fn contact_lists(contacts: &[Contact]) -> ContactLists {
+    let list_contacts = contacts
+        .iter()
+        .filter(|contact| {
+            contact.roles.contains(&ContactRole::Person)
+                && (contact.has_conversation || contact.favourite)
+        })
+        .cloned()
+        .collect();
+    let pages = contacts
+        .iter()
+        .filter(|contact| contact.roles.contains(&ContactRole::PageHost) && contact.bookmarked)
+        .cloned()
+        .collect();
+    ContactLists { contacts: list_contacts, pages, directory: contacts.to_vec() }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

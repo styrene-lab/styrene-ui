@@ -3,11 +3,13 @@
 mod app_lock;
 mod ble;
 mod document_exchange;
+mod preferences;
 mod text_acquisition;
 
 pub use app_lock::*;
 pub use ble::*;
 pub use document_exchange::*;
+pub use preferences::*;
 pub use text_acquisition::*;
 
 use std::future::Future;

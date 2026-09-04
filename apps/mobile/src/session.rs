@@ -16,9 +16,13 @@ use styrene_ipc::types::{
 };
 #[cfg(target_os = "ios")]
 use styrene_ui_platform::AppLockGateOutcome;
-use styrene_ui_platform::{AndroidUsbAttachment, OpaqueDocument};
+#[cfg(not(target_os = "ios"))]
+use styrene_ui_platform::MemoryPreferenceStore;
+use styrene_ui_platform::{
+    AndroidUsbAttachment, OpaqueDocument, PreferenceStore, load_contact_book, save_contact_book,
+};
 use styrene_ui_state::{
-    Bearer, BearerKind, BearerState, Conversation, DeliveryEvidence, DeliveryMethod,
+    Bearer, BearerKind, BearerState, ContactBook, Conversation, DeliveryEvidence, DeliveryMethod,
     ExpectedProjection, IdentityBackupProtection, IdentityCustody, IdentityCustodyAuthentication,
     IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
     IdentityCustodyProtection, IdentityRecoveryFailure, Message, MessageAttachment,
@@ -97,6 +101,7 @@ struct SessionOwner {
     state_events: MobileStateSubscription,
     updates: Sender<SessionView>,
     usb_worker: Option<UsbWorker>,
+    preferences: Arc<dyn PreferenceStore>,
 }
 
 struct UsbFallbackRequest {
@@ -446,7 +451,14 @@ async fn owner_loop(
     else {
         return;
     };
-    publish_snapshot(&owner.node, owner.generation, owner.backend_generation, &owner.updates).await;
+    publish_snapshot(
+        &owner.node,
+        owner.generation,
+        owner.backend_generation,
+        &owner.preferences,
+        &owner.updates,
+    )
+    .await;
 
     loop {
         tokio::select! {
@@ -605,7 +617,22 @@ async fn prepare_owner(
         state_events,
         updates,
         usb_worker: None,
+        preferences: default_preference_store(),
     })
+}
+
+/// The durable preference backend for this platform.
+///
+/// iOS persists through `NSUserDefaults`; every other platform uses the
+/// in-memory store until it has a durable backend of its own.
+#[cfg(target_os = "ios")]
+fn default_preference_store() -> Arc<dyn PreferenceStore> {
+    Arc::new(styrene_ui_apple_bridge::UserDefaultsPreferenceStore)
+}
+
+#[cfg(not(target_os = "ios"))]
+fn default_preference_store() -> Arc<dyn PreferenceStore> {
+    Arc::new(MemoryPreferenceStore::default())
 }
 
 const fn identity_recovery_failure(error: MobileIdentityRecoveryError) -> IdentityRecoveryFailure {
@@ -723,6 +750,7 @@ impl SessionOwner {
                     &self.node,
                     self.generation,
                     self.backend_generation,
+                    &self.preferences,
                     &self.updates,
                 )
                 .await;
@@ -734,6 +762,7 @@ impl SessionOwner {
                     &self.node,
                     self.generation,
                     self.backend_generation,
+                    &self.preferences,
                     &self.updates,
                 )
                 .await;
@@ -746,6 +775,7 @@ impl SessionOwner {
                     &self.node,
                     self.generation,
                     self.backend_generation,
+                    &self.preferences,
                     &self.updates,
                     messaging_failure("state_subscription_closed", true),
                 )
@@ -760,8 +790,14 @@ impl SessionOwner {
         }
         if self.synchronize_generation().await {
             self.state_events = self.node.subscribe_state_events();
-            publish_snapshot(&self.node, self.generation, self.backend_generation, &self.updates)
-                .await;
+            publish_snapshot(
+                &self.node,
+                self.generation,
+                self.backend_generation,
+                &self.preferences,
+                &self.updates,
+            )
+            .await;
             return true;
         }
         if let MobileActionKind::ApplyEndpoint { endpoint } = &action.kind {
@@ -770,6 +806,7 @@ impl SessionOwner {
                     &self.node,
                     self.generation,
                     self.backend_generation,
+                    &self.preferences,
                     &self.updates,
                     TypedFailure {
                         code: format!("{:?}", error.code()).to_ascii_lowercase(),
@@ -798,18 +835,34 @@ impl SessionOwner {
             self.node = Arc::new(replacement);
             self.state_events = self.node.subscribe_state_events();
             self.backend_generation = self.node.session_snapshot().await.generation;
+        } else if matches!(
+            action.kind,
+            MobileActionKind::ToggleFavourite { .. }
+                | MobileActionKind::ToggleBookmark { .. }
+                | MobileActionKind::SetAlias { .. }
+                | MobileActionKind::SetDeliveryPreference { .. }
+        ) {
+            apply_contact_preference(self.preferences.as_ref(), action.kind);
         } else if let Err(failure) = execute_action(&self.node, action.kind).await {
             publish_snapshot_with_failure(
                 &self.node,
                 self.generation,
                 self.backend_generation,
+                &self.preferences,
                 &self.updates,
                 failure,
             )
             .await;
             return true;
         }
-        publish_snapshot(&self.node, self.generation, self.backend_generation, &self.updates).await;
+        publish_snapshot(
+            &self.node,
+            self.generation,
+            self.backend_generation,
+            &self.preferences,
+            &self.updates,
+        )
+        .await;
         true
     }
 
@@ -821,6 +874,39 @@ impl SessionOwner {
         )
         .await
     }
+}
+
+/// Mutate the operator's contact book for one of the purely local preference
+/// actions and persist it. These never reach the backend node: favourites,
+/// bookmarks, aliases, and delivery preference are shell-side operator
+/// state, not protocol state.
+fn apply_contact_preference(preferences: &dyn PreferenceStore, kind: MobileActionKind) {
+    let mut book = load_contact_book(preferences);
+    match kind {
+        MobileActionKind::ToggleFavourite { contact_id } => {
+            if !book.favourites.remove(&contact_id) {
+                book.favourites.insert(contact_id);
+            }
+        }
+        MobileActionKind::ToggleBookmark { contact_id } => {
+            if !book.bookmarks.remove(&contact_id) {
+                book.bookmarks.insert(contact_id);
+            }
+        }
+        MobileActionKind::SetAlias { contact_id, alias } => match alias {
+            Some(alias) => {
+                book.aliases.insert(contact_id, alias);
+            }
+            None => {
+                book.aliases.remove(&contact_id);
+            }
+        },
+        MobileActionKind::SetDeliveryPreference { contact_id, preference } => {
+            book.delivery_preferences.insert(contact_id, preference);
+        }
+        _ => {}
+    }
+    save_contact_book(preferences, &book);
 }
 
 #[cfg(target_os = "android")]
@@ -1057,6 +1143,14 @@ async fn execute_action(node: &MobileNode, action: MobileActionKind) -> Result<(
                 .await
                 .map_err(|error| messaging_failure("propagation_sync_failed", error.retryable))?;
         }
+        MobileActionKind::ToggleFavourite { .. }
+        | MobileActionKind::ToggleBookmark { .. }
+        | MobileActionKind::SetAlias { .. }
+        | MobileActionKind::SetDeliveryPreference { .. } => {
+            // Handled locally in `apply_contact_preference` before this
+            // function is ever called; the backend node has no opinion on
+            // the operator's contact book.
+        }
     }
     Ok(())
 }
@@ -1069,9 +1163,10 @@ async fn publish_snapshot(
     node: &MobileNode,
     generation: u64,
     backend_generation: u64,
+    preferences: &Arc<dyn PreferenceStore>,
     updates: &Sender<SessionView>,
 ) {
-    if let Ok(update) = project(node, generation, backend_generation).await {
+    if let Ok(update) = project(node, generation, backend_generation, preferences).await {
         let _ = updates.force_send(SessionView::Running(update));
     }
 }
@@ -1080,10 +1175,11 @@ async fn publish_snapshot_with_failure(
     node: &MobileNode,
     generation: u64,
     backend_generation: u64,
+    preferences: &Arc<dyn PreferenceStore>,
     updates: &Sender<SessionView>,
     failure: TypedFailure,
 ) {
-    if let Ok(mut update) = project(node, generation, backend_generation).await {
+    if let Ok(mut update) = project(node, generation, backend_generation, preferences).await {
         update.fixture.session.failure = Some(failure);
         let _ = updates.force_send(SessionView::Running(update));
     }
@@ -1093,6 +1189,7 @@ async fn project(
     node: &MobileNode,
     generation: u64,
     backend_generation: u64,
+    preferences: &Arc<dyn PreferenceStore>,
 ) -> Result<SessionUpdate, String> {
     let session = node.session_snapshot().await;
     if session.generation != backend_generation {
@@ -1160,6 +1257,11 @@ async fn project(
                     age_secs: peer.age_secs,
                     source: PeerSource::CanonicalAnnounce,
                     announce_count: peer.announce_count,
+                    // TODO(contact-centric-shell): populated once the pin
+                    // carries MobilePeer identity and route fields.
+                    identity_hash: String::new(),
+                    hops: None,
+                    interface_kind: None,
                 })
                 .collect(),
             conversations,
@@ -1180,6 +1282,7 @@ async fn project(
                 message_count: 0,
                 accessibility_ids: Vec::new(),
             },
+            contact_book: load_contact_book(preferences.as_ref()),
         },
         propagation: propagation_update,
     })
@@ -1700,6 +1803,7 @@ fn failed_update(generation: u64, code: &str, _message: String) -> SessionUpdate
             message_count: 0,
             accessibility_ids: Vec::new(),
         },
+        contact_book: ContactBook::default(),
     };
     SessionUpdate { propagation: PropagationUpdate::from_fixture(&fixture), fixture }
 }
@@ -2149,5 +2253,55 @@ mod tests {
         assert!(advance_generation_if_changed(&mut backend_generation, 4, &mut generation));
         assert_eq!(backend_generation, 4);
         assert_eq!(generation, 10);
+    }
+
+    /// Toggling a favourite is a purely local preference action: it never
+    /// reaches the backend node, only the preference store. The next
+    /// projection over the persisted book must show the contact as
+    /// favourited, the same way a real snapshot after the action would.
+    #[test]
+    fn toggling_favourite_persists_through_memory_preference_store_and_reappears_in_next_snapshot()
+    {
+        let preferences = MemoryPreferenceStore::default();
+        let contact_id = "identity-favourite-test";
+        let peer = Peer {
+            destination_hash: "dest-favourite-test".into(),
+            aspect: "lxmf.delivery".into(),
+            display_name: Some("Test Peer".into()),
+            observed_at: 10,
+            age_secs: 1,
+            source: PeerSource::CanonicalAnnounce,
+            announce_count: 1,
+            identity_hash: contact_id.into(),
+            hops: None,
+            interface_kind: None,
+        };
+
+        // Before the action, the book is empty and the contact is not a
+        // favourite in a projection built from it.
+        let book_before = load_contact_book(&preferences);
+        let contacts_before =
+            styrene_ui_state::project_contacts(&[peer.clone()], &[], &book_before);
+        assert!(!contacts_before[0].favourite);
+
+        apply_contact_preference(
+            &preferences,
+            MobileActionKind::ToggleFavourite { contact_id: contact_id.into() },
+        );
+
+        // A later `project` call reads the book fresh from the store on
+        // every snapshot, so the persisted change must be visible here too.
+        let book_after = load_contact_book(&preferences);
+        assert!(book_after.favourites.contains(contact_id));
+        let contacts_after = styrene_ui_state::project_contacts(&[peer], &[], &book_after);
+        assert!(contacts_after[0].favourite);
+
+        // Toggling again removes it, proving the action is a toggle and
+        // that removal also persists.
+        apply_contact_preference(
+            &preferences,
+            MobileActionKind::ToggleFavourite { contact_id: contact_id.into() },
+        );
+        assert!(!load_contact_book(&preferences).favourites.contains(contact_id));
     }
 }
