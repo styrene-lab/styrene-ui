@@ -997,10 +997,49 @@ pub fn project_contacts(
         .map(|group| project_contact_group(&group, conversations, book))
         .collect();
 
+    // A peer the operator has messaged but never heard announce still belongs
+    // in Contacts; the daemon keys the conversation by its delivery destination.
+    let announced: BTreeSet<&str> =
+        peers.iter().map(|peer| peer.destination_hash.as_str()).collect();
+    for conversation in conversations {
+        if announced.contains(conversation.peer_hash.as_str()) {
+            continue;
+        }
+        if contacts.iter().any(|contact| contact.id == conversation.peer_hash) {
+            continue;
+        }
+        contacts.push(conversation_only_contact(conversation, book));
+    }
+
     contacts.sort_by_key(|contact| {
         (!(contact.has_conversation || contact.favourite), std::cmp::Reverse(contact.last_seen))
     });
     contacts
+}
+
+fn conversation_only_contact(conversation: &Conversation, book: &ContactBook) -> Contact {
+    let id = conversation.peer_hash.clone();
+    let alias = book.aliases.get(&id).cloned();
+    let name = alias.clone().unwrap_or_else(|| format!("Peer {}", &id[..id.len().min(8)]));
+    Contact {
+        favourite: book.favourites.contains(&id),
+        bookmarked: book.bookmarks.contains(&id),
+        delivery_preference: book.delivery_preferences.get(&id).copied().unwrap_or_default(),
+        name,
+        alias,
+        roles: vec![ContactRole::Person],
+        delivery_destination: Some(id.clone()),
+        destinations: vec![("lxmf.delivery".to_owned(), id.clone())],
+        id,
+        link: LinkMode::Unreachable,
+        hops: None,
+        interface_kind: None,
+        last_seen: 0,
+        age_secs: 0,
+        announce_count: 0,
+        has_conversation: true,
+        unread_count: conversation.unread_count,
+    }
 }
 
 fn project_contact_group(

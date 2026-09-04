@@ -343,7 +343,11 @@ fn contact_identity(contact: &Contact) -> Element {
         }
         span {
             class: "roster-facts",
-            span { class: "roster-age", "{age_label(contact.age_secs)} ago" }
+            if contact.announce_count > 0 {
+                span { class: "roster-age", "{age_label(contact.age_secs)} ago" }
+            } else {
+                span { class: "roster-age", "no announce" }
+            }
             span { class: "roster-hops", {hops_label(contact.hops)} }
         }
     }
@@ -3486,10 +3490,16 @@ pub fn PropagationPanel(
                             "{propagation.new_messages} new messages"
                         }
                     }
-                } else if propagation.selected_destination.is_none() {
-                    span { "Select an active propagation node to synchronize." }
-                } else if !propagation.ready {
-                    span { "The selected propagation node is not ready." }
+                } else if propagation.selected_destination.is_none() || !propagation.ready {
+                    // With live controls the disabled Sync control already
+                    // carries this reason; say it here only in a read-only view.
+                    if !controls_enabled {
+                        if propagation.selected_destination.is_none() {
+                            span { "Select an active propagation node to synchronize." }
+                        } else {
+                            span { "The selected propagation node is not ready." }
+                        }
+                    }
                 } else if propagation.sync_state == SyncState::Failed {
                     span { "Synchronization failed. Retry is available." }
                 } else {

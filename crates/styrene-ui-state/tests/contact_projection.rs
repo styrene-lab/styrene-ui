@@ -155,3 +155,31 @@ fn legacy_fixture_json_still_deserializes() {
         let _ = project_contacts(&peers, &conversations, &contact_book);
     }
 }
+
+#[test]
+fn conversation_with_unannounced_peer_still_lands_in_contacts() {
+    let peers = vec![peer("dest-other", "lxmf.delivery", "identity-8")];
+    let conversations = vec![Conversation {
+        peer_hash: "f396e895aaaaaaaaaaaaaaaaaaaaaaaa".into(),
+        unread_count: 1,
+        draft: String::new(),
+        draft_revision: 0,
+    }];
+    let book = ContactBook::default();
+
+    let contacts = project_contacts(&peers, &conversations, &book);
+    let quiet = contacts
+        .iter()
+        .find(|contact| contact.id == "f396e895aaaaaaaaaaaaaaaaaaaaaaaa")
+        .expect("conversation-only peer is projected");
+    assert!(quiet.has_conversation);
+    assert_eq!(quiet.unread_count, 1);
+    assert_eq!(quiet.name, "Peer f396e895");
+    assert_eq!(quiet.roles, vec![ContactRole::Person]);
+    assert_eq!(quiet.link, LinkMode::Unreachable);
+    assert_eq!(quiet.announce_count, 0);
+
+    let lists = contact_lists(&contacts);
+    assert_eq!(lists.contacts.len(), 1);
+    assert_eq!(lists.contacts[0].id, quiet.id);
+}
