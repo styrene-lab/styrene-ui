@@ -12,6 +12,8 @@ mod firmware;
 mod firmware_ios;
 mod legacy_dfu;
 mod legacy_dfu_transport;
+#[cfg(target_os = "ios")]
+mod preferences_ios;
 
 pub use ble::*;
 #[cfg(target_os = "ios")]
@@ -23,6 +25,8 @@ pub use firmware::*;
 pub use firmware_ios::*;
 pub use legacy_dfu::*;
 pub use legacy_dfu_transport::*;
+#[cfg(target_os = "ios")]
+pub use preferences_ios::*;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeAuthorization {
