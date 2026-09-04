@@ -2016,3 +2016,38 @@ fn thread_renders_newest_message_first_in_the_dom_and_folds_delivery_detail() {
     assert!(later_at < first_at, "the newest message is first in the DOM");
     assert!(markup.contains("Delivery details"));
 }
+
+/// iOS zooms the page when a focused form control is smaller than 16px, so
+/// no control rule may set a sub-1rem font size.
+#[test]
+fn form_controls_never_set_a_font_size_below_one_rem() {
+    let mut block = String::new();
+    let mut in_control_rule = false;
+    for line in MOBILE_CSS.lines() {
+        if line.ends_with('{') {
+            let selector = line.trim_end_matches('{').trim();
+            in_control_rule = selector.split(',').any(|part| {
+                let part = part.trim();
+                part.ends_with("input") || part.ends_with("select") || part.ends_with("textarea")
+            });
+            block.clear();
+        }
+        if in_control_rule {
+            block.push_str(line);
+            if let Some(size) = line.trim().strip_prefix("font-size:") {
+                let value = size.trim().trim_end_matches(';');
+                if let Some(rem) = value.strip_suffix("rem") {
+                    assert!(
+                        rem.parse::<f32>().unwrap_or(1.0) >= 1.0,
+                        "control font below 1rem: {line}"
+                    );
+                }
+                assert!(
+                    !value.ends_with("px")
+                        || value.trim_end_matches("px").parse::<f32>().unwrap_or(16.0) >= 16.0,
+                    "control font below 16px: {line}"
+                );
+            }
+        }
+    }
+}

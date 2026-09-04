@@ -810,17 +810,22 @@ label {
   margin-block-start: 0.3rem;
 }
 
+/* Form controls never drop below 16px: iOS zooms the whole page when a
+   smaller control takes focus. The method select stays visually small by
+   scaling the box, not the type. */
 .delivery-method-row select {
   inline-size: auto;
-  min-block-size: 1.75rem;
+  min-block-size: 2rem;
   padding: 0.1rem 0.4rem;
   border-color: var(--line);
   background: transparent;
   color: var(--ink-muted);
-  font: -apple-system-caption1;
+  font-size: 1rem;
   font-family: var(--font-technical);
-  letter-spacing: 0.06em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
+  transform: scale(0.85);
+  transform-origin: left center;
 }
 
 .composer .field-hint:empty,
@@ -1347,7 +1352,7 @@ label {
 
 .roster-filter input {
   font-family: var(--font-technical);
-  font-size: 0.9rem;
+  font-size: 1rem;
 }
 
 .people-list {
