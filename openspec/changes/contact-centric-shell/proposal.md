@@ -49,15 +49,29 @@ Browse, a relay gets Use as relay, and an identity with several roles gets
 each. An identity with no person role never shows a composer and never
 appears in Messages.
 
-Where each role lives: Contacts holds identities with a person role or that
-the operator saved; the Network directory holds everything, sectioned by
-role, with person entries offering "add to contacts"; the thread header
-notes when the person's identity is also a relay in use.
+## Lists the operator builds
+
+Two lists come from the operator's own actions, and one comes from the
+network.
+
+- **Contacts**: people the operator has messaged, or favourited. Sending a
+  message adds the person by default. A favourite on any person in the
+  directory adds them without a message.
+- **Pages**: hosts the operator has browsed, or bookmarked. Browsing is a
+  different paradigm from messaging and has its own area with recent and
+  bookmarked hosts; page hosts never appear in Contacts on their own.
+- **Network directory**: everything announced, sectioned by role, with the
+  favourite action on every entry. A favourite on a person lands in Contacts;
+  on a page host it lands in Pages.
+
+Removing a favourite removes the list entry and leaves history alone. The
+thread header notes when a person's identity is also a relay in use.
 
 ## Screens
 
 - **Messages**: conversations sorted by activity, one row per contact with name, last line, time, and a link-mode glyph.
-- **Contacts** replaces People: active links first (tunnel or direct), then reachable, then known but unreachable. Add from the directory or by destination hash here.
+- **Contacts** replaces People and holds only people the operator has messaged or favourited: active links first (tunnel or direct), then reachable, then known but unreachable. Add by destination hash here.
+- **Pages** holds hosts the operator has browsed or bookmarked, recent first, and opens the browser for a host.
 - **Network** keeps the firehose on purpose: bearers, tunnels, propagation, and a browseable directory of every announced node and page with search, aspect filter, and sort. The People directory overhaul's roster work moves here.
 - **Thread header** states the link, not the method: "RNS, 1 hop", "tunnel", or "via node", with reachability. The composer's status line does pre-flight.
 - **Message cards** record the link mode that carried them alongside the delivery details.

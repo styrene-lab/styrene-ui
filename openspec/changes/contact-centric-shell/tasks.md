@@ -10,7 +10,10 @@
 ## 2. Screens
 
 - [ ] 2.1 Messages: conversation rows from contacts with last line, time, and link-mode glyph
-- [ ] 2.2 Contacts: replace People with active, reachable, and known sections and add-by-destination
+- [ ] 2.2 Contacts: replace People with active, reachable, and known sections over messaged or favourited people, plus add-by-destination
+- [ ] 2.2a Pages: recent and bookmarked page hosts with the browser as the primary action
+- [ ] 2.2b Favourite on every directory entry, routed to Contacts or Pages by role, with removal that leaves history alone
+- [ ] 2.2c Persist favourites, messaged people, and browsed hosts in the session store
 - [ ] 2.3 Network: move the announce directory here with search, aspect filter, and sort
 - [ ] 2.4 Thread header and message cards: show the link mode and reachability
 
