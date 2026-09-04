@@ -13,13 +13,13 @@ use styrene_ui_platform::{
 };
 use styrene_ui_state::{
     BearerKind, BearerState, Contact, ContactRole, Conversation, DeliveryEvidence, DeliveryMethod,
-    DestinationEntryConstraint, IdentityBackupProtection, IdentityCustodyAuthentication,
-    IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
-    IdentityCustodyProtection, IdentityRecoveryFailure, IdentityRecoveryPhase,
-    IdentityRecoveryState, LXMF_DESTINATION_INPUT_MAX_BYTES, LinkMode, LocalAnnounceOutcome,
-    Message, MobileAction, MobileActionKind, MobileFixture, MobileStore, OperationalSummary,
-    PEER_SEARCH_INPUT_MAX_BYTES, Peer, PropagationEvidence, PropagationUpdate, RuntimeBoundary,
-    SessionPhase, SyncState, TargetClass, TransportEvidence, TypedFailure,
+    DeliveryPreference, DestinationEntryConstraint, IdentityBackupProtection,
+    IdentityCustodyAuthentication, IdentityCustodyAvailability, IdentityCustodyBackend,
+    IdentityCustodyDowngrade, IdentityCustodyProtection, IdentityRecoveryFailure,
+    IdentityRecoveryPhase, IdentityRecoveryState, LXMF_DESTINATION_INPUT_MAX_BYTES, LinkMode,
+    LocalAnnounceOutcome, Message, MobileAction, MobileActionKind, MobileFixture, MobileStore,
+    OperationalSummary, PEER_SEARCH_INPUT_MAX_BYTES, Peer, PropagationEvidence, PropagationUpdate,
+    RuntimeBoundary, SessionPhase, SyncState, TargetClass, TransportEvidence, TypedFailure,
     bounded_destination_input, bounded_peer_search_input, contact_lists,
     destination_entry_constraint, peer_matches_search, project_contacts, start_conversation_action,
 };
@@ -883,6 +883,10 @@ pub fn MobileShell(
     let selected_link = selected_contact.map_or(LinkMode::Unreachable, |contact| contact.link);
     let selected_hops = selected_contact.and_then(|contact| contact.hops);
     let selected_link_summary = link_summary(selected_link, selected_hops);
+    let selected_contact_id = selected_contact.map(|contact| contact.id.clone());
+    let selected_delivery_preference = selected_contact
+        .map_or(DeliveryPreference::default(), |contact| contact.delivery_preference);
+    let selected_contact_link = selected_contact.map(|contact| (contact.link, contact.hops));
 
     let contacts_query = contacts_filter.read().trim().to_ascii_lowercase();
     let visible_contacts: Vec<Contact> = lists
@@ -1265,6 +1269,73 @@ pub fn MobileShell(
                                     }
                                     {selected_link_summary.clone()}
                                 }
+                                span {
+                                    id: "mobile.delivery-preference",
+                                    class: "delivery-preference",
+                                    role: "group",
+                                    "aria-label": "Delivery preference",
+                                    button {
+                                        id: "mobile.delivery-preference.now",
+                                        r#type: "button",
+                                        "aria-pressed": (selected_delivery_preference
+                                            == DeliveryPreference::DirectThenNode)
+                                            .to_string(),
+                                        disabled: action_sink.is_none() || selected_contact_id.is_none(),
+                                        onclick: {
+                                            let contact_id = selected_contact_id.clone();
+                                            move |_| {
+                                                if let (Some(action_sink), Some(contact_id)) =
+                                                    (action_sink, contact_id.clone())
+                                                {
+                                                    action_sink.call(MobileAction::new(
+                                                        fixture.generation,
+                                                        MobileActionKind::SetDeliveryPreference {
+                                                            contact_id,
+                                                            preference: DeliveryPreference::DirectThenNode,
+                                                        },
+                                                    ));
+                                                }
+                                            }
+                                        },
+                                        "Now"
+                                    }
+                                    button {
+                                        id: "mobile.delivery-preference.node",
+                                        r#type: "button",
+                                        "aria-pressed": (selected_delivery_preference
+                                            == DeliveryPreference::AlwaysViaNode)
+                                            .to_string(),
+                                        disabled: action_sink.is_none() || selected_contact_id.is_none(),
+                                        onclick: {
+                                            let contact_id = selected_contact_id.clone();
+                                            move |_| {
+                                                if let (Some(action_sink), Some(contact_id)) =
+                                                    (action_sink, contact_id.clone())
+                                                {
+                                                    action_sink.call(MobileAction::new(
+                                                        fixture.generation,
+                                                        MobileActionKind::SetDeliveryPreference {
+                                                            contact_id,
+                                                            preference: DeliveryPreference::AlwaysViaNode,
+                                                        },
+                                                    ));
+                                                }
+                                            }
+                                        },
+                                        "Via node"
+                                    }
+                                }
+                                if action_sink.is_none() || selected_contact_id.is_none() {
+                                    p {
+                                        id: "mobile.delivery-preference-status",
+                                        class: "field-hint",
+                                        if action_sink.is_none() {
+                                            "Delivery preference is unavailable in this view."
+                                        } else {
+                                            "Choose a conversation to set a delivery preference."
+                                        }
+                                    }
+                                }
                             }
                         }
                         MessageHistory {
@@ -1278,6 +1349,8 @@ pub fn MobileShell(
                             conversation: selected_conversation,
                             enabled: composer_enabled,
                             propagation: propagation.clone(),
+                            delivery_preference: selected_delivery_preference,
+                            contact_link: selected_contact_link,
                             generation: fixture.generation,
                             outbound_marker,
                             action_sink,
@@ -3853,6 +3926,8 @@ pub fn Composer(
     conversation: Option<Conversation>,
     enabled: bool,
     propagation: PropagationUpdate,
+    #[props(default)] delivery_preference: DeliveryPreference,
+    #[props(default)] contact_link: Option<(LinkMode, Option<u8>)>,
     #[props(default)] generation: u64,
     #[props(default)] outbound_marker: String,
     #[props(default)] action_sink: Option<EventHandler<MobileAction>>,
@@ -3863,7 +3938,6 @@ pub fn Composer(
     // record appears (accepted or failed) or a bounded wait elapses, so a
     // send can never be stuck "sending" for good.
     let mut sending_marker = use_signal(|| None::<(String, std::time::Instant)>);
-    let mut delivery_methods = use_signal(HashMap::<String, DeliveryMethod>::new);
     let draft_id = conversation.as_ref().map_or_else(
         || "mobile.draft".to_string(),
         |conversation| format!("mobile.draft.{}", conversation.peer_hash),
@@ -3880,36 +3954,56 @@ pub fn Composer(
     });
     let has_conversation = conversation.is_some();
     let editing_enabled = has_conversation && action_sink.is_some();
-    let delivery_method = peer_hash
-        .as_ref()
-        .and_then(|peer_hash| delivery_methods.read().get(peer_hash).copied())
-        .unwrap_or(DeliveryMethod::Direct);
-    let propagated_ready = propagation.selected_destination.is_some() && propagation.ready;
-    let propagation_unavailable_reason = if propagation.selected_destination.is_none() {
-        Some("Select a propagation node in Network before using Propagated delivery.")
-    } else if !propagation.ready {
-        Some("The selected propagation node is not ready for Propagated delivery.")
-    } else {
-        None
+    // The daemon does not yet hand an unreachable direct send to a node on
+    // its own (see delivery-policy tasks 1.4/1.5): it only falls back from
+    // direct to opportunistic. So "deliver now, hand to node if unreachable"
+    // still requests Direct today; only "always via node" ever requests
+    // Propagated, and only once a node is selected and ready.
+    let node_ready = propagation.selected_destination.is_some() && propagation.ready;
+    let requested_method = match delivery_preference {
+        DeliveryPreference::DirectThenNode => DeliveryMethod::Direct,
+        DeliveryPreference::AlwaysViaNode => {
+            if node_ready {
+                DeliveryMethod::Propagated
+            } else {
+                DeliveryMethod::Direct
+            }
+        }
     };
-    let selected_method_ready = delivery_method != DeliveryMethod::Propagated || propagated_ready;
+    let (link, hops) = contact_link.unwrap_or((LinkMode::Unreachable, None));
+    let preflight_status = match delivery_preference {
+        DeliveryPreference::DirectThenNode => match link {
+            LinkMode::RnsDirect => {
+                format!("Will deliver now ({})", link_summary(LinkMode::RnsDirect, hops))
+            }
+            _ if node_ready => "Peer unreachable. Will hand to the propagation node.".to_string(),
+            _ => "Peer unreachable and no propagation node is ready.".to_string(),
+        },
+        DeliveryPreference::AlwaysViaNode => {
+            if node_ready {
+                "Will hand to the propagation node.".to_string()
+            } else {
+                "No propagation node is ready. Will deliver directly.".to_string()
+            }
+        }
+    };
     let sending = sending_marker.read().as_ref().is_some_and(|(marker, since)| {
         *marker == outbound_marker && since.elapsed() < SEND_IN_FLIGHT_LIMIT
     });
-    let send_enabled =
-        enabled && editing_enabled && selected_method_ready && !draft.trim().is_empty() && !sending;
+    let send_enabled = enabled && editing_enabled && !draft.trim().is_empty() && !sending;
+    // The truth before Send: what will happen, or why nothing can happen yet.
+    // An empty draft renders nothing here rather than "Ready to send." -
+    // there is nothing to preview delivery for until there is a message.
     let composer_status = if !has_conversation {
-        "Choose a conversation before writing a message."
+        Some("Choose a conversation before writing a message.".to_string())
     } else if !editing_enabled {
-        "Draft editing is unavailable in this view."
+        Some("Draft editing is unavailable in this view.".to_string())
     } else if !enabled {
-        "No bearer is connected. You can continue editing this saved draft."
-    } else if !selected_method_ready {
-        propagation_unavailable_reason.unwrap_or("Propagated delivery is currently unavailable.")
+        Some("No bearer is connected. You can continue editing this saved draft.".to_string())
     } else if draft.trim().is_empty() {
-        "Write a message to enable Send."
+        None
     } else {
-        "Ready to send."
+        Some(preflight_status)
     };
     let send_disabled_reason = if !has_conversation {
         Some("Choose a conversation before sending a message.")
@@ -3917,30 +4011,27 @@ pub fn Composer(
         Some("Draft editing is unavailable in this view.")
     } else if !enabled {
         Some("No bearer is connected. You can continue editing this saved draft.")
-    } else if !selected_method_ready {
-        propagation_unavailable_reason
     } else if draft.trim().is_empty() {
         Some("Write a message to enable Send.")
     } else {
         None
     };
     // The status line already carries the reason when both say the same thing.
-    let send_disabled_reason = send_disabled_reason.filter(|reason| *reason != composer_status);
-    let show_propagation_status =
-        propagation_unavailable_reason.is_some() || delivery_method == DeliveryMethod::Propagated;
+    let send_disabled_reason =
+        send_disabled_reason.filter(|reason| Some(*reason) != composer_status.as_deref());
+    let display_status = if sending { Some("Sending…".to_string()) } else { composer_status };
     rsx! {
         form {
             key: "{draft_id}",
             id: "mobile.composer",
             class: "composer",
             "data-peer": peer_hash.clone(),
-            "data-delivery-method": match delivery_method {
+            "data-delivery-method": match requested_method {
                 DeliveryMethod::Direct => "direct",
                 DeliveryMethod::Opportunistic => "opportunistic",
                 DeliveryMethod::Propagated => "propagated",
                 DeliveryMethod::Unknown => "unknown",
             },
-            "data-selected-method-ready": selected_method_ready.to_string(),
             onsubmit: {
                 let peer_hash = peer_hash.clone();
                 let draft = draft.clone();
@@ -3955,7 +4046,7 @@ pub fn Composer(
                             MobileActionKind::SendMessage {
                                 peer_hash: peer_hash.clone(),
                                 content: draft.clone(),
-                                requested_method: delivery_method,
+                                requested_method,
                                 draft_revision,
                             },
                         ));
@@ -4024,66 +4115,12 @@ pub fn Composer(
                 }
             }
             div {
-                class: "delivery-method-row",
-                label { class: "visually-hidden", r#for: "mobile.delivery-method", "Delivery" }
-                select {
-                    id: "mobile.delivery-method",
-                    name: "delivery-method",
-                    disabled: !editing_enabled,
-                    "aria-describedby": "mobile.delivery-method-status mobile.composer-status",
-                    value: match delivery_method {
-                        DeliveryMethod::Direct => "direct",
-                        DeliveryMethod::Opportunistic => "opportunistic",
-                        DeliveryMethod::Propagated => "propagated",
-                        DeliveryMethod::Unknown => "unknown",
-                    },
-                    onchange: {
-                        let peer_hash = peer_hash.clone();
-                        move |event| {
-                            if let Some(peer_hash) = &peer_hash {
-                                let method = if event.value() == "propagated" {
-                                    DeliveryMethod::Propagated
-                                } else {
-                                    DeliveryMethod::Direct
-                                };
-                                delivery_methods.write().insert(peer_hash.clone(), method);
-                            }
-                        }
-                    },
-                    option { value: "direct", "Direct" }
-                    option {
-                        value: "propagated",
-                        disabled: !propagated_ready,
-                        "Propagated"
-                    }
-                }
-            }
-            if show_propagation_status {
-                if let Some(reason) = propagation_unavailable_reason {
-                    p {
-                        id: "mobile.delivery-method-status",
-                        class: "field-hint",
-                        "Propagated unavailable: {reason}"
-                    }
-                } else {
-                    p {
-                        id: "mobile.delivery-method-status",
-                        class: "field-hint",
-                        "Propagated delivery is available through the selected node."
-                    }
-                }
-            }
-            div {
                 class: "composer-status-stack",
                 p {
                     id: "mobile.composer-status",
                     class: "field-hint",
                     role: "status",
-                    if sending {
-                        "Sending…"
-                    } else if composer_status != "Ready to send." {
-                        {composer_status}
-                    }
+                    {display_status.unwrap_or_default()}
                 }
                 if let Some(reason) = send_disabled_reason {
                     p {

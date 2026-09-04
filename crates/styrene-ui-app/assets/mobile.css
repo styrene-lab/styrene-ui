@@ -800,34 +800,6 @@ label {
   block-size: 1.3rem;
 }
 
-/* One quiet line under the field: the method as a small technical control,
-   nothing else unless something needs saying. */
-.delivery-method-row {
-  display: flex;
-  align-items: center;
-  justify-content: start;
-  gap: 0.5rem;
-  margin-block-start: 0.3rem;
-}
-
-/* Form controls never drop below 16px: iOS zooms the whole page when a
-   smaller control takes focus. The method select stays visually small by
-   scaling the box, not the type. */
-.delivery-method-row select {
-  inline-size: auto;
-  min-block-size: 2rem;
-  padding: 0.1rem 0.4rem;
-  border-color: var(--line);
-  background: transparent;
-  color: var(--ink-muted);
-  font-size: 1rem;
-  font-family: var(--font-technical);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  transform: scale(0.85);
-  transform-origin: left center;
-}
-
 .composer .field-hint:empty,
 .composer-status-stack:has(> .field-hint:empty:only-child) {
   display: none;
@@ -1988,6 +1960,31 @@ label {
   font-family: var(--font-technical);
   letter-spacing: 0.06em;
   font-variant-caps: all-small-caps;
+}
+
+/* The per-contact delivery preference: a compact segmented pair beside the
+   link summary, not a select, since it is set once and read on every send. */
+.delivery-preference {
+  display: inline-flex;
+  border: var(--stroke) solid var(--line-strong);
+}
+
+.delivery-preference button {
+  min-block-size: var(--size-touch-ios);
+  padding: 0.3rem 0.7rem;
+  border: none;
+  font-size: 1rem;
+  font-family: var(--font-technical);
+  letter-spacing: 0.04em;
+}
+
+.delivery-preference button + button {
+  border-inline-start: var(--stroke) solid var(--line-strong);
+}
+
+.delivery-preference button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* Add by destination sits above the roster: label, field, action, status. */

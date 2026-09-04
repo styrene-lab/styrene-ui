@@ -11,13 +11,14 @@ use styrene_ui_platform::{
     PlatformInsets, PlatformSnapshot, TextScale, TextScaleCategory, WindowClass, WindowMetrics,
 };
 use styrene_ui_state::{
-    ApplyResult, BearerState, Conversation, IdentityCustody, IdentityCustodyAuthentication,
-    IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
-    IdentityCustodyProtection, IdentityRecoveryFailure, IdentityRecoveryPhase,
-    IdentityRecoveryState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus, MobileStore,
-    Peer, PeerSource, PropagationCandidate, PropagationPolicy, PropagationProgress,
-    PropagationSynchronization, PropagationTerminalOutcome, PropagationTriggerSource,
-    PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState, TargetClass, TypedFailure,
+    ApplyResult, BearerState, Conversation, DeliveryPreference, IdentityCustody,
+    IdentityCustodyAuthentication, IdentityCustodyAvailability, IdentityCustodyBackend,
+    IdentityCustodyDowngrade, IdentityCustodyProtection, IdentityRecoveryFailure,
+    IdentityRecoveryPhase, IdentityRecoveryState, LinkMode, LocalAnnounceOutcome, MobileFixture,
+    MobileMinimumCorpus, MobileStore, Peer, PeerSource, PropagationCandidate, PropagationPolicy,
+    PropagationProgress, PropagationSynchronization, PropagationTerminalOutcome,
+    PropagationTriggerSource, PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState,
+    TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -267,12 +268,19 @@ fn BleShell(target: TargetClass, fixture: MobileFixture, state: BleControlState)
 }
 
 #[component]
-fn ComposerShell(conversation: Conversation, propagation: PropagationUpdate) -> Element {
+fn ComposerShell(
+    conversation: Conversation,
+    propagation: PropagationUpdate,
+    #[props(default)] delivery_preference: DeliveryPreference,
+    #[props(default)] contact_link: Option<(LinkMode, Option<u8>)>,
+) -> Element {
     rsx! {
         Composer {
             conversation: Some(conversation),
             enabled: true,
             propagation,
+            delivery_preference,
+            contact_link,
             action_sink: move |_action| {},
         }
     }
@@ -790,7 +798,8 @@ fn shared_shell_exposes_semantic_landmarks_labels_and_statuses() {
         "aria-label=\"Conversations\"",
         "for=\"mobile.tcp-endpoint\"",
         "for=\"mobile.draft.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
-        "for=\"mobile.delivery-method\"",
+        "id=\"mobile.delivery-preference\"",
+        "aria-pressed=",
         "type=\"button\"",
     ] {
         assert!(markup.contains(required), "missing semantic contract: {required}");
@@ -1255,38 +1264,34 @@ fn composer_requires_a_canonical_conversation_before_enabling_send() {
 }
 
 #[test]
-fn composer_disables_only_propagated_delivery_without_a_ready_node() {
+fn composer_previews_direct_delivery_when_the_contact_is_reachable_now() {
     let mut state = fixture("direct-message-queued");
     state.conversations[0].draft = "Retain this draft".into();
     let conversation = state.conversations[0].clone();
-    let mut propagation = PropagationUpdate::from_fixture(&state);
-    propagation.selected_destination = None;
-    propagation.ready = false;
+    let propagation = PropagationUpdate::from_fixture(&state);
 
     let markup = dioxus_ssr::render_element(rsx! {
-        ComposerShell { conversation, propagation }
+        ComposerShell {
+            conversation,
+            propagation,
+            delivery_preference: DeliveryPreference::DirectThenNode,
+            contact_link: Some((LinkMode::RnsDirect, Some(1))),
+        }
     });
 
-    let direct = markup
-        .split("<option")
-        .find(|option| option.contains("value=\"direct\""))
-        .expect("direct option");
-    let propagated = markup
-        .split("<option")
-        .find(|option| option.contains("value=\"propagated\""))
-        .expect("propagated option");
-
-    assert!(!direct.split('>').next().unwrap().contains("disabled"));
-    assert!(propagated.split('>').next().unwrap().contains("disabled"));
-    assert!(markup.contains("Select a propagation node in Network"));
+    assert!(markup.contains("Will deliver now (RNS · 1 hop)"));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.composer").contains("data-delivery-method=\"direct\"")
+    );
     assert!(opening_tag_with_id(&markup, "mobile.send").contains("data-enabled=\"true\""));
     assert!(!markup.contains("id=\"mobile.send-disabled-reason\""));
-    // Nothing blocks the send, so the status says nothing.
+    // Nothing blocks the send, so the status never falls back to the
+    // removed generic sentence.
     assert!(!markup.contains("Ready to send."));
 }
 
 #[test]
-fn composer_enables_propagated_delivery_only_for_a_ready_selected_node() {
+fn composer_previews_the_node_hand_off_when_unreachable_now_and_a_node_is_ready() {
     let mut state = fixture("direct-message-queued");
     state.conversations[0].draft = "Retain this draft".into();
     let conversation = state.conversations[0].clone();
@@ -1295,17 +1300,96 @@ fn composer_enables_propagated_delivery_only_for_a_ready_selected_node() {
     propagation.ready = true;
 
     let markup = dioxus_ssr::render_element(rsx! {
-        ComposerShell { conversation, propagation }
+        ComposerShell {
+            conversation,
+            propagation,
+            delivery_preference: DeliveryPreference::DirectThenNode,
+            contact_link: Some((LinkMode::Unreachable, None)),
+        }
     });
-    let propagated = markup
-        .split("<option")
-        .find(|option| option.contains("value=\"propagated\""))
-        .expect("propagated option");
 
-    assert!(!propagated.split('>').next().unwrap().contains("disabled"));
-    // The availability line only appears once Propagated is the selected
-    // method; while Direct is selected it would be noise under the composer.
-    assert!(!markup.contains("Propagated delivery is available through the selected node."));
+    assert!(markup.contains("Peer unreachable. Will hand to the propagation node."));
+    // The daemon does not yet hand an unreachable direct send to a node on
+    // its own (delivery-policy tasks 1.4/1.5), so today's requested method
+    // is still Direct even though the status previews a future hand-off.
+    assert!(
+        opening_tag_with_id(&markup, "mobile.composer").contains("data-delivery-method=\"direct\"")
+    );
+}
+
+#[test]
+fn composer_previews_unreachable_now_with_no_node_ready() {
+    let mut state = fixture("direct-message-queued");
+    state.conversations[0].draft = "Retain this draft".into();
+    let conversation = state.conversations[0].clone();
+    let mut propagation = PropagationUpdate::from_fixture(&state);
+    propagation.selected_destination = None;
+    propagation.ready = false;
+
+    let markup = dioxus_ssr::render_element(rsx! {
+        ComposerShell {
+            conversation,
+            propagation,
+            delivery_preference: DeliveryPreference::DirectThenNode,
+            contact_link: Some((LinkMode::Unreachable, None)),
+        }
+    });
+
+    assert!(markup.contains("Peer unreachable and no propagation node is ready."));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.composer").contains("data-delivery-method=\"direct\"")
+    );
+}
+
+#[test]
+fn composer_hands_off_to_a_ready_node_for_the_always_via_node_preference() {
+    let mut state = fixture("direct-message-queued");
+    state.conversations[0].draft = "Retain this draft".into();
+    let conversation = state.conversations[0].clone();
+    let mut propagation = PropagationUpdate::from_fixture(&state);
+    propagation.selected_destination = Some("feedfeedfeedfeedfeedfeedfeedfeed".into());
+    propagation.ready = true;
+
+    let markup = dioxus_ssr::render_element(rsx! {
+        ComposerShell {
+            conversation,
+            propagation,
+            delivery_preference: DeliveryPreference::AlwaysViaNode,
+            contact_link: Some((LinkMode::RnsDirect, Some(1))),
+        }
+    });
+
+    assert!(markup.contains("Will hand to the propagation node."));
+    // SendMessage's requested_method for Via node with a ready node is
+    // Propagated: exposed on the composer form as data-delivery-method.
+    assert!(
+        opening_tag_with_id(&markup, "mobile.composer")
+            .contains("data-delivery-method=\"propagated\"")
+    );
+}
+
+#[test]
+fn composer_falls_back_to_direct_for_always_via_node_without_a_ready_node() {
+    let mut state = fixture("direct-message-queued");
+    state.conversations[0].draft = "Retain this draft".into();
+    let conversation = state.conversations[0].clone();
+    let mut propagation = PropagationUpdate::from_fixture(&state);
+    propagation.selected_destination = None;
+    propagation.ready = false;
+
+    let markup = dioxus_ssr::render_element(rsx! {
+        ComposerShell {
+            conversation,
+            propagation,
+            delivery_preference: DeliveryPreference::AlwaysViaNode,
+            contact_link: Some((LinkMode::RnsDirect, Some(1))),
+        }
+    });
+
+    assert!(markup.contains("No propagation node is ready. Will deliver directly."));
+    assert!(
+        opening_tag_with_id(&markup, "mobile.composer").contains("data-delivery-method=\"direct\"")
+    );
     assert!(!markup.contains("id=\"mobile.delivery-method-status\""));
 }
 
@@ -1954,7 +2038,7 @@ fn composer_projects_backend_draft_revision_and_retryability() {
     assert!(markup.contains("id=\"mobile.composer\""));
     assert!(markup.contains("data-revision=7"));
     assert!(markup.contains("newer draft"));
-    assert!(markup.contains("id=\"mobile.delivery-method\""));
+    assert!(markup.contains("id=\"mobile.delivery-preference\""));
     assert!(opening_tag_with_id(&markup, "mobile.send").contains("type=\"submit\""));
     assert!(markup.contains("id=\"mobile.retry.message-direct-1\""));
     assert!(opening_tag_with_id(&markup, "mobile.retry.message-direct-1").contains("disabled"));
@@ -2322,4 +2406,39 @@ fn conversation_rows_and_the_thread_header_state_the_link_that_carries_them() {
     let header = opening_tag_with_id(&markup, "mobile.thread-link");
     assert!(header.contains("data-link=\"rns_direct\""));
     assert!(markup.contains("RNS · 1 hop"));
+
+    // The per-contact preference sits right after the link summary, defaults
+    // to "Now", and stays live because an action sink is present.
+    let now = opening_tag_with_id(&markup, "mobile.delivery-preference.now");
+    assert!(now.contains("aria-pressed=\"true\""));
+    assert!(!now.contains("disabled"));
+    let node = opening_tag_with_id(&markup, "mobile.delivery-preference.node");
+    assert!(node.contains("aria-pressed=\"false\""));
+    assert!(!node.contains("disabled"));
+}
+
+#[test]
+fn the_delivery_preference_control_is_disabled_without_an_action_sink() {
+    let markup = render(mixed_aspect_fixture());
+
+    let now = opening_tag_with_id(&markup, "mobile.delivery-preference.now");
+    assert!(now.contains("disabled"));
+    let node = opening_tag_with_id(&markup, "mobile.delivery-preference.node");
+    assert!(node.contains("disabled"));
+    assert!(markup.contains("Delivery preference is unavailable in this view."));
+}
+
+#[test]
+fn the_delivery_preference_control_reflects_an_always_via_node_contact() {
+    let mut state = mixed_aspect_fixture();
+    state
+        .contact_book
+        .delivery_preferences
+        .insert("id-near".into(), DeliveryPreference::AlwaysViaNode);
+    let markup = dioxus_ssr::render_element(rsx! { ActionShell { fixture: state } });
+
+    let now = opening_tag_with_id(&markup, "mobile.delivery-preference.now");
+    assert!(now.contains("aria-pressed=\"false\""));
+    let node = opening_tag_with_id(&markup, "mobile.delivery-preference.node");
+    assert!(node.contains("aria-pressed=\"true\""));
 }
