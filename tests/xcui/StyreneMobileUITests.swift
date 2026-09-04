@@ -39,19 +39,40 @@ final class StyreneMobileUITests: XCTestCase {
         try captureTabs(app, prefix: "review")
     }
 
-    /// The roster only shows on a fixture with announced peers.
-    func testCapturePeopleRosterForReview() throws {
+    /// Contacts holds only people the operator has messaged or favourited, so
+    /// the announce roster now lives behind the Network directory. Capture
+    /// both on a fixture with an announced peer.
+    func testCaptureContactsAndDirectoryForReview() throws {
         let app = XCUIApplication(bundleIdentifier: "io.styrene.mesh")
         app.launchEnvironment["STYRENE_UI_FIXTURE_ID"] = "canonical-peer-discovery"
         app.launch()
         XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
-        let people = app.buttons["People"]
-        XCTAssertTrue(people.waitForExistence(timeout: 5))
-        people.tap()
-        XCTAssertTrue(app.staticTexts["Discovered peers"].waitForExistence(timeout: 5))
+
+        let contacts = app.buttons["Contacts"]
+        XCTAssertTrue(contacts.waitForExistence(timeout: 5))
+        contacts.tap()
+        XCTAssertTrue(app.staticTexts["Contacts"].waitForExistence(timeout: 5))
         sleep(1)
+        capture("review-contacts-roster")
+
+        let network = app.buttons["Network"]
+        XCTAssertTrue(network.waitForExistence(timeout: 5))
+        network.tap()
+        XCTAssertTrue(app.staticTexts["Bearers"].waitForExistence(timeout: 5))
+        app.swipeUp()
+        let disclosure = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label BEGINSWITH 'Directory'"))
+            .firstMatch
+        if disclosure.waitForExistence(timeout: 3), disclosure.isHittable {
+            disclosure.tap()
+        }
+        sleep(1)
+        capture("review-network-directory")
+    }
+
+    private func capture(_ name: String) {
         let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-        shot.name = "review-people-roster"
+        shot.name = name
         shot.lifetime = .keepAlways
         add(shot)
     }
@@ -79,12 +100,6 @@ final class StyreneMobileUITests: XCTestCase {
     ) throws {
         XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
         let screenHeight = XCUIScreen.main.screenshot().image.size.height
-        func capture(_ name: String) {
-            let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
-            shot.name = name
-            shot.lifetime = .keepAlways
-            add(shot)
-        }
         func assertNearTop(_ element: XCUIElement, _ label: String) {
             guard assertPlacement else { return }
             XCTAssertTrue(element.waitForExistence(timeout: 5), label)
@@ -111,7 +126,8 @@ final class StyreneMobileUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Conversations"].waitForExistence(timeout: 5))
         }
         let tabs: [(String, String, String)] = [
-            ("People", "People", "Discovered peers"),
+            ("Contacts", "Contacts", "Contacts"),
+            ("Pages", "Pages", "Pages"),
             ("Network", "Network", "Bearers"),
             ("More", "More", "Operational summary"),
         ]
@@ -120,7 +136,9 @@ final class StyreneMobileUITests: XCTestCase {
             XCTAssertTrue(tab.waitForExistence(timeout: 5), label)
             tab.tap()
             XCTAssertTrue(app.staticTexts[heading].waitForExistence(timeout: 5), heading)
-            let content = app.descendants(matching: .any)
+            // The destination bar carries the same word as the heading, so the
+            // first content is looked up among static texts only.
+            let content = app.staticTexts
                 .matching(NSPredicate(format: "label == %@", firstContent))
                 .firstMatch
             assertNearTop(content, label)
@@ -133,7 +151,7 @@ final class StyreneMobileUITests: XCTestCase {
         let app = launchFixture()
         XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
 
-        for label in ["Messages", "People", "Network", "More"] {
+        for label in ["Messages", "Contacts", "Pages", "Network", "More"] {
             let control = app.buttons[label]
             XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing \(label) control")
             XCTAssertGreaterThanOrEqual(control.frame.width, 44, "\(label) is narrower than 44 pt")
@@ -182,7 +200,7 @@ final class StyreneMobileUITests: XCTestCase {
         XCTAssertTrue(app.webViews.firstMatch.waitForExistence(timeout: 15))
         XCUIDevice.shared.orientation = .landscapeLeft
 
-        for label in ["Messages", "People", "Network", "More"] {
+        for label in ["Messages", "Contacts", "Pages", "Network", "More"] {
             let control = app.buttons[label]
             XCTAssertTrue(control.waitForExistence(timeout: 5), "Missing \(label) control")
             XCTAssertTrue(control.isHittable, "\(label) is not hittable in landscape")

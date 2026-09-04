@@ -15,9 +15,9 @@ use styrene_ui_state::{
     IdentityCustodyAvailability, IdentityCustodyBackend, IdentityCustodyDowngrade,
     IdentityCustodyProtection, IdentityRecoveryFailure, IdentityRecoveryPhase,
     IdentityRecoveryState, LocalAnnounceOutcome, MobileFixture, MobileMinimumCorpus, MobileStore,
-    PropagationCandidate, PropagationPolicy, PropagationProgress, PropagationSynchronization,
-    PropagationTerminalOutcome, PropagationTriggerSource, PropagationUpdate, RuntimeBoundary,
-    SessionPhase, SyncState, TargetClass, TypedFailure,
+    Peer, PeerSource, PropagationCandidate, PropagationPolicy, PropagationProgress,
+    PropagationSynchronization, PropagationTerminalOutcome, PropagationTriggerSource,
+    PropagationUpdate, RuntimeBoundary, SessionPhase, SyncState, TargetClass, TypedFailure,
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
@@ -562,6 +562,17 @@ fn bluetooth_marks_the_approved_scan_result_as_non_actionable() {
     assert!(markup.contains(">Approved</button>"));
 }
 
+/// The backend-owned corpus still names the People section it recorded before
+/// `contact-centric-shell` replaced it with Contacts. The shell owns its own
+/// information architecture, so map the retired id onto its successor until
+/// the fixture revision catches up rather than editing the recorded corpus.
+fn renamed_accessibility_id(id: &str) -> &str {
+    match id {
+        "mobile.people" => "mobile.contacts",
+        other => other,
+    }
+}
+
 fn opening_tag_with_id<'a>(markup: &'a str, id: &str) -> &'a str {
     let id = format!("id=\"{id}\"");
     let start = markup.find(&id).unwrap_or_else(|| panic!("missing {id}"));
@@ -721,9 +732,10 @@ fn every_fixture_renders_the_shared_accessibility_contract_for_both_targets() {
                 fixture.id
             );
             for accessibility_id in &corpus.required_accessibility_ids {
+                let rendered = renamed_accessibility_id(accessibility_id);
                 assert!(
-                    markup.contains(&format!("id=\"{accessibility_id}\"")),
-                    "{} must render {accessibility_id} on {target:?}",
+                    markup.contains(&format!("id=\"{rendered}\"")),
+                    "{} must render {rendered} on {target:?}",
                     fixture.id
                 );
             }
@@ -883,7 +895,7 @@ fn shared_shell_exposes_typed_platform_facts_without_inventing_text_scale() {
 fn mobile_shell_uses_destination_navigation_and_starts_on_the_conversation_list() {
     let markup = render(fixture("direct-message-queued"));
 
-    for destination in ["messages", "people", "network", "more"] {
+    for destination in ["messages", "contacts", "pages", "network", "more"] {
         assert!(markup.contains(&format!("id=\"mobile.destination.{destination}\"")));
     }
     assert!(
@@ -891,7 +903,8 @@ fn mobile_shell_uses_destination_navigation_and_starts_on_the_conversation_list(
             .contains("aria-current=\"page\"")
     );
     assert!(markup.contains("data-compact-pane=\"list\""));
-    assert!(opening_tag_with_id(&markup, "mobile.people").contains("hidden"));
+    assert!(opening_tag_with_id(&markup, "mobile.contacts").contains("hidden"));
+    assert!(opening_tag_with_id(&markup, "mobile.pages").contains("hidden"));
     assert!(opening_tag_with_id(&markup, "mobile.network").contains("hidden"));
     assert!(opening_tag_with_id(&markup, "mobile.more").contains("hidden"));
     let new_message = opening_tag_with_id(&markup, "mobile.new-message");
@@ -1361,6 +1374,25 @@ fn mobile_styles_cover_reflow_safe_areas_targets_and_preferences() {
     );
     assert!(MOBILE_CSS.contains("inset-block-end: var(--destination-bar-reserve)"));
     assert!(MOBILE_CSS.contains("[data-keyboard-visible=\"true\"] .destination-bar"));
+    assert!(MOBILE_CSS.contains("grid-template-columns: repeat(5, 1fr)"), "five primary tabs");
+
+    // Contact rows pair a row button with its toggle, and every label that a
+    // test or a screen reader names keeps its DOM text: small caps, never a
+    // transform.
+    assert!(MOBILE_CSS.contains(".contact-group {"));
+    assert!(MOBILE_CSS.contains(".contact-toggle {"));
+    assert!(MOBILE_CSS.contains(".contact-toggle[aria-pressed=\"true\"]"));
+    assert!(MOBILE_CSS.contains(".link-mode {"));
+    assert!(MOBILE_CSS.contains(".thread-link {"));
+    assert!(MOBILE_CSS.contains(".directory-card > summary {"));
+    assert!(MOBILE_CSS.contains(".people-list .contact-entry {"));
+    for named in [".contact-group h3", ".roster-aspect", ".roster-facts", ".thread-link"] {
+        let start = MOBILE_CSS.find(&format!("{named} {{")).unwrap_or_else(|| {
+            MOBILE_CSS.find(&format!("{named},")).unwrap_or_else(|| panic!("missing {named}"))
+        });
+        let block = &MOBILE_CSS[start..start + MOBILE_CSS[start..].find('}').expect("rule")];
+        assert!(!block.contains("text-transform"), "{named} transforms a named label");
+    }
 }
 
 #[test]
@@ -1601,17 +1633,21 @@ fn network_projection_exposes_the_backend_endpoint_as_an_editable_control() {
 fn repeated_announces_render_one_person_and_live_empty_renders_none() {
     let mut discovered = fixture("canonical-peer-discovery");
     discovered.profile = styrene_ui_state::Profile::Live;
+    // A favourite is one of the two ways a person joins Contacts; the other
+    // is a conversation, which this fixture does not carry.
+    discovered.contact_book.favourites.insert(discovered.peers[0].destination_hash.clone());
     let directory = dioxus_ssr::render_element(rsx! { ActionShell { fixture: discovered } });
     let live_empty = render(fixture("live-empty-connected"));
 
     assert_eq!(directory.matches("id=\"mobile.peer.e01b09b22ccc4e2755d29eead962677b\"").count(), 1);
     assert!(directory.contains("FPIG_SKYWAVE"));
-    assert!(directory.contains("lxmf.delivery"));
+    assert!(directory.contains("data-aspects=\"lxmf.delivery\""));
     assert!(directory.contains("data-source=\"canonical_announce\""));
     assert!(directory.contains("4s ago"));
-    assert!(directory.contains("×1<"));
-    assert!(directory.contains("aria-label=\"1 announce\""));
-    assert!(!directory.contains("reachable"));
+    assert!(directory.contains(">Person<"));
+    assert!(directory.contains("no path"));
+    assert!(!directory.contains(">Reachable<"), "an announce is not a live link");
+    assert!(!directory.contains(">Active<"), "an announce is not a live link");
     assert!(directory.contains("data-action=\"start-conversation\""));
     assert!(directory.contains("Start conversation"));
     assert!(
@@ -1627,11 +1663,14 @@ fn repeated_announces_render_one_person_and_live_empty_renders_none() {
 fn old_peer_observation_exposes_age_without_claiming_reachability() {
     let mut state = fixture("canonical-peer-discovery");
     state.profile = styrene_ui_state::Profile::Live;
+    state.contact_book.favourites.insert(state.peers[0].destination_hash.clone());
     state.peers[0].age_secs = 86_400;
     let markup = dioxus_ssr::render_element(rsx! { ActionShell { fixture: state } });
 
     assert!(markup.contains("1d ago"));
-    assert!(!markup.to_ascii_lowercase().contains("reachable"));
+    assert!(markup.contains("data-link=\"unreachable\""));
+    assert!(!markup.contains(">Reachable<"));
+    assert!(!markup.contains(">Active<"));
     assert!(!markup.to_ascii_lowercase().contains("online"));
 }
 
@@ -1985,7 +2024,8 @@ fn roster_filter_and_age_labels_are_operator_readable() {
     assert_eq!(age_label(86_400), "1d");
     let markup = render(fixture("live-empty-connected"));
     assert!(
-        !markup.contains("id=\"mobile.people-filter\"") || markup.contains("data-locked=\"false\"")
+        !markup.contains("id=\"mobile.contacts-filter\"")
+            || markup.contains("data-locked=\"false\"")
     );
 }
 
@@ -2050,4 +2090,236 @@ fn form_controls_never_set_a_font_size_below_one_rem() {
             }
         }
     }
+}
+
+/// A minimal announced destination, so a test can state exactly which aspects
+/// and link facts a screen has to render.
+fn announced_peer(
+    destination: &str,
+    aspect: &str,
+    identity: &str,
+    display_name: &str,
+    hops: Option<u8>,
+) -> Peer {
+    Peer {
+        destination_hash: destination.to_owned(),
+        aspect: aspect.to_owned(),
+        display_name: Some(display_name.to_owned()),
+        observed_at: 1_700_000_000,
+        age_secs: 30,
+        source: PeerSource::CanonicalAnnounce,
+        announce_count: 1,
+        identity_hash: identity.to_owned(),
+        hops,
+        interface_kind: Some("tcp".to_owned()),
+    }
+}
+
+/// One identity per role, so grouping and list membership are unambiguous.
+fn mixed_aspect_fixture() -> MobileFixture {
+    let mut state = fixture("live-empty-connected");
+    state.peers = vec![
+        announced_peer(
+            "11111111111111111111111111111111",
+            "lxmf.delivery",
+            "id-near",
+            "Near",
+            Some(1),
+        ),
+        announced_peer(
+            "22222222222222222222222222222222",
+            "lxmf.delivery",
+            "id-far",
+            "Far",
+            Some(4),
+        ),
+        announced_peer(
+            "33333333333333333333333333333333",
+            "lxmf.delivery",
+            "id-lost",
+            "Lost",
+            None,
+        ),
+        announced_peer(
+            "44444444444444444444444444444444",
+            "lxmf.delivery",
+            "id-quiet",
+            "Quiet",
+            Some(2),
+        ),
+        announced_peer(
+            "55555555555555555555555555555555",
+            "nomadnetwork.node",
+            "id-pages",
+            "Field Pages",
+            Some(2),
+        ),
+        announced_peer(
+            "77777777777777777777777777777777",
+            "lxmf.propagation",
+            "id-relay",
+            "Relay Node",
+            Some(3),
+        ),
+        announced_peer(
+            "88888888888888888888888888888888",
+            "styrene.beacon",
+            "id-other",
+            "Beacon",
+            None,
+        ),
+    ];
+    state.conversations = vec![Conversation {
+        peer_hash: "11111111111111111111111111111111".to_owned(),
+        unread_count: 0,
+        draft: String::new(),
+        draft_revision: 0,
+    }];
+    state.contact_book.favourites.insert("id-far".to_owned());
+    state.contact_book.favourites.insert("id-lost".to_owned());
+    state.contact_book.bookmarks.insert("id-pages".to_owned());
+    state
+}
+
+#[test]
+fn contacts_lists_only_messaged_or_favourited_people_grouped_by_link_quality() {
+    let markup =
+        dioxus_ssr::render_element(rsx! { ActionShell { fixture: mixed_aspect_fixture() } });
+    let contacts_start = markup.find("id=\"mobile.contacts\"").expect("contacts section");
+    let contacts_end = markup.find("id=\"mobile.pages\"").expect("pages section");
+    let contacts = &markup[contacts_start..contacts_end];
+
+    assert!(contacts.contains("id=\"mobile.contacts-heading\">Contacts<"));
+    // Messaged, favourited, favourited: the three people the operator owns.
+    assert!(contacts.contains("id=\"mobile.peer.11111111111111111111111111111111\""));
+    assert!(contacts.contains("id=\"mobile.peer.22222222222222222222222222222222\""));
+    assert!(contacts.contains("id=\"mobile.peer.33333333333333333333333333333333\""));
+    // Announced but neither messaged nor favourited, and never a person.
+    assert!(!contacts.contains("id=\"mobile.peer.44444444444444444444444444444444\""));
+    assert!(!contacts.contains("Field Pages"));
+    assert!(!contacts.contains("Relay Node"));
+    assert!(!contacts.contains("Beacon"));
+
+    let active = contacts.find(">Active<").expect("active group");
+    let reachable = contacts.find(">Reachable<").expect("reachable group");
+    let known = contacts.find(">Known<").expect("known group");
+    assert!(active < reachable && reachable < known, "groups run active, reachable, known");
+    assert!(contacts.find("Near").expect("near") < reachable, "one hop is an active link");
+    assert!(contacts.find("Far").expect("far") > reachable, "four hops is reachable, not active");
+    assert!(contacts.find("Lost").expect("lost") > known, "no path is known, not reachable");
+
+    assert!(contacts.contains("id=\"mobile.contacts-filter\""));
+    assert!(contacts.contains("placeholder=\"Filter contacts\""));
+    assert!(contacts.contains("id=\"mobile.contact-destination\""));
+    assert!(contacts.contains("id=\"mobile.contact-add\""));
+    assert!(contacts.contains("data-action=\"open-conversation\""));
+    assert!(contacts.contains("data-action=\"start-conversation\""));
+    assert!(contacts.contains("1 hop"));
+    assert!(contacts.contains("4 hops"));
+    assert!(contacts.contains("no path"));
+}
+
+#[test]
+fn contacts_without_a_relationship_offer_the_operator_a_way_in() {
+    let markup = render(fixture("live-empty-connected"));
+
+    assert!(markup.contains("No contacts yet"));
+    assert!(markup.contains("Message a peer or favourite one in the Network directory."));
+    assert!(markup.contains("No pages yet"));
+    assert!(markup.contains("Bookmark a page host in the Network directory."));
+    // Add by destination stays available on an empty list; it is the way in.
+    assert!(markup.contains("id=\"mobile.contact-destination\""));
+}
+
+#[test]
+fn a_bookmarked_page_host_lands_in_pages_and_never_in_contacts() {
+    let markup =
+        dioxus_ssr::render_element(rsx! { ActionShell { fixture: mixed_aspect_fixture() } });
+    let pages_start = markup.find("id=\"mobile.pages\"").expect("pages section");
+    let pages_end = markup.find("id=\"mobile.network\"").expect("network section");
+    let pages = &markup[pages_start..pages_end];
+
+    assert!(pages.contains("id=\"mobile.pages-heading\">Pages<"));
+    assert!(pages.contains(">Bookmarked<"));
+    assert!(pages.contains("id=\"mobile.page.id-pages\""));
+    assert!(pages.contains("Field Pages"));
+    assert!(pages.contains(">Page host<"));
+    let bookmark = opening_tag_with_id(pages, "mobile.contact-bookmark.id-pages");
+    assert!(bookmark.contains("aria-pressed=\"true\""));
+    assert!(bookmark.contains("aria-label=\"Bookmark Field Pages\""));
+    // Browsing has no viewer on mobile yet, so the verb is present but inert.
+    assert!(opening_tag_with_id(pages, "mobile.page.id-pages").contains("disabled"));
+    assert!(pages.contains("Browsing pages is not available in this build."));
+    assert!(!pages.contains("id=\"mobile.peer."), "a page host never offers Message");
+}
+
+#[test]
+fn the_network_directory_keeps_every_announce_grouped_by_role_with_counts() {
+    let markup =
+        dioxus_ssr::render_element(rsx! { ActionShell { fixture: mixed_aspect_fixture() } });
+    let directory_start = markup.find("id=\"mobile.directory\"").expect("directory card");
+    let directory = &markup[directory_start..];
+
+    assert!(directory.contains("Directory · 7"));
+    assert!(directory.contains("id=\"mobile.directory-filter\""));
+    for (role, count) in [("People", 4), ("Page hosts", 1), ("Relays", 1), ("Other", 1)] {
+        let heading = directory.find(&format!(">{role}<")).unwrap_or_else(|| panic!("{role}"));
+        let badge = format!("<span class=\"count-badge\">{count}</span>");
+        assert!(directory[heading..].starts_with(&format!(">{role}</h3>{badge}")), "{role}");
+    }
+    // Every announce stays reachable here, including the ones the operator
+    // has not adopted into Contacts or Pages.
+    assert!(directory.contains("id=\"mobile.directory-entry.id-quiet\""));
+    assert!(directory.contains("id=\"mobile.directory-entry.id-relay\""));
+    assert!(directory.contains("id=\"mobile.directory-entry.id-other\""));
+    assert!(directory.contains("data-aspects=\"styrene.beacon\""));
+    // Verbs follow roles: a person is messaged, a page host is browsed, and a
+    // relay offers neither from this row.
+    assert!(directory.contains("id=\"mobile.directory-favourite.id-quiet\""));
+    assert!(directory.contains("id=\"mobile.directory-bookmark.id-pages\""));
+    assert!(!directory.contains("id=\"mobile.directory-favourite.id-relay\""));
+    assert!(!directory.contains("id=\"mobile.directory-bookmark.id-relay\""));
+    assert!(opening_tag_with_id(directory, "mobile.directory-entry.id-relay").starts_with("id="));
+}
+
+/// The shell renders through SSR, so a click cannot be replayed here. What is
+/// contractual is the control the click reaches: its identity, its pressed
+/// state, its accessible name, and whether the action sink is present.
+#[test]
+fn the_favourite_toggle_names_its_contact_and_reflects_the_contact_book() {
+    let state = mixed_aspect_fixture();
+    let live = dioxus_ssr::render_element(rsx! { ActionShell { fixture: state.clone() } });
+
+    let pressed = opening_tag_with_id(&live, "mobile.contact-favourite.id-far");
+    assert!(pressed.contains("aria-pressed=\"true\""));
+    assert!(pressed.contains("aria-label=\"Favourite Far\""));
+    assert!(!pressed.contains("disabled"));
+
+    let messaged = opening_tag_with_id(&live, "mobile.contact-favourite.id-near");
+    assert!(messaged.contains("aria-pressed=\"false\""), "a conversation is not a favourite");
+    assert!(messaged.contains("aria-label=\"Favourite Near\""));
+
+    // Without an action sink the toggle stays visible but cannot be pressed.
+    let inert = dioxus_ssr::render_element(rsx! {
+        MobileShell { target: TargetClass::Ios, fixture: state }
+    });
+    assert!(opening_tag_with_id(&inert, "mobile.contact-favourite.id-far").contains("disabled"));
+}
+
+#[test]
+fn conversation_rows_and_the_thread_header_state_the_link_that_carries_them() {
+    let markup =
+        dioxus_ssr::render_element(rsx! { ActionShell { fixture: mixed_aspect_fixture() } });
+
+    let row_start = markup
+        .find("id=\"mobile.conversation.11111111111111111111111111111111\"")
+        .expect("conversation row");
+    let row = &markup[row_start..row_start + 600];
+    assert!(row.contains("class=\"link-mode\""));
+    assert!(row.contains("data-link=\"rns_direct\""));
+    assert!(row.contains("aria-label=\"RNS direct\""));
+
+    let header = opening_tag_with_id(&markup, "mobile.thread-link");
+    assert!(header.contains("data-link=\"rns_direct\""));
+    assert!(markup.contains("RNS · 1 hop"));
 }
