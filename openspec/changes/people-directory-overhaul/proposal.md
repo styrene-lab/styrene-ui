@@ -1,5 +1,7 @@
 # People Directory Overhaul
 
+> Superseded by `contact-centric-shell`: the roster search, filter, and sort tasks move to the Network directory; People becomes Contacts.
+
 ## Intent
 
 Turn the People screen from a dump of every announce the network relays into
