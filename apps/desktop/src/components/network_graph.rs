@@ -87,9 +87,11 @@ pub fn NetworkGraph(
         let next_edges = next_projection.edges.clone();
         let selected_id =
             selected.read().and_then(|index| nodes.read().get(index).map(|node| node.id.clone()));
-        if *previous_view.read() == view_key {
+        if *previous_view.read() == view_key
+            && nodes.read().iter().map(|n| &n.id).eq(next_nodes.iter().map(|n| &n.id))
+        {
             network_model::preserve_positions(&nodes.read(), &mut next_nodes);
-        } else {
+        } else if *previous_view.read() != view_key {
             auto_fit.set(true);
             interaction.set(Interaction::None);
             previous_view.set(view_key);
@@ -221,10 +223,6 @@ pub fn NetworkGraph(
     rsx! {
         div { class: "network-view",
             div { class: "network-map-overview",
-                div { class: "network-map-heading",
-                    strong { "Local connectivity" }
-                    span { "Destinations: {projection.read().destinations} · Groups: {projection.read().groups.len()} · Visible items: {nodes.read().len()}" }
-                }
                 div { class: "network-map-explore",
                     label { r#for: "map-group", "Explore " }
                     select { id: "map-group", value: "{expanded_group}",
@@ -262,7 +260,11 @@ pub fn NetworkGraph(
                     }
                 }
                 details { class: "network-map-context",
-                    summary { "About this map · observation history" }
+                    summary { "Map details" }
+                    div { class: "network-map-heading",
+                        strong { "Local connectivity" }
+                        span { "Destinations: {projection.read().destinations} · Groups: {projection.read().groups.len()} · Visible items: {nodes.read().len()}" }
+                    }
                     p { "Select a group to explore its destinations. Search covers all groups. Groups summarize observed routes, not physical machines." }
                     small { "Historical observations: {projection.read().stale_routes} stale routes · {projection.read().offline_peers} offline peers · {projection.read().inactive_links} inactive link records. Full detail remains in the inventory tabs." }
                 }
@@ -324,6 +326,7 @@ pub fn NetworkGraph(
             }
             div {
                 class: "graph-container",
+                id: "network-map-canvas",
                 onmounted: move |event| {
                     let data = event.data();
                     spawn(async move {
@@ -331,6 +334,29 @@ pub fn NetworkGraph(
                             container_size.set((rect.size.width, rect.size.height));
                             let (x, y, scale) = fit_camera(&nodes.read(), (rect.size.width, rect.size.height));
                             camera_x.set(x); camera_y.set(y); zoom.set(scale);
+                        }
+                        let mut observer = document::eval(r#"
+                            const canvas = document.getElementById('network-map-canvas');
+                            if (!canvas) return;
+                            const resize = new ResizeObserver(([entry]) => {
+                                dioxus.send([entry.contentRect.width, entry.contentRect.height]);
+                            });
+                            resize.observe(canvas);
+                            await new Promise(resolve => {
+                                const removal = new MutationObserver(() => {
+                                    if (!canvas.isConnected) {
+                                        resize.disconnect();
+                                        removal.disconnect();
+                                        resolve();
+                                    }
+                                });
+                                removal.observe(document.body, {childList: true, subtree: true});
+                            });
+                        "#);
+                        while let Ok((width, height)) = observer.recv::<(f64, f64)>().await {
+                            if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
+                                container_size.set((width, height));
+                            }
                         }
                     });
                 },
@@ -404,10 +430,17 @@ pub fn NetworkGraph(
                     tooltip.set(None);
                 },
                 onwheel: move |event: WheelEvent| {
+                    event.prevent_default();
+                    event.stop_propagation();
+                    let delta = match event.delta() {
+                        dioxus::html::geometry::WheelDelta::Pixels(v) => v.y,
+                        dioxus::html::geometry::WheelDelta::Lines(v) => v.y * 16.0,
+                        dioxus::html::geometry::WheelDelta::Pages(v) => v.y * 240.0,
+                    };
+                    if delta == 0.0 || !delta.is_finite() { return; }
                     auto_fit.set(false);
-                    let factor = if event.delta().strip_units().y < 0.0 { 1.1 } else { 1.0 / 1.1 };
                     let current_zoom = *zoom.read();
-                    zoom.set((current_zoom * factor).clamp(0.001, 5.0));
+                    zoom.set(network_interaction::wheel_zoom(current_zoom, delta));
                 },
                 GraphRenderer {
                     nodes,

@@ -2986,3 +2986,36 @@ body {
 .network-key-line.link { border-top: 4px double #9aa8b8; }
 .network-key-line.association { border-top-style: dotted; }
 .network-page .graph-status-label { fill: #abb5c1; }
+
+/* Give the map the workspace; inventories retain their full headings. */
+.network-map-page {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "modes search actions" "workspace workspace workspace" "activity activity activity";
+    overflow: hidden;
+}
+.network-map-page > .network-heading { grid-area: actions; padding: 8px 16px 8px 0; border-bottom: 1px solid var(--border); }
+.network-map-page > .network-heading > div { display: none; }
+.network-map-page > .network-mode-bar { grid-area: modes; padding: 0 20px; gap: 20px; }
+.network-map-page .network-mode-bar .network-mode:last-child { margin-left: 0; }
+.network-map-page > .network-filter-bar { grid-area: search; padding: 8px 16px; }
+.network-map-page .network-filter-bar input:first-child { width: 220px; }
+.network-map-page .network-filter-count { display: none; }
+.network-map-page > .network-workspace { grid-area: workspace; }
+.network-map-page > .network-activity { grid-area: activity; }
+.network-map-page .network-inventory { overflow: hidden; }
+.network-map-page .network-view { min-height: 0; overflow: hidden; }
+.network-map-page .graph-container { min-height: 0; flex: 1 1 0; overscroll-behavior: contain; }
+.network-map-page .network-map-overview { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 20px; padding: 8px 20px; flex: 0 0 auto; }
+.network-map-page .network-map-context { margin: 0 0 0 auto; }
+.network-map-page .network-map-context[open] { flex-basis: 100%; margin: 0; }
+.network-map-page .network-map-context .network-map-heading { margin-top: 12px; }
+.network-map-page .network-map-tools { padding: 6px 20px; flex: 0 0 auto; }
+.network-map-page .network-activity { padding: 2px 20px; }
+@media (max-width: 900px) {
+    .network-map-page { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "modes actions" "search search" "workspace workspace" "activity activity"; }
+    .network-map-page > .network-filter-bar { padding: 6px 20px; }
+    .network-map-page .network-filter-bar input:first-child { width: 100%; }
+    .network-map-page .network-map-explore { gap: 6px; }
+}

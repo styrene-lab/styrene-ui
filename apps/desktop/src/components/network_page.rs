@@ -287,7 +287,7 @@ pub fn NetworkPage(
         });
 
     rsx! {
-        div { class: "network-page",
+        div { class: if *mode.read() == NetworkMode::Combined { "network-page network-map-page" } else { "network-page" },
             header { class: "network-heading",
                 div {
                     h2 { "Network" }
@@ -359,7 +359,7 @@ pub fn NetworkPage(
             div { class: "network-filter-bar",
                 input {
                     aria_label: "Search current network inventory",
-                    placeholder: "Search this view…",
+                    placeholder: if *mode.read() == NetworkMode::Combined { "Find a destination…" } else { "Search this view…" },
                     value: "{query}",
                     oninput: move |event| query.set(event.value()),
                 }
