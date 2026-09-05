@@ -40,7 +40,7 @@ pub fn SystemPage(
                 div {
                     span { class: "system-kicker", "Authoritative local runtime state" }
                     h2 { "System" }
-                    p { "This IPC version has no typed local configuration mutation contract. Runtime state is read-only." }
+                    p { "Runtime and host diagnostics. Manage saved interfaces in Network → Interfaces." }
                 }
                 span { class: if connected { "system-connection ready" } else { "system-connection degraded" },
                     if connected { "Connected" } else { "Disconnected" }
@@ -55,7 +55,7 @@ pub fn SystemPage(
                 }
                 article { class: "system-panel wide",
                     h3 { "Runtime interfaces" }
-                    p { class: "system-note", "Observed daemon interfaces. Editing and rebinding are not supported by this IPC version." }
+                    p { class: "system-note", "Observed daemon interfaces. Open Network → Interfaces for configuration and runtime controls." }
                     if interfaces.is_empty() {
                         p { class: "system-unavailable", "No runtime interfaces reported." }
                     } else {

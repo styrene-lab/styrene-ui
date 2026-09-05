@@ -86,6 +86,11 @@ pub fn NetworkPage(
     on_browse_page: EventHandler<String>,
     links: Vec<LinkInfo>,
     interfaces: Vec<InterfaceInfo>,
+    interface_inventory: Option<styrene_ipc::types::InterfaceInventory>,
+    interface_unavailable: Option<String>,
+    interface_error: Option<String>,
+    interface_result_serial: u64,
+    interface_edit_unavailable: Option<String>,
     operations: Vec<NetworkOperationInfo>,
     requests: Vec<RequestObservationInfo>,
     resources: Vec<styrene_ipc::types::ResourceTransferInfo>,
@@ -295,6 +300,7 @@ pub fn NetworkPage(
                 }
                 button {
                     class: "network-action-menu",
+                    hidden: *mode.read() == NetworkMode::Interfaces,
                     aria_expanded: "{actions_open}",
                     onclick: move |_| {
                         selected.set(None);
@@ -334,6 +340,19 @@ pub fn NetworkPage(
                     }
                 }
             }
+            if *mode.read() == NetworkMode::Interfaces {
+                super::interface_manager::InterfaceManager {
+                    inventory: interface_inventory,
+                    load_error: interface_unavailable,
+                    mutation_error: interface_error,
+                    result_serial: interface_result_serial,
+                    unavailable: interface_edit_unavailable,
+                    connected,
+                    generation: safety.read().generation_key(),
+                    runtime: interfaces.clone(),
+                    on_command: on_network_command,
+                }
+            } else {
             div { class: "network-filter-bar",
                 input {
                     aria_label: "Search current network inventory",
@@ -773,6 +792,7 @@ pub fn NetworkPage(
                         }
                     }
                 }
+            }
             }
             details { class: "network-activity",
                 summary {

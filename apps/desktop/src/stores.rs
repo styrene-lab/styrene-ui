@@ -50,6 +50,10 @@ pub struct NetworkStore {
     pub paths: Vec<state::PathEntry>,
     pub links: Vec<state::LinkInfo>,
     pub interfaces: Vec<state::InterfaceInfo>,
+    pub interface_inventory: Option<styrene_ipc::types::InterfaceInventory>,
+    pub interface_unavailable: Option<String>,
+    pub interface_error: Option<String>,
+    pub interface_result_serial: u64,
     pub announces: Vec<state::AnnounceEvent>,
     pub operations: Vec<styrene_ipc::types::NetworkOperationInfo>,
     pub requests: Vec<styrene_ipc::types::RequestObservationInfo>,
@@ -478,6 +482,31 @@ impl DomainStores {
             })
             .collect();
         self.refresh_network_state();
+    }
+
+    pub fn set_interface_inventory(
+        &mut self,
+        generation: ConnectionGeneration,
+        result: Result<styrene_ipc::types::InterfaceInventory, String>,
+        mutation: bool,
+    ) {
+        if !self.accepts(generation) {
+            return;
+        }
+        if mutation {
+            self.network.interface_result_serial += 1;
+            self.network.interface_error = result.as_ref().err().cloned();
+        }
+        match result {
+            Ok(inventory) => {
+                self.network.interface_inventory = Some(inventory);
+                self.network.interface_unavailable = None;
+            }
+            Err(error) if !mutation => {
+                self.network.interface_unavailable = Some(error);
+            }
+            Err(_) => {}
+        }
     }
 
     pub fn set_interfaces(
@@ -2988,5 +3017,25 @@ mod backend_profile_tests {
             stores.runtime.backend_profile.as_ref().map(|p| p.display_name.as_str()),
             Some("Field kit")
         );
+    }
+}
+
+#[cfg(test)]
+mod interface_management_tests {
+    use super::*;
+    #[test]
+    fn interface_results_reject_old_sessions_and_preserve_apply_errors_on_refresh() {
+        let mut stores = DomainStores::default();
+        stores.runtime.generation = ConnectionGeneration(2);
+        stores.set_interface_inventory(ConnectionGeneration(1), Ok(Default::default()), true);
+        assert!(stores.network.interface_inventory.is_none());
+        assert_eq!(stores.network.interface_result_serial, 0);
+        stores.set_interface_inventory(ConnectionGeneration(2), Err("port invalid".into()), true);
+        stores.set_interface_inventory(ConnectionGeneration(2), Ok(Default::default()), false);
+        assert_eq!(stores.network.interface_error.as_deref(), Some("port invalid"));
+        assert_eq!(stores.network.interface_result_serial, 1);
+        stores.set_interface_inventory(ConnectionGeneration(2), Ok(Default::default()), true);
+        assert!(stores.network.interface_error.is_none());
+        assert_eq!(stores.network.interface_result_serial, 2);
     }
 }

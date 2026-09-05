@@ -260,6 +260,15 @@ pub trait BackendSession: Send + Sync {
         Err("file downloads are unavailable in this backend".into())
     }
     async fn path_table(&self) -> Result<Vec<PathTableEntry>, String>;
+    async fn interface_inventory(&self) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        Err("This backend does not support interface management".into())
+    }
+    async fn mutate_interface(
+        &self,
+        _request: &styrene_ipc::types::InterfaceMutation,
+    ) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        Err("This backend does not support interface management".into())
+    }
     async fn interface_stats(&self) -> Result<Vec<InterfaceStats>, String>;
     async fn links(&self) -> Result<styrene_ipc::types::LinkSnapshot, String>;
     async fn conversations(&self) -> Result<Vec<ConversationInfo>, String>;
@@ -501,6 +510,15 @@ impl BackendSession for IpcBackend {
         self.broker.path_table().await
     }
 
+    async fn interface_inventory(&self) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        self.broker.interface_inventory().await
+    }
+    async fn mutate_interface(
+        &self,
+        request: &styrene_ipc::types::InterfaceMutation,
+    ) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        self.broker.mutate_interface(request).await
+    }
     async fn interface_stats(&self) -> Result<Vec<InterfaceStats>, String> {
         self.broker.interface_stats().await
     }

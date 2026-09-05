@@ -140,6 +140,7 @@ pub enum DaemonCommand {
     },
     RefreshPathTable,
     RefreshInterfaces,
+    MutateInterface(styrene_ipc::types::InterfaceMutation),
     RefreshLinks,
     RefreshOperations,
     RefreshRequests,
@@ -193,6 +194,7 @@ pub enum DaemonCommand {
 impl DaemonCommand {
     pub fn required_capability(&self) -> Option<&'static str> {
         match self {
+            Self::MutateInterface(_) => Some("rpc.config_update"),
             Self::SendChat { .. } => Some("chat.send"),
             Self::LoadDraft { .. } | Self::SaveDraft { .. } | Self::DiscardDraft { .. } => {
                 Some("messaging.manage")
@@ -410,6 +412,17 @@ impl RequestBroker {
         self.client.path_table().await.map(path_table_entries).map_err(describe)
     }
 
+    pub(crate) async fn interface_inventory(
+        &self,
+    ) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        self.client.interface_inventory().await.map_err(describe)
+    }
+    pub(crate) async fn mutate_interface(
+        &self,
+        request: &styrene_ipc::types::InterfaceMutation,
+    ) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        self.client.mutate_interface(request).await.map_err(describe)
+    }
     pub(crate) async fn interface_stats(&self) -> Result<Vec<InterfaceStats>, String> {
         self.client.interface_stats().await.map_err(describe)
     }

@@ -2965,3 +2965,45 @@ body {
 .network-identifier { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .network-identifier code { font-size: 12px; color: #abb5c1; }
 .network-identifier span { font-size: 12px; color: #abb5c1; }
+
+/* Operator-owned interface inventory and type-specific editors. */
+.interface-manager { flex: 1; min-height: 440px; }
+.interface-toolbar { display:flex; justify-content:space-between; align-items:center; gap:24px; padding:22px 26px; }
+.interface-toolbar h3 { margin:0 0 6px; font-size:21px; }
+.interface-toolbar p,.interface-note { color:#aeb8c4; font-size:14px; line-height:1.5; }
+.interface-toolbar p {margin:0;}
+.interface-manager button { border:1px solid #424b57; border-radius:6px; background:#20262e; color:#e4eaf2; padding:9px 14px; font-size:14px; cursor:pointer; }
+.interface-manager button.primary { background:#245f9d; border-color:#438ada; color:white; }
+.interface-manager button.danger {color:#ffaaa2;border-color:#8c4944;}
+.interface-manager button:disabled {opacity:.45;cursor:not-allowed;}
+.interface-manager button:focus-visible,.interface-manager input:focus-visible,.interface-manager select:focus-visible {outline:2px solid #6faaff;outline-offset:3px;}
+.interface-layout {display:grid;grid-template-columns:minmax(0,1fr);border-top:1px solid #343b44;}
+.interface-layout.inspecting {grid-template-columns:minmax(0,1fr) 370px;}
+.interface-list {min-width:0;}
+.interface-list>input {margin:18px 26px;width:min(400px,calc(100% - 52px));}
+.interface-table-scroll {overflow-x:auto;}
+.interface-table {width:100%;border-collapse:collapse;text-align:left;}
+.interface-table th {font-size:12px;color:#b8c2cf;background:#1b2128;font-weight:600;}
+.interface-table th,.interface-table td {padding:16px 20px;border-bottom:1px solid #303741;white-space:nowrap;}
+.interface-table td {font-size:14px;color:#dbe3ee;}
+.interface-table tr.selected {background:#17304c;}
+.interface-table td button {padding:0;border:0;background:none;font-weight:600;color:#dceaff;}
+.interface-inspector {padding:22px;border-left:1px solid #343b44;background:#151b22;min-width:0;}
+.interface-inspector h3 {margin:0;font-size:20px;overflow-wrap:anywhere;}
+.interface-inspector-heading {display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.interface-inspector form {display:flex;flex-direction:column;gap:15px;margin-top:20px;}
+.interface-inspector label {display:flex;flex-direction:column;gap:7px;font-size:14px;color:#dbe3ee;}
+.interface-manager input,.interface-manager select {background:#0e141b;border:1px solid #485260;color:#eef3fa;border-radius:5px;padding:10px;font-size:15px;box-sizing:border-box;width:100%;}
+.interface-inspector label.interface-checkbox {flex-direction:row;align-items:center;line-height:1.4;}
+.interface-checkbox input {width:18px;height:18px;flex-shrink:0;}
+.interface-buttons {display:flex;gap:9px;flex-wrap:wrap;margin:15px 0;}
+.interface-error {color:#ffb2a9;background:#3a2426;padding:12px 20px;line-height:1.5;}
+.interface-manager> .interface-note {padding:0 26px;}
+.interface-inspector dl {font-size:14px;line-height:1.5;}
+.interface-inspector dt {color:#aab7c6;margin-top:15px;}
+.interface-inspector dd {margin:4px 0;overflow-wrap:anywhere;}
+.interface-inspector details {margin:22px 0;color:#aeb8c4;font-size:13px;}
+.interface-id {overflow-wrap:anywhere;}
+.interface-delete-confirm {border:1px solid #8c4944;padding:12px;border-radius:6px;margin-top:18px;font-size:14px;line-height:1.5;}
+.interface-delete-confirm button {margin:4px;}
+@media(max-width:1000px){.interface-layout.inspecting{grid-template-columns:minmax(0,1fr);}.interface-layout.inspecting .interface-list{display:none;}.interface-inspector{border-left:0;}.interface-toolbar{align-items:flex-start;}.interface-toolbar p{max-width:38ch;}}

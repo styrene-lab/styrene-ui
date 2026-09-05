@@ -22,3 +22,5 @@ pub use network_page::NetworkPage;
 pub use page_browser::PageBrowser;
 pub use propagation_page::PropagationPage;
 pub use system_page::SystemPage;
+
+pub mod interface_manager;

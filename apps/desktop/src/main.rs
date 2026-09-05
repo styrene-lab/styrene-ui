@@ -353,10 +353,19 @@ fn App() -> Element {
 
     // Helper to send commands to the daemon
     let send_cmd = move |cmd: daemon_bridge::DaemonCommand| {
-        if let Some(ref tx) = *cmd_tx.read()
-            && tx.try_send(cmd).is_err()
-        {
-            tracing::warn!(target: "dx::command", "UI command queue is full");
+        let mut stores = stores;
+        let interface_mutation = matches!(&cmd, daemon_bridge::DaemonCommand::MutateInterface(_));
+        let queued = cmd_tx.read().as_ref().is_some_and(|tx| tx.try_send(cmd).is_ok());
+        if !queued {
+            tracing::warn!(target: "dx::command", "UI command queue is unavailable");
+            if interface_mutation {
+                let generation = stores.read().runtime.generation;
+                stores.write().set_interface_inventory(
+                    generation,
+                    Err("Command could not be queued. Reconnect or retry.".into()),
+                    true,
+                );
+            }
         }
     };
 
@@ -568,6 +577,11 @@ fn App() -> Element {
                             },
                             links: view.network.links.clone(),
                             interfaces: view.network.interfaces.clone(),
+                            interface_inventory: view.network.interface_inventory.clone(),
+                            interface_unavailable: view.network.interface_unavailable.clone(),
+                            interface_error: view.network.interface_error.clone(),
+                            interface_result_serial: view.network.interface_result_serial,
+                            interface_edit_unavailable: view.mutation_availability("rpc.config_update").err(),
                             operations: view.network.operations.clone(),
                             requests: view.network.requests.clone(),
                             resources: view.network.resources.clone(),
@@ -1366,10 +1380,30 @@ async fn handle_ui_command(
             Ok(entries) => stores.write().set_paths(generation, entries),
             Err(e) => eprintln!("[dx] path_table failed: {e}"),
         },
-        daemon_bridge::DaemonCommand::RefreshInterfaces => match bridge.interface_stats().await {
-            Ok(ifaces) => stores.write().set_interfaces(generation, ifaces),
-            Err(e) => tracing::warn!(target: "dx::iface", %e, "interface stats failed"),
-        },
+        daemon_bridge::DaemonCommand::RefreshInterfaces => {
+            match bridge.interface_stats().await {
+                Ok(ifaces) => stores.write().set_interfaces(generation, ifaces),
+                Err(e) => tracing::warn!(target: "dx::iface", %e, "interface stats failed"),
+            }
+            let supported = stores.read().runtime.capabilities.as_ref().is_some_and(|c| {
+                c.runtime.iter().any(|id| id == "runtime.interface-management.v1")
+            });
+            let result = if supported {
+                bridge.interface_inventory().await
+            } else {
+                Err("This daemon does not advertise interface management. Update the daemon to enable editing.".into())
+            };
+            stores.write().set_interface_inventory(generation, result, false);
+        }
+        daemon_bridge::DaemonCommand::MutateInterface(request) => {
+            let availability =
+                stores.read().mutation_availability_at(generation, "rpc.config_update");
+            let result = match availability {
+                Ok(()) => bridge.mutate_interface(&request).await,
+                Err(error) => Err(error),
+            };
+            stores.write().set_interface_inventory(generation, result, true);
+        }
         daemon_bridge::DaemonCommand::RefreshLinks => match bridge.links().await {
             Ok(snapshot) => stores.write().set_links(generation, snapshot),
             Err(error) => {
