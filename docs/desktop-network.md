@@ -71,3 +71,28 @@ not IPC inventory size. Structural updates reconcile positions; traffic counters
 do not rebuild the graph. Animation remains opt-in. These limits are initial
 presentation budgets, not measured frame-rate guarantees. Linux runtime
 validation remains separate from the Mac build and capture.
+
+## Map visual language
+
+Object shape is independent of peer role and operational state:
+
+| Object | Shape |
+|---|---|
+| This device | Hexagon |
+| Interface | Square |
+| Connected TCP endpoint | Diamond |
+| Remote destination, any role | Circle |
+| Destination group | Stacked squares |
+
+Nodes have a neutral fill and consistent base size. Role badges are H (hub),
+P (page host), S (Styrene), and R (RNS). Green outlines mean active or reported
+online; gray outlines mean offline, unavailable, or no applicable status.
+Unknown destinations have dashed outlines. Visible status captions distinguish
+these meanings. Peer reports do not establish end-to-end reachability. Selection
+adds a white outer ring without replacing the status outline.
+
+All relationship lines use neutral gray. Solid lines mean interface attachment,
+dashed lines mean observed routes, double lines mean active links, and dotted
+lines mean group membership. Edge appearance does not derive health from either
+endpoint. Neither color nor motion claims packet flow. The Map key contains the
+same object geometry and relationship patterns used by the renderer.

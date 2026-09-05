@@ -190,56 +190,43 @@ impl GraphNodeType {
 }
 
 impl GraphNode {
+    /// Neutral fill leaves operational state to the outline.
     pub fn color(&self) -> &'static str {
-        match &self.node_type {
-            GraphNodeType::Unknown => "#8b949e",
-            GraphNodeType::Summary => "#6e7681",
-            GraphNodeType::Endpoint => "#39d2c0",
-            GraphNodeType::Local => "#58a6ff", // blue
-            GraphNodeType::Interface { online: true } => "#3fb950", // green
-            GraphNodeType::Interface { online: false } => "#f85149", // red
-            GraphNodeType::Hub { online: true } => "#bc8cff", // purple
-            GraphNodeType::Hub { online: false } => "#6e40aa", // dim purple
-            GraphNodeType::PageHost { online: true } => "#39d2c0", // teal
-            GraphNodeType::PageHost { online: false } => "#1a7f72", // dim teal
-            GraphNodeType::Styrene { online: true } => "#3fb950", // green
-            GraphNodeType::Styrene { online: false } => "#2ea043", // dim green
-            GraphNodeType::Rns { online: true } => "#d29922", // amber
-            GraphNodeType::Rns { online: false } => "#484f58", // grey
-        }
+        "#171c22"
     }
 
-    /// Base radius — small enough that 400 nodes don't overlap.
     pub fn radius(&self) -> f64 {
-        match self.node_type {
-            GraphNodeType::Unknown => 6.0,
-            GraphNodeType::Summary => 14.0,
-            GraphNodeType::Endpoint => 8.0,
-            GraphNodeType::Local => 12.0,
-            GraphNodeType::Interface { .. } => 8.0,
-            GraphNodeType::Hub { .. } => 10.0,
-            GraphNodeType::PageHost { .. } => 7.0,
-            GraphNodeType::Styrene { .. } => 6.0,
-            GraphNodeType::Rns { .. } => 5.0,
-        }
+        11.0
     }
 
     pub fn border_color(&self) -> &'static str {
-        match &self.node_type {
-            GraphNodeType::Unknown => "#abb5c1",
-            GraphNodeType::Summary => "#abb5c1",
-            GraphNodeType::Endpoint => "#56ead6",
-            GraphNodeType::Local => "#79c0ff",
-            GraphNodeType::Interface { online: true } => "#56d364",
-            GraphNodeType::Interface { online: false } => "#f85149",
-            GraphNodeType::Hub { online: true } => "#d2a8ff",
-            GraphNodeType::Hub { online: false } => "#6e40aa",
-            GraphNodeType::PageHost { online: true } => "#56ead6",
-            GraphNodeType::PageHost { online: false } => "#1a7f72",
-            GraphNodeType::Styrene { online: true } => "#56d364",
-            GraphNodeType::Styrene { online: false } => "#2ea043",
-            GraphNodeType::Rns { online: true } => "#e3b341",
-            GraphNodeType::Rns { online: false } => "#30363d",
+        match self.node_type {
+            GraphNodeType::Local | GraphNodeType::Summary | GraphNodeType::Unknown => "#9aa8b8",
+            _ if self.node_type.is_online() => "#56d364",
+            _ => "#9aa8b8",
+        }
+    }
+
+    pub fn status_label(&self) -> &'static str {
+        match self.node_type {
+            GraphNodeType::Local => "This device",
+            GraphNodeType::Summary => "Destination group",
+            GraphNodeType::Unknown => "Status unknown",
+            GraphNodeType::Endpoint => "Connected",
+            GraphNodeType::Interface { online: true } => "Active",
+            GraphNodeType::Interface { online: false } => "Disconnected / unavailable",
+            _ if self.node_type.is_online() => "Reported online",
+            _ => "Reported offline",
+        }
+    }
+
+    pub fn role_badge(&self) -> Option<&'static str> {
+        match self.node_type {
+            GraphNodeType::Hub { .. } => Some("H"),
+            GraphNodeType::PageHost { .. } => Some("P"),
+            GraphNodeType::Styrene { .. } => Some("S"),
+            GraphNodeType::Rns { .. } => Some("R"),
+            _ => None,
         }
     }
 
@@ -268,95 +255,45 @@ impl GraphNode {
         self.label.len() != 8 || self.label.chars().any(|c| !c.is_ascii_hexdigit())
     }
 
-    /// SVG shape for this node type. Returns None for circle (default).
-    /// Some(path_d) for custom shapes (diamond, hexagon, etc.).
+    /// Geometry encodes object type. All remote roles share the destination circle.
     pub fn shape_path(&self, cx: f64, cy: f64) -> Option<String> {
         let r = self.radius();
-        match &self.node_type {
-            // Hexagon for local node
+        match self.node_type {
             GraphNodeType::Local => {
-                let mut d = String::new();
-                for i in 0..6 {
-                    let angle =
-                        std::f64::consts::FRAC_PI_3 * i as f64 - std::f64::consts::FRAC_PI_6;
-                    let hx = cx + r * angle.cos();
-                    let hy = cy + r * angle.sin();
-                    if i == 0 {
-                        d.push_str(&format!("M{hx},{hy}"));
-                    } else {
-                        d.push_str(&format!("L{hx},{hy}"));
-                    }
-                }
-                d.push('Z');
-                Some(d)
+                let points: Vec<_> = (0..6)
+                    .map(|i| {
+                        let angle = std::f64::consts::FRAC_PI_3 * i as f64;
+                        format!("{},{}", cx + r * angle.cos(), cy + r * angle.sin())
+                    })
+                    .collect();
+                Some(format!("M{}Z", points.join("L")))
             }
-            // Diamond for hub
-            GraphNodeType::Hub { .. } => {
-                let d = format!(
-                    "M{},{} L{},{} L{},{} L{},{} Z",
-                    cx,
-                    cy - r, // top
-                    cx + r,
-                    cy, // right
-                    cx,
-                    cy + r, // bottom
-                    cx - r,
-                    cy, // left
-                );
-                Some(d)
-            }
-            // Rounded square for page hosts
-            GraphNodeType::PageHost { .. } => {
-                let half = r * 0.8;
-                let cr = r * 0.25; // corner radius
-                let d = format!(
-                    "M{},{} L{},{} Q{},{} {},{} L{},{} Q{},{} {},{} L{},{} Q{},{} {},{} L{},{} Q{},{} {},{} Z",
-                    cx - half + cr,
-                    cy - half, // top-left after corner
-                    cx + half - cr,
-                    cy - half, // top-right before corner
-                    cx + half,
-                    cy - half,
-                    cx + half,
-                    cy - half + cr, // top-right corner
-                    cx + half,
-                    cy + half - cr, // bottom-right before corner
-                    cx + half,
-                    cy + half,
-                    cx + half - cr,
-                    cy + half, // bottom-right corner
-                    cx - half + cr,
-                    cy + half, // bottom-left before corner
-                    cx - half,
-                    cy + half,
-                    cx - half,
-                    cy + half - cr, // bottom-left corner
-                    cx - half,
-                    cy - half + cr, // top-left before corner
-                    cx - half,
-                    cy - half,
-                    cx - half + cr,
-                    cy - half, // top-left corner
-                );
-                Some(d)
-            }
-            // Small square for interfaces
             GraphNodeType::Interface { .. } => {
-                let half = r * 0.85;
-                let d = format!(
-                    "M{},{} L{},{} L{},{} L{},{} Z",
-                    cx - half,
-                    cy - half,
-                    cx + half,
-                    cy - half,
-                    cx + half,
-                    cy + half,
-                    cx - half,
-                    cy + half,
-                );
-                Some(d)
+                Some(format!("M{},{}h{}v{}h{}Z", cx - r, cy - r, r * 2.0, r * 2.0, -r * 2.0))
             }
-            // Circle for everything else
+            GraphNodeType::Endpoint => Some(format!(
+                "M{},{}L{},{}L{},{}L{},{}Z",
+                cx,
+                cy - r,
+                cx + r,
+                cy,
+                cx,
+                cy + r,
+                cx - r,
+                cy
+            )),
+            GraphNodeType::Summary => Some(format!(
+                "M{},{}h{}v{}h{}Z M{},{}v{}h{}",
+                cx - r,
+                cy - r,
+                r * 2.0,
+                r * 2.0,
+                -r * 2.0,
+                cx - r - 4.0,
+                cy - r + 4.0,
+                r * 2.0,
+                r * 2.0
+            )),
             _ => None,
         }
     }

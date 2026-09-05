@@ -811,61 +811,12 @@ body {
     -webkit-user-select: none;
 }
 
-.graph-edge {
-    stroke: var(--border);
-    stroke-width: 1.5;
-}
-
-.graph-edge.active {
-    stroke: var(--green);
-    stroke-width: 2;
-    stroke-opacity: 0.7;
-}
-
-.graph-edge.inactive {
-    stroke: var(--text-dim);
-    stroke-width: 1;
-    stroke-dasharray: 4 4;
-    stroke-opacity: 0.4;
-}
-
-.graph-edge.interface {
-    stroke: var(--accent);
-}
-
-.graph-edge.route {
-    stroke-width: 1.5;
-}
-
-.graph-edge.link {
-    stroke: #bc8cff;
-    stroke-width: 2.5;
-}
-
-.graph-edge.association {
-    stroke-dasharray: 2 5;
-    stroke-opacity: 0.45;
-}
-
-.legend-line {
-    display: inline-block;
-    width: 18px;
-    border-top: 2px solid var(--green);
-}
-
-.legend-line.interface {
-    border-color: var(--accent);
-}
-
-.legend-line.link {
-    border-color: #bc8cff;
-    border-top-width: 3px;
-}
-
-.legend-line.association {
-    border-top-style: dotted;
-    border-color: var(--text-muted);
-}
+.graph-edge { stroke: #9aa8b8; stroke-width: 1.5; stroke-opacity: 0.8; fill: none; }
+.graph-edge.interface { stroke-dasharray: none; }
+.graph-edge.route { stroke-dasharray: 6 4; }
+.graph-edge.link { stroke-width: 4.5; stroke-dasharray: none; }
+.graph-link-core { stroke: #0d1117; stroke-width: 1.5; pointer-events: none; }
+.graph-edge.association { stroke-dasharray: 1 5; stroke-linecap: round; }
 
 .graph-node {
     cursor: pointer;
@@ -3019,3 +2970,15 @@ body {
 .network-map-explore select { max-width: 400px; padding: 8px; color: #e6edf3; background: #171c22; border: 1px solid var(--border); border-radius: 6px; }
 .network-map-explore button { padding: 8px 14px; color: #e6edf3; background: #171c22; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
 .network-map-tools { flex-wrap: wrap; }
+
+.network-symbol-key { color: #abb5c1; font-size: 12px; margin-left: auto; }
+.network-symbol-key > summary { cursor: pointer; }
+.network-symbol-key[open] { flex-basis: 100%; margin-left: 0; }
+.network-key-row { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin: 8px 0; }
+.network-key-item { display: inline-flex; align-items: center; gap: 6px; }
+.network-key-item svg { width: 36px; height: 32px; overflow: visible; }
+.network-key-line { display: inline-block; width: 30px; border-top: 1.5px solid #9aa8b8; }
+.network-key-line.route { border-top-style: dashed; }
+.network-key-line.link { border-top: 4px double #9aa8b8; }
+.network-key-line.association { border-top-style: dotted; }
+.network-page .graph-status-label { fill: #abb5c1; }

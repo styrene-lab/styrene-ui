@@ -135,7 +135,7 @@ pub(crate) fn NetworkInspector(
                     Legend { class: "interface", label: "Interface" }
                     Legend { class: "route", label: "Route" }
                     Legend { class: "link", label: "Link" }
-                    Legend { class: "association", label: "Association" }
+                    Legend { class: "association", label: "Group membership" }
                 }
             }
         }
@@ -156,7 +156,7 @@ fn Stat(label: &'static str, value: String) -> Element {
 fn Legend(class: &'static str, label: &'static str) -> Element {
     rsx! {
         div { class: "legend-item",
-            span { class: "legend-line {class}" }
+            span { class: "network-key-line {class}" }
             "{label}"
         }
     }

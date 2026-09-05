@@ -7,7 +7,7 @@ use crate::state::{GraphEdge, GraphNode, GraphNodeType, MeshStatusInfo, PathEntr
 
 use super::network_inspector::NetworkInspector;
 use super::network_interaction::{self, Interaction};
-use super::network_renderer::{GraphRenderer, GraphTooltip};
+use super::network_renderer::{GraphRenderer, GraphTooltip, MapLegend};
 use super::{network_layout, network_model, network_projection};
 
 #[component]
@@ -296,7 +296,7 @@ pub fn NetworkGraph(
                         }
                     }
                 }
-                span { class: "network-map-legend", "Interface —   Route ···   Link ═   Group – –" }
+                MapLegend {}
             }
             div {
                 class: "graph-container",
