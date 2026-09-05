@@ -45,9 +45,15 @@ pub fn InterfaceManager(
     let mut confirm_delete = use_signal(|| false);
     let mut search = use_signal(String::new);
     let mut submitted_revision = use_signal(String::new);
+    let mut previous_session = use_signal(|| (generation(), connected()));
+    let mut previous_result = use_signal(|| 0_u64);
     use_effect(move || {
-        let _ = generation();
-        let _ = connected();
+        let current = (generation(), connected());
+        if *previous_session.peek() == current {
+            return;
+        }
+        previous_session.set(current);
+        previous_result.set(0);
         selected.set(None);
         draft.set(None);
         busy.set(false);
@@ -55,7 +61,8 @@ pub fn InterfaceManager(
     });
     use_effect(move || {
         let serial = result_serial();
-        if serial > 0 {
+        if serial > 0 && serial != *previous_result.peek() {
+            previous_result.set(serial);
             busy.set(false);
             if mutation_error.peek().is_none() {
                 draft.set(None);
