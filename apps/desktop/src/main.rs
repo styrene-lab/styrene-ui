@@ -267,7 +267,10 @@ fn App() -> Element {
             let hash_short = &id.destination_hash[..12.min(id.destination_hash.len())];
             format!("{name} ({hash_short}...)")
         })
-        .unwrap_or_else(|| "loading...".into());
+        .unwrap_or_else(|| match &view.identity.state {
+            stores::DataState::Loading => "Loading identity…".into(),
+            _ => "Identity unavailable".into(),
+        });
 
     let local_hash =
         view.identity.current.as_ref().map(|id| id.destination_hash.clone()).unwrap_or_default();
@@ -501,6 +504,7 @@ fn App() -> Element {
                                 h2 { "Command" }
                                 p { "Operational summary for the active {profile_label} session." }
                             }
+                            if view.command_summary_available() {
                             div { class: "command-grid",
                                 div { class: "command-card",
                                     h3 { "Transport" }
@@ -521,6 +525,14 @@ fn App() -> Element {
                                     h3 { "Propagation" }
                                     strong { if command.propagation_enabled { "Enabled" } else { "Disabled" } }
                                     p { "Open Propagation for queue and peer state." }
+                                }
+                            }
+                            } else {
+                                div { class: "empty-state", role: "status",
+                                    p { "Network summary unavailable until the daemon supplies status." }
+                                    if !view.runtime.connected {
+                                        p { "Start the daemon for the selected socket, then choose Activate to retry." }
+                                    }
                                 }
                             }
                         }

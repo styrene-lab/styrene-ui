@@ -1116,6 +1116,14 @@ impl DomainStores {
         }
     }
 
+    pub fn command_summary_available(&self) -> bool {
+        self.runtime.connected
+            && matches!(
+                self.network.state,
+                DataState::Ready | DataState::Empty | DataState::Degraded { .. }
+            )
+    }
+
     pub fn command_summary(&self) -> CommandSummary {
         CommandSummary {
             transport_active: self.network.status.transport_active,
@@ -1356,7 +1364,7 @@ fn session_failure_message(error: &str) -> &'static str {
     } else if error.contains("permission denied") || error.contains("unauthorized") {
         "daemon socket access denied"
     } else if error.contains("connection refused") {
-        "daemon refused the connection"
+        "no daemon is listening at the selected socket"
     } else if error.contains("not responsive")
         || error.contains("timeout")
         || error.contains("timed out")
@@ -1888,7 +1896,10 @@ mod tests {
         for (raw, expected) in [
             ("connect: No such file or directory (os error 2)", "daemon socket not found"),
             ("connect: Permission denied; token=secret", "daemon socket access denied"),
-            ("connect: Connection refused (os error 61)", "daemon refused the connection"),
+            (
+                "connect: Connection refused (os error 61)",
+                "no daemon is listening at the selected socket",
+            ),
             (
                 "rpc timeout; /Users/operator/private.sock",
                 "daemon did not complete session negotiation",
@@ -1967,6 +1978,20 @@ mod tests {
             stores.route_state(&state::AppRoute::Fleet, BackendCapabilities::default());
         assert!(matches!(route_state, DataState::Degraded { .. }));
         assert_eq!(stores.network.peers.len(), 1);
+    }
+
+    #[test]
+    fn command_summary_requires_a_connected_session_with_network_data() {
+        let mut stores = DomainStores::default();
+        stores.begin_session("Live", ConnectionGeneration(1));
+        assert!(!stores.command_summary_available());
+        stores.runtime.connected = true;
+        assert!(!stores.command_summary_available());
+        stores.network.state = DataState::Ready;
+        assert!(stores.command_summary_available());
+        stores.fail_session(ConnectionGeneration(1), "connection refused");
+        assert!(!stores.command_summary_available());
+        assert!(matches!(stores.identity.state, DataState::Error { .. }));
     }
 
     #[test]
