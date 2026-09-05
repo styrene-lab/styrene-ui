@@ -36,6 +36,21 @@ impl Interaction {
     }
 }
 
+/// Place a measured hover card in canvas coordinates, flipping at each edge.
+pub(crate) fn tooltip_position(
+    pointer: (f64, f64),
+    canvas: (f64, f64),
+    card: (f64, f64),
+) -> (f64, f64) {
+    let place = |pointer: f64, extent: f64, length: f64| {
+        let after = pointer + 12.0;
+        let preferred =
+            if after + length <= extent - 8.0 { after } else { pointer - length - 12.0 };
+        preferred.clamp(8.0, (extent - length - 8.0).max(8.0))
+    };
+    (place(pointer.0, canvas.0, card.0), place(pointer.1, canvas.1, card.1))
+}
+
 /// Scale by gesture distance, not by the number of trackpad events.
 pub(crate) fn wheel_zoom(current: f64, pixels: f64) -> f64 {
     if !pixels.is_finite() || pixels == 0.0 {
@@ -61,6 +76,18 @@ pub(crate) fn hit_test(nodes: &[GraphNode], world_x: f64, world_y: f64) -> Optio
 mod tests {
     use super::*;
     use crate::state::GraphNodeType;
+
+    #[test]
+    fn hover_card_flips_at_bottom_right_and_stays_inside_all_canvas_edges() {
+        let canvas = (640.0, 360.0);
+        let card = (240.0, 120.0);
+        assert_eq!(tooltip_position((630.0, 350.0), canvas, card), (378.0, 218.0));
+        for pointer in [(-20.0, -20.0), (0.0, 0.0), (640.0, 0.0), (0.0, 360.0), (640.0, 360.0)] {
+            let (x, y) = tooltip_position(pointer, canvas, card);
+            assert!(x >= 8.0 && x + card.0 <= canvas.0 - 8.0);
+            assert!(y >= 8.0 && y + card.1 <= canvas.1 - 8.0);
+        }
+    }
 
     #[test]
     fn node_click_tolerates_jitter_but_drag_never_selects_even_after_returning() {

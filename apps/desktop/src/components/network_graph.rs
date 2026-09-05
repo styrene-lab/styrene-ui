@@ -112,6 +112,7 @@ pub fn NetworkGraph(
     let mut camera_y = use_signal(move || initial_camera.1);
     let mut zoom = use_signal(move || initial_camera.2);
     let mut container_size = use_signal(|| (800.0_f64, 600.0_f64));
+    let mut container_origin = use_signal(|| (0.0_f64, 0.0_f64));
     use_effect(move || {
         let _ = model_key();
         let size = container_size();
@@ -338,6 +339,7 @@ pub fn NetworkGraph(
                     spawn(async move {
                         if let Ok(rect) = data.get_client_rect().await {
                             container_size.set((rect.size.width, rect.size.height));
+                            container_origin.set((rect.origin.x, rect.origin.y));
                             let (x, y, scale) = fit_camera(&nodes.read(), (rect.size.width, rect.size.height));
                             camera_x.set(x); camera_y.set(y); zoom.set(scale);
                         }
@@ -345,7 +347,8 @@ pub fn NetworkGraph(
                             const canvas = document.getElementById('network-map-canvas');
                             if (!canvas) return;
                             const resize = new ResizeObserver(([entry]) => {
-                                dioxus.send([entry.contentRect.width, entry.contentRect.height]);
+                                const rect = canvas.getBoundingClientRect();
+                                dioxus.send([entry.contentRect.width, entry.contentRect.height, rect.left, rect.top]);
                             });
                             resize.observe(canvas);
                             await new Promise(resolve => {
@@ -359,9 +362,10 @@ pub fn NetworkGraph(
                                 removal.observe(document.body, {childList: true, subtree: true});
                             });
                         "#);
-                        while let Ok((width, height)) = observer.recv::<(f64, f64)>().await {
+                        while let Ok((width, height, left, top)) = observer.recv::<(f64, f64, f64, f64)>().await {
                             if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
                                 container_size.set((width, height));
+                                container_origin.set((left, top));
                             }
                         }
                     });
@@ -466,16 +470,12 @@ pub fn NetworkGraph(
                     interaction,
                     tooltip,
                 }
-                if let Some((x, y, label, hash, status, capabilities)) = tooltip.read().clone() {
-                    div {
-                        class: "graph-tooltip",
-                        style: "left: {x + 12.0}px; top: {y - 10.0}px;",
-                        div { class: "tt-label", "{label}" }
-                        div { class: "tt-hash", "{hash}" }
-                        div { class: "tt-status", "{status}" }
-                        if !capabilities.is_empty() {
-                            div { class: "tt-caps", "{capabilities}" }
-                        }
+                if let Some(detail) = tooltip.read().clone() {
+                    GraphHoverCard {
+                        key: "{detail.2}:{detail.3}:{detail.4}:{detail.5}:{container_size.read().0}",
+                        detail,
+                        origin: *container_origin.read(),
+                        bounds: *container_size.read(),
                     }
                 }
             }
@@ -495,6 +495,37 @@ pub fn NetworkGraph(
                     on_browse_page,
                 }
             }
+        }
+    }
+}
+
+#[component]
+fn GraphHoverCard(detail: GraphTooltip, origin: (f64, f64), bounds: (f64, f64)) -> Element {
+    let mut measured = use_signal(|| None::<(f64, f64)>);
+    let (x, y, label, hash, status, capabilities) = detail;
+    let (left, top) = network_interaction::tooltip_position(
+        (x - origin.0, y - origin.1),
+        bounds,
+        measured.read().unwrap_or_default(),
+    );
+    let visibility = if measured.read().is_some() { "visible" } else { "hidden" };
+    rsx! {
+        div {
+            class: "graph-tooltip",
+            role: "tooltip",
+            style: "left: {left}px; top: {top}px; visibility: {visibility};",
+            onmounted: move |event| {
+                let data = event.data();
+                spawn(async move {
+                    if let Ok(rect) = data.get_client_rect().await {
+                        measured.set(Some((rect.size.width, rect.size.height)));
+                    }
+                });
+            },
+            div { class: "tt-label", "{label}" }
+            div { class: "tt-hash", "{hash}" }
+            div { class: "tt-status", "{status}" }
+            if !capabilities.is_empty() { div { class: "tt-caps", "{capabilities}" } }
         }
     }
 }
