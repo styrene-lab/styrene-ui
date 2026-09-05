@@ -44,3 +44,30 @@ Run desktop tests with `cargo test --locked -p styrene-dx --bin styrene-dx`.
 Native screenshots are separate evidence from component tests. The Comms Lab
 Mac run records are under `lab/runs/network-recomposition/` in its coordination
 checkout. Physical radio and multi-node delivery are outside these UI checks.
+
+## Local connectivity map
+
+The map opens on the local node, up to 16 transport interfaces and their reported
+connected endpoints, and up to eight active links. Remote destinations collapse
+into groups by their observed route interface. Discovery without a current route
+and routes with an unknown interface have separate groups. These groups are
+presentation summaries; they do not represent physical machines. A TCP endpoint
+is not assigned a mesh identity without evidence.
+
+Select a group on the map or in Explore to reveal 16 destinations per page and
+their reported next hops. Search scans destinations across all groups and shows
+bounded result pages. Select Local overview and clear search to collapse again.
+The page's peer-specific filters apply to the peer inventory, not the map.
+
+At most 100 nodes and 200 relationships reach the renderer. At most 16 group
+summaries appear on the canvas; the selector retains every group. The UI reports
+omitted interfaces, links, and groups. Stale routes and inactive link records are
+excluded; offline discovery alone is excluded, while a current route or active
+link remains independent evidence. Historical counts and the inventory tabs
+retain access to the complete observations.
+
+The daemon keeps its routing state. This change bounds layout and rendering,
+not IPC inventory size. Structural updates reconcile positions; traffic counters
+do not rebuild the graph. Animation remains opt-in. These limits are initial
+presentation budgets, not measured frame-rate guarantees. Linux runtime
+validation remains separate from the Mac build and capture.

@@ -8,7 +8,7 @@ use crate::state::{GraphEdge, GraphNode, GraphNodeType, MeshStatusInfo, PathEntr
 use super::network_inspector::NetworkInspector;
 use super::network_interaction::{self, Interaction};
 use super::network_renderer::{GraphRenderer, GraphTooltip};
-use super::{network_layout, network_model};
+use super::{network_layout, network_model, network_projection};
 
 #[component]
 pub fn NetworkGraph(
@@ -30,8 +30,25 @@ pub fn NetworkGraph(
     let mut selected = use_signal(|| None::<usize>);
     let mut model_key = use_signal(String::new);
     let mut auto_fit = use_signal(|| true);
+    let mut interaction = use_signal(|| Interaction::None);
+    let mut expanded_group = use_signal(String::new);
+    let mut page = use_signal(|| 0_usize);
+    let mut projection = use_signal(network_projection::Projection::default);
+    let search_query = use_signal(String::new);
+    let query = if inspection.is_some() {
+        search.trim().to_ascii_lowercase()
+    } else {
+        search_query.read().trim().to_ascii_lowercase()
+    };
+    let mut previous_query = use_signal(String::new);
+    if *previous_query.read() != query {
+        page.set(0);
+        previous_query.set(query.clone());
+    }
+    let view_key = format!("{}|{}|{}", expanded_group.read(), query, page.read());
+    let mut previous_view = use_signal(String::new);
     let current_key = format!(
-        "{local_hash}|{local_name:?}|{interface_names:?}|{}|{:?}|{:?}|{:?}",
+        "{local_hash}|{local_name:?}|{interface_names:?}|{view_key}|{}|{:?}|{:?}|{:?}",
         peer_key(&peers),
         paths
             .iter()
@@ -39,55 +56,44 @@ pub fn NetworkGraph(
             .collect::<Vec<_>>(),
         interfaces
             .iter()
-            .map(|i| (&i.hash, &i.name, &i.status, &i.parent_hash))
+            .map(|i| (
+                &i.hash,
+                &i.name,
+                &i.status,
+                &i.parent_hash,
+                &i.remote_endpoint,
+                i.observation.stale
+            ))
             .collect::<Vec<_>>(),
         links.iter().map(|l| (&l.peer_hash, &l.activity, l.observation.stale)).collect::<Vec<_>>()
     );
     if *model_key.read() != current_key {
-        let (mut next_nodes, next_edges) = network_model::build_graph(
+        let next_projection = network_projection::project(
             &local_hash,
             local_name.as_deref(),
             &peers,
             &paths,
             &interfaces,
             &links,
-            &[],
+            &interface_names,
+            network_projection::View {
+                group: &expanded_group.read(),
+                query: &query,
+                page: *page.read(),
+            },
         );
-        for node in &mut next_nodes {
-            if let Some(hash) = node.id.strip_prefix("iface:")
-                && let Some((_, name)) = interface_names.iter().find(|(id, _)| id == hash)
-            {
-                node.label = name.clone();
-            }
-        }
+        let mut next_nodes = next_projection.nodes.clone();
+        let next_edges = next_projection.edges.clone();
         let selected_id =
             selected.read().and_then(|index| nodes.read().get(index).map(|node| node.id.clone()));
-        if (nodes.read().len() > 200) == (next_nodes.len() > 200) {
-            let mut degree = vec![0_usize; next_nodes.len()];
-            for edge in &next_edges {
-                if edge.kind == crate::state::GraphEdgeKind::Route {
-                    degree[edge.source] += 1;
-                }
-            }
-            let anchors: Vec<_> = next_nodes
-                .iter()
-                .enumerate()
-                .filter(|(index, node)| {
-                    matches!(node.node_type, GraphNodeType::Local | GraphNodeType::Interface { .. })
-                        || degree[*index] >= 8
-                })
-                .map(|(index, node)| (index, node.x, node.y))
-                .collect();
+        if *previous_view.read() == view_key {
             network_model::preserve_positions(&nodes.read(), &mut next_nodes);
-            // While following discovery, reserve label space for anchors that
-            // arrive after the initial peer snapshot. Manual layouts stay put.
-            if *auto_fit.read() && next_nodes.len() > 200 {
-                for (index, x, y) in anchors {
-                    next_nodes[index].x = x;
-                    next_nodes[index].y = y;
-                }
-            }
+        } else {
+            auto_fit.set(true);
+            interaction.set(Interaction::None);
+            previous_view.set(view_key);
         }
+        projection.set(next_projection);
         selected.set(selected_id.and_then(|id| next_nodes.iter().position(|node| node.id == id)));
         nodes.set(next_nodes);
         edges.set(next_edges);
@@ -98,7 +104,6 @@ pub fn NetworkGraph(
     let mut camera_x = use_signal(move || initial_camera.0);
     let mut camera_y = use_signal(move || initial_camera.1);
     let mut zoom = use_signal(move || initial_camera.2);
-    let mut interaction = use_signal(|| Interaction::None);
     let mut container_size = use_signal(|| (800.0_f64, 600.0_f64));
     use_effect(move || {
         let _ = model_key();
@@ -112,7 +117,6 @@ pub fn NetworkGraph(
     });
     let mut tooltip = use_signal(|| None::<GraphTooltip>);
     let mut physics_on = use_signal(initial_physics_enabled);
-    let search_query = use_signal(String::new);
     let show_all = use_signal(|| true);
 
     let visible: Vec<bool> =
@@ -179,11 +183,6 @@ pub fn NetworkGraph(
             )
         })
         .unwrap_or_default();
-    let query = if inspection.is_some() {
-        search.to_ascii_lowercase()
-    } else {
-        search_query.read().to_ascii_lowercase()
-    };
     let search_matches: Vec<usize> = if query.is_empty() {
         Vec::new()
     } else {
@@ -202,16 +201,50 @@ pub fn NetworkGraph(
     let selected_detail = selected.read().and_then(|index| nodes.read().get(index).cloned());
 
     use_effect(move || {
-        if let Some(callback) = inspection
-            && let Some(index) = *selected.read()
+        if let Some(index) = *selected.read()
             && let Some(node) = nodes.read().get(index)
         {
-            callback.call(node.id.clone());
+            if let Some(group) = node.id.strip_prefix("group:") {
+                if *expanded_group.peek() != group {
+                    expanded_group.set(group.to_string());
+                    page.set(0);
+                }
+            } else if !matches!(node.node_type, GraphNodeType::Endpoint | GraphNodeType::Summary)
+                && let Some(callback) = inspection
+            {
+                callback.call(node.id.clone());
+            }
         }
     });
 
     rsx! {
         div { class: "network-view",
+            div { class: "network-map-overview",
+                strong { "Local connectivity" }
+                span { "{projection.read().destinations} destinations in {projection.read().groups.len()} groups · {nodes.read().len()} visible items" }
+                p { "Groups summarize observed routes, not physical machines. Select a group to explore; search finds destinations across groups." }
+                div { class: "network-map-explore",
+                    label { r#for: "map-group", "Explore " }
+                    select { id: "map-group", value: "{expanded_group}",
+                        onchange: move |event| { selected.set(None); expanded_group.set(event.value()); page.set(0); },
+                        option { value: "", "Local overview" }
+                        for group in &projection.read().groups {
+                            option { key: "{group.id}", value: "{group.id}", "{group.label} ({group.count})" }
+                        }
+                    }
+                    if !query.is_empty() || !expanded_group.read().is_empty() {
+                        span { role: "status", "{projection.read().shown} of {projection.read().matches} destinations · page {projection.read().page + usize::from(projection.read().pages > 0)} / {projection.read().pages}" }
+                        button { disabled: projection.read().page == 0,
+                            onclick: move |_| { let value = projection.peek().page.saturating_sub(1); page.set(value); }, "Previous" }
+                        button { disabled: projection.read().page + 1 >= projection.read().pages,
+                            onclick: move |_| { let value = projection.peek().page + 1; page.set(value); }, "Next" }
+                    }
+                }
+                small { "Historical observations: {projection.read().stale_routes} stale routes · {projection.read().offline_peers} offline peers · {projection.read().inactive_links} inactive link records. Full detail remains in the inventory tabs." }
+                if projection.read().omitted_interfaces > 0 || projection.read().omitted_links > 0 || projection.read().groups.len() > 16 {
+                    small { "Display limit: {projection.read().omitted_interfaces} additional interfaces · {projection.read().omitted_links} additional active links · {projection.read().groups.len().saturating_sub(16)} additional groups. Use the selector or inventory tabs." }
+                }
+            }
             div { class: "network-map-tools",
                 button {
                     onclick: move |_| {
@@ -231,7 +264,7 @@ pub fn NetworkGraph(
                         camera_x.set(x);camera_y.set(y);zoom.set(scale);
                     }, "Focus matches" }
                 }
-                span { class:"network-map-summary", "{nodes.read().len()} nodes · {edges.read().len()} connections" }
+                span { class:"network-map-summary", "{edges.read().len()} visible relationships" }
                 button {
                     aria_label: "Zoom in",
                     onclick: move |_| {
@@ -262,7 +295,7 @@ pub fn NetworkGraph(
                         }
                     }
                 }
-                span { class: "network-map-legend", "Interface —   Route ···   Link ═" }
+                span { class: "network-map-legend", "Interface —   Route ···   Link ═   Group – –" }
             }
             div {
                 class: "graph-container",
@@ -436,6 +469,8 @@ fn peer_key(peers: &[PeerEntry]) -> String {
 fn is_interesting(node: &GraphNode) -> bool {
     match &node.node_type {
         GraphNodeType::Unknown
+        | GraphNodeType::Summary
+        | GraphNodeType::Endpoint
         | GraphNodeType::Local
         | GraphNodeType::Interface { .. }
         | GraphNodeType::Hub { .. } => true,

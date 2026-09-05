@@ -99,16 +99,17 @@ pub(crate) fn GraphRenderer(
                                 let radius = node.radius();
                                 let x = node.x;
                                 let y = node.y;
-                                let label = node.label.clone();
+                                let label = node.label.lines().next().unwrap_or_default().to_string();
+                                let summary_detail = node.label.lines().nth(1).unwrap_or_default().to_string();
                                 let short_hash = if node.id.len() > 12 {
-                                    format!("{}...", &node.id[..12])
+                                    format!("{}...", node.id.chars().take(12).collect::<String>())
                                 } else {
                                     node.id.clone()
                                 };
                                 let local = node.node_type == GraphNodeType::Local;
-                                let anchor = local || matches!(node.node_type, GraphNodeType::Interface { .. }) || route_sources.contains(&index);
-                                let label_offset = radius + if anchor { 14.0 / zoom.max(0.01) } else { 14.0 };
-                                let label_style = if anchor { format!("font-size: {}px; paint-order: stroke; stroke: #0e1319; stroke-width: {}px;", 12.0 / zoom.max(0.01), 3.0 / zoom.max(0.01)) } else { String::new() };
+                                let anchor = local || matches!(node.node_type, GraphNodeType::Interface { .. } | GraphNodeType::Summary | GraphNodeType::Endpoint) || route_sources.contains(&index);
+                                let label_offset = radius + if nodes.len() <= 100 || anchor { 14.0 / zoom.max(0.01) } else { 14.0 };
+                                let label_style = if nodes.len() <= 100 || anchor { format!("font-size: {}px; paint-order: stroke; stroke: #0e1319; stroke-width: {}px;", 12.0 / zoom.max(0.01), 3.0 / zoom.max(0.01)) } else { String::new() };
                                 let custom_path = node.shape_path(x, y);
                                 let tooltip_label = label.clone();
                                 let tooltip_hash = node.id.clone();
@@ -118,7 +119,7 @@ pub(crate) fn GraphRenderer(
                                     "{}; {}; {}",
                                     node.label,
                                     node.type_label(),
-                                    if node.node_type.is_online() { "online" } else { "offline" }
+                                    if matches!(node.node_type, GraphNodeType::Summary | GraphNodeType::Unknown) { "status not implied" } else if node.node_type.is_online() { "online" } else { "offline" }
                                 );
                                 let icon = match &node.node_type {
                                     GraphNodeType::Local => Some("⬡"),
@@ -139,7 +140,7 @@ pub(crate) fn GraphRenderer(
                                 } else {
                                     "1"
                                 };
-                                let show_label = anchor || is_selected
+                                let show_label = nodes.len() <= 100 || anchor || is_selected
                                     || neighbor
                                     || search_match
                                     || show_all_labels
@@ -209,6 +210,9 @@ pub(crate) fn GraphRenderer(
                                         }
                                         if show_label {
                                             text { class: "graph-label", style:"{label_style}", x: "{x}", y: "{y + label_offset}", "{label}" }
+                                            if !summary_detail.is_empty() {
+                                                text { class: "graph-label", style:"{label_style}", x: "{x}", y: "{y + label_offset + 18.0 / zoom.max(0.01)}", "{summary_detail}" }
+                                            }
                                             if !anchor {
                                                 text {
                                                     class: "graph-label-hash", x: "{x}",

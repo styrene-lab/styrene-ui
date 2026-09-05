@@ -9,6 +9,7 @@ mod network_interaction;
 mod network_layout;
 mod network_model;
 mod network_page;
+mod network_projection;
 mod network_renderer;
 mod page_browser;
 mod propagation_page;

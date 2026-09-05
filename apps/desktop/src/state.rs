@@ -156,6 +156,10 @@ pub struct GraphNode {
 pub enum GraphNodeType {
     /// Observed destination whose discovery/status metadata is unavailable.
     Unknown,
+    /// Presentation aggregate; never a physical node.
+    Summary,
+    /// Connected transport endpoint; identity is not inferred.
+    Endpoint,
     /// The local node (center of the graph).
     Local,
     /// A transport interface (TCP, UDP, Serial).
@@ -174,7 +178,8 @@ impl GraphNodeType {
     pub fn is_online(&self) -> bool {
         match self {
             Self::Local => true,
-            Self::Unknown => false,
+            Self::Unknown | Self::Summary => false,
+            Self::Endpoint => true,
             Self::Interface { online }
             | Self::Rns { online }
             | Self::Styrene { online }
@@ -188,6 +193,8 @@ impl GraphNode {
     pub fn color(&self) -> &'static str {
         match &self.node_type {
             GraphNodeType::Unknown => "#8b949e",
+            GraphNodeType::Summary => "#6e7681",
+            GraphNodeType::Endpoint => "#39d2c0",
             GraphNodeType::Local => "#58a6ff", // blue
             GraphNodeType::Interface { online: true } => "#3fb950", // green
             GraphNodeType::Interface { online: false } => "#f85149", // red
@@ -206,6 +213,8 @@ impl GraphNode {
     pub fn radius(&self) -> f64 {
         match self.node_type {
             GraphNodeType::Unknown => 6.0,
+            GraphNodeType::Summary => 14.0,
+            GraphNodeType::Endpoint => 8.0,
             GraphNodeType::Local => 12.0,
             GraphNodeType::Interface { .. } => 8.0,
             GraphNodeType::Hub { .. } => 10.0,
@@ -218,6 +227,8 @@ impl GraphNode {
     pub fn border_color(&self) -> &'static str {
         match &self.node_type {
             GraphNodeType::Unknown => "#abb5c1",
+            GraphNodeType::Summary => "#abb5c1",
+            GraphNodeType::Endpoint => "#56ead6",
             GraphNodeType::Local => "#79c0ff",
             GraphNodeType::Interface { online: true } => "#56d364",
             GraphNodeType::Interface { online: false } => "#f85149",
@@ -235,6 +246,8 @@ impl GraphNode {
     pub fn type_label(&self) -> &'static str {
         match &self.node_type {
             GraphNodeType::Unknown => "Destination (status unknown)",
+            GraphNodeType::Summary => "Destination group · select to explore",
+            GraphNodeType::Endpoint => "Connected transport endpoint",
             GraphNodeType::Local => "Local Node",
             GraphNodeType::Interface { online: true } => "Interface (active)",
             GraphNodeType::Interface { online: false } => "Interface (disconnected)",

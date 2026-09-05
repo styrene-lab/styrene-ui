@@ -3009,3 +3009,13 @@ body {
 @media(max-width:1000px){.interface-layout.inspecting{grid-template-columns:minmax(0,1fr);}.interface-layout.inspecting .interface-list{display:none;}.interface-inspector{border-left:0;}.interface-toolbar{align-items:flex-start;}.interface-toolbar p{max-width:38ch;}}
 
 .interface-table .interface-row-error {white-space:normal;max-width:30ch;color:#ffaaa2;font-size:13px;line-height:1.4;margin:5px 0 0;}
+
+.network-map-overview { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.network-map-overview > strong { color: #e6edf3; margin-right: 18px; }
+.network-map-overview > span, .network-map-overview small { color: #abb5c1; }
+.network-map-overview p { margin: 8px 0 12px; color: #abb5c1; }
+.network-map-overview small { display: block; margin-top: 10px; }
+.network-map-explore { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.network-map-explore select { max-width: 400px; padding: 8px; color: #e6edf3; background: #171c22; border: 1px solid var(--border); border-radius: 6px; }
+.network-map-explore button { padding: 8px 14px; color: #e6edf3; background: #171c22; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.network-map-tools { flex-wrap: wrap; }

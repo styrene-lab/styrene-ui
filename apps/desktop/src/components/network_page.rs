@@ -285,26 +285,6 @@ pub fn NetworkPage(
                 endpoint.starts_with("127.") || endpoint.starts_with("[::1]:")
             }) && interface.remote_endpoint.is_none()
         });
-    let filtered_paths: Vec<_> = paths
-        .iter()
-        .filter(|path| {
-            query_value.is_empty()
-                || path.destination_hash.to_ascii_lowercase().contains(&query_value)
-                || peer_label(&peers, &path.destination_hash)
-                    .to_ascii_lowercase()
-                    .contains(&query_value)
-        })
-        .cloned()
-        .collect();
-    let filtered_links: Vec<_> = links
-        .iter()
-        .filter(|link| {
-            query_value.is_empty()
-                || link.peer_hash.to_ascii_lowercase().contains(&query_value)
-                || peer_label(&peers, &link.peer_hash).to_ascii_lowercase().contains(&query_value)
-        })
-        .cloned()
-        .collect();
 
     rsx! {
         div { class: "network-page",
@@ -450,14 +430,14 @@ pub fn NetworkPage(
                         }
                     } else if *mode.read() == NetworkMode::Combined {
                         NetworkGraph {
-                            peers: filtered_peers,
-                            paths: filtered_paths,
+                            peers: peers.clone(),
+                            paths: paths.clone(),
                             status: status.clone(),
                             local_hash: local_hash.clone(),
                             local_name: local_name.clone(),
                             on_select_peer,
                             on_browse_page,
-                            links: filtered_links,
+                            links: links.clone(),
                             interfaces: interfaces.clone(),
                             interface_names: interface_names.clone(),
                             inspection: Some(
