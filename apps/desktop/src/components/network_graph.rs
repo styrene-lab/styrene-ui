@@ -221,27 +221,51 @@ pub fn NetworkGraph(
     rsx! {
         div { class: "network-view",
             div { class: "network-map-overview",
-                strong { "Local connectivity" }
-                span { "{projection.read().destinations} destinations in {projection.read().groups.len()} groups · {nodes.read().len()} visible items" }
-                p { "Groups summarize observed routes, not physical machines. Select a group to explore; search finds destinations across groups." }
+                div { class: "network-map-heading",
+                    strong { "Local connectivity" }
+                    span { "Destinations: {projection.read().destinations} · Groups: {projection.read().groups.len()} · Visible items: {nodes.read().len()}" }
+                }
                 div { class: "network-map-explore",
                     label { r#for: "map-group", "Explore " }
                     select { id: "map-group", value: "{expanded_group}",
+                        disabled: !query.is_empty(),
                         onchange: move |event| { selected.set(None); expanded_group.set(event.value()); page.set(0); },
                         option { value: "", "Local overview" }
                         for group in &projection.read().groups {
                             option { key: "{group.id}", value: "{group.id}", "{group.label} ({group.count})" }
                         }
                     }
+                    if !query.is_empty() {
+                        span { "Searching all groups" }
+                    } else if !expanded_group.read().is_empty() {
+                        button {
+                            onclick: move |_| { selected.set(None); expanded_group.set(String::new()); page.set(0); },
+                            "Back to overview"
+                        }
+                    }
                     if !query.is_empty() || !expanded_group.read().is_empty() {
-                        span { role: "status", "{projection.read().shown} of {projection.read().matches} destinations · page {projection.read().page + usize::from(projection.read().pages > 0)} / {projection.read().pages}" }
-                        button { disabled: projection.read().page == 0,
-                            onclick: move |_| { let value = projection.peek().page.saturating_sub(1); page.set(value); }, "Previous" }
-                        button { disabled: projection.read().page + 1 >= projection.read().pages,
-                            onclick: move |_| { let value = projection.peek().page + 1; page.set(value); }, "Next" }
+                        if projection.read().matches == 0 {
+                            span { role: "status",
+                                if !query.is_empty() { "No destinations match this search." }
+                                else { "This group has no current destinations." }
+                            }
+                        } else {
+                            span { role: "status", "{projection.read().shown} of {projection.read().matches} destinations" }
+                            if projection.read().pages > 1 {
+                                button { disabled: projection.read().page == 0,
+                                    onclick: move |_| { let value = projection.peek().page.saturating_sub(1); page.set(value); }, "Previous" }
+                                span { "Page {projection.read().page + 1} of {projection.read().pages}" }
+                                button { disabled: projection.read().page + 1 >= projection.read().pages,
+                                    onclick: move |_| { let value = projection.peek().page + 1; page.set(value); }, "Next" }
+                            }
+                        }
                     }
                 }
-                small { "Historical observations: {projection.read().stale_routes} stale routes · {projection.read().offline_peers} offline peers · {projection.read().inactive_links} inactive link records. Full detail remains in the inventory tabs." }
+                details { class: "network-map-context",
+                    summary { "About this map · observation history" }
+                    p { "Select a group to explore its destinations. Search covers all groups. Groups summarize observed routes, not physical machines." }
+                    small { "Historical observations: {projection.read().stale_routes} stale routes · {projection.read().offline_peers} offline peers · {projection.read().inactive_links} inactive link records. Full detail remains in the inventory tabs." }
+                }
                 if projection.read().omitted_interfaces > 0 || projection.read().omitted_links > 0 || projection.read().groups.len() > 16 {
                     small { "Display limit: {projection.read().omitted_interfaces} additional interfaces · {projection.read().omitted_links} additional active links · {projection.read().groups.len().saturating_sub(16)} additional groups. Use the selector or inventory tabs." }
                 }
