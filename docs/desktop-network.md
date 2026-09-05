@@ -47,12 +47,10 @@ checkout. Physical radio and multi-node delivery are outside these UI checks.
 
 ## Local connectivity map
 
-The map opens on the local node, up to 16 transport interfaces and their reported
-connected endpoints, and up to eight active links. Remote destinations collapse
+The map opens on the local node, up to 16 local interfaces or configured remote entities, and up to eight active links. Remote destinations collapse
 into groups by their observed route interface. Discovery without a current route
 and routes with an unknown interface have separate groups. These groups are
-presentation summaries; they do not represent physical machines. A TCP endpoint
-is not assigned a mesh identity without evidence.
+presentation summaries; they do not represent physical machines. A configured target is not assigned a mesh identity without evidence.
 
 Select a group on the map or in Explore to reveal 16 destinations per page and
 their reported next hops. Search scans destinations across all groups and shows
@@ -80,7 +78,7 @@ Object shape is independent of peer role and operational state:
 |---|---|
 | This device | Hexagon |
 | Interface | Square |
-| Connected TCP endpoint | Diamond |
+| Configured remote entity | Circle |
 | Remote destination, any role | Circle |
 | Destination group | Stacked squares |
 
@@ -96,3 +94,20 @@ dashed lines mean observed routes, double lines mean active links, and dotted
 lines mean group membership. Edge appearance does not derive health from either
 endpoint. Neither color nor motion claims packet flow. The Map key contains the
 same object geometry and relationship patterns used by the renderer.
+
+## Remote entities and their connections
+
+An outbound connection to a configured hub appears as one remote entity. Its
+interface and resolved socket are connection details, not separate map objects.
+Connections to the same normalized configured hostname share that entity across
+ports, and their route groups share its map attachment. The entity is connected
+when any of its current connections is active. Disabled configurations retain an
+unavailable entity even without a runtime worker. Selecting it lists configured
+endpoints, connection states, and resolved sockets together.
+
+This join uses the operator's configured target, never a display name or resolved
+IP. The daemon does not yet provide a verified remote-identity association for
+TCP interfaces. Different hostnames, aliases, or other transports are not
+automatically unified, even if they belong to the same physical hub. Full
+cross-address consolidation requires an explicit entity/connection association;
+the configured-target join is the current implementation boundary.

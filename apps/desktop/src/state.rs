@@ -158,8 +158,8 @@ pub enum GraphNodeType {
     Unknown,
     /// Presentation aggregate; never a physical node.
     Summary,
-    /// Connected transport endpoint; identity is not inferred.
-    Endpoint,
+    /// Operator-configured remote entity; transports are its connection details.
+    Remote { online: bool },
     /// The local node (center of the graph).
     Local,
     /// A transport interface (TCP, UDP, Serial).
@@ -179,7 +179,7 @@ impl GraphNodeType {
         match self {
             Self::Local => true,
             Self::Unknown | Self::Summary => false,
-            Self::Endpoint => true,
+            Self::Remote { online } => *online,
             Self::Interface { online }
             | Self::Rns { online }
             | Self::Styrene { online }
@@ -212,7 +212,8 @@ impl GraphNode {
             GraphNodeType::Local => "This device",
             GraphNodeType::Summary => "Destination group",
             GraphNodeType::Unknown => "Status unknown",
-            GraphNodeType::Endpoint => "Connected",
+            GraphNodeType::Remote { online: true } => "Connected",
+            GraphNodeType::Remote { online: false } => "Disconnected / unavailable",
             GraphNodeType::Interface { online: true } => "Active",
             GraphNodeType::Interface { online: false } => "Disconnected / unavailable",
             _ if self.node_type.is_online() => "Reported online",
@@ -234,7 +235,7 @@ impl GraphNode {
         match &self.node_type {
             GraphNodeType::Unknown => "Destination (status unknown)",
             GraphNodeType::Summary => "Destination group · select to explore",
-            GraphNodeType::Endpoint => "Connected transport endpoint",
+            GraphNodeType::Remote { .. } => "Configured remote entity",
             GraphNodeType::Local => "Local Node",
             GraphNodeType::Interface { online: true } => "Interface (active)",
             GraphNodeType::Interface { online: false } => "Interface (disconnected)",
@@ -271,17 +272,6 @@ impl GraphNode {
             GraphNodeType::Interface { .. } => {
                 Some(format!("M{},{}h{}v{}h{}Z", cx - r, cy - r, r * 2.0, r * 2.0, -r * 2.0))
             }
-            GraphNodeType::Endpoint => Some(format!(
-                "M{},{}L{},{}L{},{}L{},{}Z",
-                cx,
-                cy - r,
-                cx + r,
-                cy,
-                cx,
-                cy + r,
-                cx - r,
-                cy
-            )),
             GraphNodeType::Summary => Some(format!(
                 "M{},{}h{}v{}h{}Z M{},{}v{}h{}",
                 cx - r,
@@ -629,4 +619,17 @@ mod tests {
         assert!(!rendered.contains("structured-secret"));
         assert!(!rendered.contains("/private/key"));
     }
+}
+
+/// Operator configuration joins a runtime connection to a remote target.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapInterface {
+    pub hash: String,
+    pub name: String,
+    /// Configured hostname, never the resolved socket address or a display name.
+    pub remote_target: Option<String>,
+}
+
+pub fn remote_target_key(host: &str) -> String {
+    host.trim().trim_end_matches('.').to_ascii_lowercase()
 }

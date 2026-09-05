@@ -220,17 +220,34 @@ pub fn NetworkPage(
         })
         .cloned()
         .collect();
+    let mut map_interfaces = interfaces.clone();
     let interface_names: Vec<_> = interface_inventory
         .as_ref()
         .map(|inventory| {
             inventory
                 .entries
                 .iter()
-                .filter_map(|entry| {
-                    entry
+                .map(|entry| {
+                    let hash = entry
                         .runtime_hash
-                        .as_ref()
-                        .map(|hash| (hash.clone(), entry.settings.name.clone()))
+                        .clone()
+                        .unwrap_or_else(|| format!("configured:{}", entry.settings.id));
+                    if !map_interfaces.iter().any(|i| i.hash == hash) {
+                        let mut interface = InterfaceInfo::default();
+                        interface.hash = hash.clone();
+                        interface.name = entry.settings.name.clone();
+                        interface.kind = entry.settings.kind.clone();
+                        interface.enabled = entry.settings.enabled;
+                        interface.status = entry.state.clone();
+                        map_interfaces.push(interface);
+                    }
+                    crate::state::MapInterface {
+                        hash,
+                        name: entry.settings.name.clone(),
+                        remote_target: (entry.settings.kind == "tcp_client"
+                            && !entry.settings.host.trim().is_empty())
+                        .then(|| crate::state::remote_target_key(&entry.settings.host)),
+                    }
                 })
                 .collect()
         })
@@ -269,9 +286,52 @@ pub fn NetworkPage(
         })
         .cloned()
         .collect();
+    let mut selected_for_map = all_rows.clone();
+    if let Some(inventory) = &interface_inventory {
+        let mut entities = std::collections::BTreeMap::<String, Vec<_>>::new();
+        for entry in &inventory.entries {
+            if entry.settings.kind == "tcp_client" && !entry.settings.host.trim().is_empty() {
+                entities
+                    .entry(crate::state::remote_target_key(&entry.settings.host))
+                    .or_default()
+                    .push(entry);
+            }
+        }
+        for (target, mut connections) in entities {
+            connections.sort_by(|a, b| a.runtime_hash.cmp(&b.runtime_hash));
+            let details = connections
+                .iter()
+                .map(|entry| {
+                    (
+                        format!("{} · {}", entry.settings.name, entry.settings.kind),
+                        format!(
+                            "{}:{} · {}\nResolved endpoint: {}",
+                            entry.settings.host,
+                            entry.settings.port,
+                            entry.state,
+                            entry.remote_endpoint.as_deref().unwrap_or("Not connected")
+                        ),
+                    )
+                })
+                .collect();
+            selected_for_map.push(InventoryRow {
+                key: format!("entity:{target}"),
+                mode: NetworkMode::Interfaces,
+                name: connections[0].settings.name.clone(),
+                kind: format!("Remote entity · {} connections", connections.len()),
+                cells: Vec::new(),
+                details,
+                diagnostics: format!(
+                    "Configured target: {target}\nRemote mesh identity: not established"
+                ),
+                destination: String::new(),
+                link_id: String::new(),
+                can_browse: false,
+            });
+        }
+    }
     let selected_row =
-        all_rows.iter().find(|row| Some(&row.key) == selected.read().as_ref()).cloned();
-    let selected_for_map = all_rows.clone();
+        selected_for_map.iter().find(|row| Some(&row.key) == selected.read().as_ref()).cloned();
     let mut select_row = move |row: InventoryRow| {
         target.set(row.destination.clone());
         link_control_id.set(row.link_id.clone());
@@ -438,14 +498,14 @@ pub fn NetworkPage(
                             on_select_peer,
                             on_browse_page,
                             links: links.clone(),
-                            interfaces: interfaces.clone(),
+                            interfaces: map_interfaces,
                             interface_names: interface_names.clone(),
                             inspection: Some(
                                 EventHandler::new(move |id: String| {
                                     if let Some(row) = selected_for_map
                                         .iter()
                                         .find(|row| {
-                                            row.key == format!("interface:{}", id.trim_start_matches("iface:"))
+                                            row.key == id || row.key == format!("interface:{}", id.trim_start_matches("iface:"))
                                                 || row.key == format!("peer:{id}")
                                                 || row.key == format!("route:{id}")
                                                     || row.key == format!("local:{id}")

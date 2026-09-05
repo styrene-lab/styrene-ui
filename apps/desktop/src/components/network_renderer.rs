@@ -101,7 +101,7 @@ pub(crate) fn GraphRenderer(
                                 let label = node.label.lines().next().unwrap_or_default().to_string();
                                 let summary_detail = node.label.lines().nth(1).unwrap_or_default().to_string();
                                 let local = node.node_type == GraphNodeType::Local;
-                                let anchor = local || matches!(node.node_type, GraphNodeType::Interface { .. } | GraphNodeType::Summary | GraphNodeType::Endpoint) || route_sources.contains(&index);
+                                let anchor = local || matches!(node.node_type, GraphNodeType::Interface { .. } | GraphNodeType::Summary | GraphNodeType::Remote { .. }) || route_sources.contains(&index);
                                 let label_offset = radius + if nodes.len() <= 100 || anchor { 14.0 / zoom.max(0.01) } else { 14.0 };
                                 let label_style = if nodes.len() <= 100 || anchor { format!("font-size: {}px; paint-order: stroke; stroke: #0e1319; stroke-width: {}px;", 12.0 / zoom.max(0.01), 3.0 / zoom.max(0.01)) } else { String::new() };
                                 let custom_path = node.shape_path(x, y);
@@ -235,7 +235,7 @@ pub(crate) fn MapLegend() -> Element {
     let samples = [
         ("This device", GraphNodeType::Local),
         ("Interface", GraphNodeType::Interface { online: false }),
-        ("TCP endpoint", GraphNodeType::Endpoint),
+        ("Remote entity", GraphNodeType::Remote { online: true }),
         ("Destination", GraphNodeType::Unknown),
         ("Group", GraphNodeType::Summary),
     ];

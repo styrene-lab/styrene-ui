@@ -23,7 +23,7 @@ pub fn NetworkGraph(
     on_browse_page: EventHandler<String>,
     links: Vec<crate::state::LinkInfo>,
     interfaces: Vec<crate::state::InterfaceInfo>,
-    interface_names: Vec<(String, String)>,
+    interface_names: Vec<crate::state::MapInterface>,
 ) -> Element {
     let mut nodes = use_signal(Vec::<GraphNode>::new);
     let mut edges = use_signal(Vec::<GraphEdge>::new);
@@ -219,7 +219,7 @@ pub fn NetworkGraph(
                 selected.set(None);
                 expanded_group.set(group.to_string());
                 page.set(0);
-            } else if !matches!(node.node_type, GraphNodeType::Endpoint | GraphNodeType::Summary)
+            } else if !matches!(node.node_type, GraphNodeType::Summary)
                 && let Some(callback) = inspection
             {
                 callback.call(node.id.clone());
@@ -570,7 +570,7 @@ fn is_interesting(node: &GraphNode) -> bool {
     match &node.node_type {
         GraphNodeType::Unknown
         | GraphNodeType::Summary
-        | GraphNodeType::Endpoint
+        | GraphNodeType::Remote { .. }
         | GraphNodeType::Local
         | GraphNodeType::Interface { .. }
         | GraphNodeType::Hub { .. } => true,

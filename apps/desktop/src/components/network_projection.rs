@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::network_model;
 use crate::state::{
-    GraphEdge, GraphEdgeKind, GraphNode, GraphNodeType, InterfaceInfo, LinkInfo, PathEntry,
-    PeerEntry,
+    GraphEdge, GraphEdgeKind, GraphNode, GraphNodeType, InterfaceInfo, LinkInfo, MapInterface,
+    PathEntry, PeerEntry,
 };
 
 pub(crate) const PAGE_SIZE: usize = 16;
@@ -49,7 +49,7 @@ pub(crate) fn project(
     paths: &[PathEntry],
     interfaces: &[InterfaceInfo],
     links: &[LinkInfo],
-    names: &[(String, String)],
+    names: &[MapInterface],
     view: View<'_>,
 ) -> Projection {
     let mut result = Projection {
@@ -60,23 +60,23 @@ pub(crate) fn project(
     };
     let mut sorted_interfaces: Vec<_> = interfaces.iter().collect();
     sorted_interfaces.sort_by(|a, b| a.hash.cmp(&b.hash));
+    let entity_id = |i: &InterfaceInfo| {
+        names
+            .iter()
+            .find(|n| n.hash == i.hash)
+            .and_then(|n| n.remote_target.as_ref())
+            .map(|host| format!("entity:{host}"))
+            .unwrap_or_else(|| format!("iface:{}", i.hash))
+    };
     let interface_ids: HashMap<_, _> = interfaces
         .iter()
-        .flat_map(|i| {
-            [
-                (i.name.as_str(), format!("iface:{}", i.hash)),
-                (i.hash.as_str(), format!("iface:{}", i.hash)),
-            ]
-        })
+        .flat_map(|i| [(i.name.as_str(), entity_id(i)), (i.hash.as_str(), entity_id(i))])
         .collect();
-    let interface_labels: HashMap<_, _> = interfaces
-        .iter()
-        .map(|i| {
-            let label =
-                names.iter().find(|(hash, _)| hash == &i.hash).map_or(&i.name, |(_, name)| name);
-            (format!("iface:{}", i.hash), label.clone())
-        })
-        .collect();
+    let mut interface_labels = HashMap::new();
+    for i in &sorted_interfaces {
+        let label = names.iter().find(|n| n.hash == i.hash).map_or(&i.name, |n| &n.name);
+        interface_labels.entry(entity_id(i)).or_insert_with(|| label.clone());
+    }
     let peers_by_id: HashMap<_, _> = peers.iter().map(|p| (p.hash.as_str(), p)).collect();
     let mut groups = BTreeMap::<String, BTreeSet<String>>::new();
     let mut current_paths = BTreeMap::new();
@@ -164,35 +164,31 @@ pub(crate) fn project(
         network_model::build_graph(local_hash, local_name, &selected_peers, &[], &[], &[], &[]);
     let mut indices: HashMap<_, _> =
         result.nodes.iter().enumerate().map(|(i, n)| (n.id.clone(), i)).collect();
-    result.omitted_interfaces = sorted_interfaces.len().saturating_sub(16);
-    for (row, interface) in sorted_interfaces.into_iter().take(16).enumerate() {
-        let id = format!("iface:{}", interface.hash);
-        let online = !interface.observation.stale
-            && matches!(interface.status.as_str(), "online" | "active" | "connected" | "listening");
+    let mut entities = BTreeMap::<String, Vec<&InterfaceInfo>>::new();
+    for interface in sorted_interfaces {
+        entities.entry(entity_id(interface)).or_default().push(interface);
+    }
+    result.omitted_interfaces = entities.values().skip(16).map(Vec::len).sum();
+    for (row, (id, connections)) in entities.into_iter().take(16).enumerate() {
+        let online = connections.iter().any(|i| {
+            !i.observation.stale
+                && matches!(i.status.as_str(), "online" | "active" | "connected" | "listening")
+        });
+        let node_type = if id.starts_with("entity:") {
+            GraphNodeType::Remote { online }
+        } else {
+            GraphNodeType::Interface { online }
+        };
         let index = add_node(
             &mut result,
             &mut indices,
             id.clone(),
             interface_labels[&id].clone(),
-            GraphNodeType::Interface { online },
+            node_type,
             0.0,
             row as f64 * 140.0,
         );
         connect(&mut result, Some(0), index, GraphEdgeKind::Interface, 0);
-        if online
-            && let Some(endpoint) = interface.remote_endpoint.as_ref().filter(|s| !s.is_empty())
-        {
-            let endpoint_index = add_node(
-                &mut result,
-                &mut indices,
-                format!("endpoint:{}", interface.hash),
-                endpoint.clone(),
-                GraphNodeType::Endpoint,
-                250.0,
-                row as f64 * 140.0,
-            );
-            connect(&mut result, index, endpoint_index, GraphEdgeKind::Interface, 0);
-        }
     }
     // Summaries are bounded too. Every group remains accessible through the selector.
     let summaries: Vec<_> = result.groups.iter().take(16).cloned().collect();
@@ -206,12 +202,7 @@ pub(crate) fn project(
             510.0,
             row as f64 * 140.0,
         );
-        let source = group
-            .id
-            .strip_prefix("iface:")
-            .and_then(|hash| indices.get(&format!("endpoint:{hash}")))
-            .or_else(|| indices.get(&group.id))
-            .copied();
+        let source = indices.get(&group.id).copied();
         connect(&mut result, source, index, GraphEdgeKind::Association, 0);
     }
     for id in &revealed {
@@ -238,7 +229,7 @@ pub(crate) fn project(
             node.node_type,
             GraphNodeType::Local
                 | GraphNodeType::Interface { .. }
-                | GraphNodeType::Endpoint
+                | GraphNodeType::Remote { .. }
                 | GraphNodeType::Summary
         ) {
             node.x = 820.0 + (row % 2) as f64 * 250.0;
@@ -333,11 +324,68 @@ mod tests {
     }
 
     #[test]
+    fn remote_target_has_one_entity_across_connections_and_route_groups() {
+        let first = interface();
+        let mut second = interface();
+        second.hash = "second".into();
+        second.name = "second tcp".into();
+        second.status = "disconnected".into();
+        let names = vec![
+            MapInterface {
+                hash: first.hash.clone(),
+                name: "Community Hub".into(),
+                remote_target: Some("rns.styrene.io".into()),
+            },
+            MapInterface {
+                hash: second.hash.clone(),
+                name: "Hub backup".into(),
+                remote_target: Some("rns.styrene.io".into()),
+            },
+        ];
+        let mut routes = paths(2);
+        routes[1].interface = second.name.clone();
+        let p =
+            project("local", None, &[], &routes, &[first, second], &[], &names, view("", "", 0));
+        assert_eq!(p.nodes.len(), 3); // local, remote entity, destination group
+        let entity = p.nodes.iter().find(|n| n.id == "entity:rns.styrene.io").expect("single hub");
+        assert_eq!(entity.node_type, GraphNodeType::Remote { online: true });
+        assert_eq!(p.groups.len(), 1);
+        assert_eq!(p.groups[0].count, 2);
+        assert!(
+            !p.nodes.iter().any(|n| n.id.starts_with("endpoint:") || n.id.starts_with("iface:"))
+        );
+    }
+
+    #[test]
+    fn shared_resolved_socket_and_label_do_not_merge_distinct_configured_targets() {
+        let first = interface();
+        let mut second = interface();
+        second.hash = "second".into();
+        let names = vec![
+            MapInterface {
+                hash: first.hash.clone(),
+                name: "Hub".into(),
+                remote_target: Some("one.example".into()),
+            },
+            MapInterface {
+                hash: second.hash.clone(),
+                name: "Hub".into(),
+                remote_target: Some("two.example".into()),
+            },
+        ];
+        let p = project("local", None, &[], &[], &[first, second], &[], &names, view("", "", 0));
+        assert_eq!(
+            p.nodes.iter().filter(|n| matches!(n.node_type, GraphNodeType::Remote { .. })).count(),
+            2
+        );
+    }
+
+    #[test]
     fn thousand_destinations_collapse_before_layout() {
         let p =
             project("local", None, &[], &paths(1500), &[interface()], &[], &[], view("", "", 0));
         assert_eq!(p.destinations, 1500);
-        assert_eq!(p.nodes.len(), 4); // local, interface, endpoint, summary
+        assert_eq!(p.nodes.len(), 3); // local, interface, summary
         assert_eq!(p.groups[0].count, 1500);
         assert!(!p.nodes.iter().any(|n| n.id == "relay"));
         assert!(!p.edges.iter().any(|e| e.kind == GraphEdgeKind::Route));

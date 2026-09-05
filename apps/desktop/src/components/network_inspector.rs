@@ -71,7 +71,7 @@ pub(crate) fn NetworkInspector(
                                 }
                             }
                             div { class: "detail-actions",
-                                if !matches!(detail.node_type, GraphNodeType::Local | GraphNodeType::Interface { .. } | GraphNodeType::Endpoint | GraphNodeType::Summary) {
+                                if !matches!(detail.node_type, GraphNodeType::Local | GraphNodeType::Interface { .. } | GraphNodeType::Remote { .. } | GraphNodeType::Summary) {
                                     button {
                                         class: "action-btn primary",
                                         onclick: move |_| on_select_peer.call(message_hash.clone()),
