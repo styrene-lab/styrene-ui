@@ -90,6 +90,8 @@ pub fn NetworkPage(
     interface_unavailable: Option<String>,
     interface_error: Option<String>,
     interface_result_serial: u64,
+    interface_action_notice: Option<String>,
+    interface_focus: Option<String>,
     interface_edit_unavailable: Option<String>,
     operations: Vec<NetworkOperationInfo>,
     requests: Vec<RequestObservationInfo>,
@@ -218,6 +220,10 @@ pub fn NetworkPage(
         })
         .cloned()
         .collect();
+    let interface_count = interface_inventory
+        .as_ref()
+        .map(|inventory| inventory.entries.len())
+        .unwrap_or(interfaces.len());
     let mut all_rows = inventory_rows(&peers, &paths, &links, &interfaces, now);
     all_rows.push(InventoryRow {
         key: format!("local:{local_hash}"),
@@ -231,7 +237,7 @@ pub fn NetworkPage(
                 "Transport".into(),
                 if status.transport_active { "Active" } else { "Inactive" }.into(),
             ),
-            ("Interfaces".into(), interfaces.len().to_string()),
+            ("Interfaces".into(), interface_count.to_string()),
         ],
         diagnostics: "Local daemon observation".into(),
         destination: String::new(),
@@ -292,7 +298,7 @@ pub fn NetworkPage(
                     h2 { "Network" }
                     p {
                         if connected {
-                            "Interfaces: {interfaces.len()} · Observed peers: {peers.len()} · Routes: {paths.len()} · Link records: {links.len()}"
+                            "Interfaces: {interface_count} · Observed peers: {peers.len()} · Routes: {paths.len()} · Link records: {links.len()}"
                         } else {
                             "Disconnected · Network observations unavailable"
                         }
@@ -346,6 +352,8 @@ pub fn NetworkPage(
                     load_error: interface_unavailable,
                     mutation_error: interface_error,
                     result_serial: interface_result_serial,
+                    action_notice: interface_action_notice,
+                    focus: interface_focus,
                     unavailable: interface_edit_unavailable,
                     connected,
                     generation: safety.read().generation_key(),

@@ -30,6 +30,8 @@ pub fn InterfaceManager(
     load_error: Option<String>,
     mutation_error: ReadSignal<Option<String>>,
     result_serial: ReadSignal<u64>,
+    action_notice: Option<String>,
+    focus: ReadSignal<Option<String>>,
     unavailable: Option<String>,
     connected: ReadSignal<bool>,
     generation: ReadSignal<(u64, Option<u64>)>,
@@ -43,7 +45,6 @@ pub fn InterfaceManager(
     let mut confirm_delete = use_signal(|| false);
     let mut search = use_signal(String::new);
     let mut submitted_revision = use_signal(String::new);
-    let mut notice = use_signal(|| None::<String>);
     use_effect(move || {
         let _ = generation();
         let _ = connected();
@@ -51,7 +52,6 @@ pub fn InterfaceManager(
         draft.set(None);
         busy.set(false);
         confirm_delete.set(false);
-        notice.set(None);
     });
     use_effect(move || {
         let serial = result_serial();
@@ -60,7 +60,7 @@ pub fn InterfaceManager(
             if mutation_error.peek().is_none() {
                 draft.set(None);
                 confirm_delete.set(false);
-                notice.set(Some("Configuration saved. Check runtime state below.".into()));
+                selected.set(focus.peek().clone());
             }
         }
     });
@@ -91,18 +91,19 @@ pub fn InterfaceManager(
             div { class: "interface-toolbar",
                 div {
                     h3 { "Your interfaces" }
-                    p { "Saved connections and listeners on this node, including disabled interfaces." }
+                    p { "Connection state and traffic refresh every 2 seconds. Disabled interfaces remain listed." }
                 }
                 button { class: "primary", disabled: locked || is_editing, onclick: move |_| {
                     selected.set(None);draft.set(Some(fresh()));port.set("4242".into());
-                    submitted_revision.set(revision.clone());confirm_delete.set(false);notice.set(None);
+                    submitted_revision.set(revision.clone());confirm_delete.set(false);
                 }, "+ Add interface" }
             }
             if !connected() { p { class:"interface-error", role:"status", "Reconnect to the daemon to manage interfaces." } }
             if let Some(error)=load_error { p { class:"interface-error", role:"alert", "Interface management unavailable: {error}" } }
             if let Some(error)=unavailable { p { class:"interface-note", "{error}" } }
             if let Some(error)=mutation_error() { p { class:"interface-error", role:"alert", "{error}" } }
-            if let Some(message)=notice() { p { class:"interface-note", role:"status", "{message}" } }
+            if busy() { p { class:"interface-note", role:"status", "Applying interface change…" } }
+            else if let Some(message)=action_notice { p { class:"interface-note", role:"status", "{message}" } }
             div { class: if inspecting { "interface-layout inspecting" } else { "interface-layout" },
                 div { class:"interface-list",
                     input { aria_label:"Search interfaces", placeholder:"Search name, type, or endpoint…", value:"{search}", oninput:move |e| search.set(e.value()) }
@@ -111,18 +112,20 @@ pub fn InterfaceManager(
                     else {
                         div { class:"interface-table-scroll",
                             table { class:"interface-table",
-                                thead { tr { th { "Name" } th { "Type" } th { "Endpoint" } th { "Enabled" } th { "State" } } }
+                                thead { tr { th { "Name" } th { "Type" } th { "Endpoint" } th { "Enabled" } th { "State" } th { "Received" } th { "Sent" } } }
                                 tbody {
                                     for entry in visible {
                                         {
                                             let id=entry.settings.id.clone();
                                             let active=selected.read().as_ref()==Some(&id);
                                             rsx! { tr { class:if active {"selected"}else{""},
-                                                td { button { disabled:busy() || is_editing, onclick:move |_| {selected.set(Some(id.clone()));confirm_delete.set(false);notice.set(None);}, "{entry.settings.name}" } }
+                                                td { button { disabled:busy() || is_editing, onclick:move |_| {selected.set(Some(id.clone()));confirm_delete.set(false);}, "{entry.settings.name}" } }
                                                 td { "{type_label(&entry.settings.kind)}" }
                                                 td { "{entry.settings.host}:{entry.settings.port}" }
                                                 td { if entry.settings.enabled {"Yes"} else {"No"} }
-                                                td { "{entry.state}" }
+                                                td { "{entry.state}" if let Some(error)=&entry.error { p { class:"interface-row-error", "{error}" } } }
+                                                td { "{entry.rx_bytes} B" }
+                                                td { "{entry.tx_bytes} B" }
                                             } }
                                         }
                                     }
@@ -184,7 +187,7 @@ pub fn InterfaceManager(
                                 dt {"Sent / received"} dd {"{entry.tx_bytes} B / {entry.rx_bytes} B"}
                             }
                             div {class:"interface-buttons",
-                                button {disabled:!can_act,onclick:move |_|{port.set(edit_settings.port.to_string());draft.set(Some(edit_settings.clone()));submitted_revision.set(edit_revision.clone());notice.set(None);},"Edit"}
+                                button {disabled:!can_act,onclick:move |_|{port.set(edit_settings.port.to_string());draft.set(Some(edit_settings.clone()));submitted_revision.set(edit_revision.clone());},"Edit"}
                                 button {disabled:!can_act,onclick:move |_|{let mut s=toggle_settings.clone();s.enabled = !s.enabled;busy.set(true);on_command.call(DaemonCommand::MutateInterface(request(toggle_revision.clone(),"update",s)));},if entry.settings.enabled {"Disable"}else{"Enable"}}
                                 button {disabled:!can_act || !entry.settings.enabled,onclick:move |_|{busy.set(true);on_command.call(DaemonCommand::MutateInterface(request(retry_revision.clone(),"reconnect",retry_settings.clone())));},if entry.settings.kind=="tcp_server"{"Restart listener"}else{"Reconnect"}}
                             }

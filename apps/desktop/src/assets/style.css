@@ -3007,3 +3007,5 @@ body {
 .interface-delete-confirm {border:1px solid #8c4944;padding:12px;border-radius:6px;margin-top:18px;font-size:14px;line-height:1.5;}
 .interface-delete-confirm button {margin:4px;}
 @media(max-width:1000px){.interface-layout.inspecting{grid-template-columns:minmax(0,1fr);}.interface-layout.inspecting .interface-list{display:none;}.interface-inspector{border-left:0;}.interface-toolbar{align-items:flex-start;}.interface-toolbar p{max-width:38ch;}}
+
+.interface-table .interface-row-error {white-space:normal;max-width:30ch;color:#ffaaa2;font-size:13px;line-height:1.4;margin:5px 0 0;}

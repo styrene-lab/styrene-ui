@@ -54,6 +54,9 @@ pub struct NetworkStore {
     pub interface_unavailable: Option<String>,
     pub interface_error: Option<String>,
     pub interface_result_serial: u64,
+    pub interface_action_notice: Option<String>,
+    pub interface_focus: Option<String>,
+    pub interface_pending: Option<styrene_ipc::types::InterfaceMutation>,
     pub announces: Vec<state::AnnounceEvent>,
     pub operations: Vec<styrene_ipc::types::NetworkOperationInfo>,
     pub requests: Vec<styrene_ipc::types::RequestObservationInfo>,
@@ -484,6 +487,36 @@ impl DomainStores {
         self.refresh_network_state();
     }
 
+    fn interface_activity(&mut self, summary: String, error: bool) {
+        self.push_activity(state::ActivityEntry {
+            timestamp: now(),
+            severity: if error {
+                state::ActivitySeverity::Error
+            } else {
+                state::ActivitySeverity::Info
+            },
+            kind: "interface",
+            summary,
+            entity: None,
+            correlation_id: None,
+            provenance: "interface management".into(),
+        });
+    }
+
+    pub fn begin_interface_mutation(
+        &mut self,
+        generation: ConnectionGeneration,
+        request: styrene_ipc::types::InterfaceMutation,
+    ) {
+        if !self.accepts(generation) {
+            return;
+        }
+        let summary = format!("Interface {} requested: {}", request.action, request.settings.name);
+        self.network.interface_action_notice = Some(summary.clone());
+        self.network.interface_pending = Some(request);
+        self.interface_activity(summary, false);
+    }
+
     pub fn set_interface_inventory(
         &mut self,
         generation: ConnectionGeneration,
@@ -496,9 +529,65 @@ impl DomainStores {
         if mutation {
             self.network.interface_result_serial += 1;
             self.network.interface_error = result.as_ref().err().cloned();
+            let pending = self.network.interface_pending.take();
+            let name = pending.as_ref().map(|p| p.settings.name.as_str()).unwrap_or("interface");
+            let summary = match &result {
+                Err(error) => format!("Interface change failed for {name}: {error}"),
+                Ok(inventory) => {
+                    let entry = pending.as_ref().and_then(|p| {
+                        inventory.entries.iter().find(|e| {
+                            if p.action == "create" {
+                                e.settings.name == p.settings.name.trim()
+                                    && e.settings.host == p.settings.host
+                                    && e.settings.port == p.settings.port
+                            } else {
+                                e.settings.id == p.settings.id
+                            }
+                        })
+                    });
+                    self.network.interface_focus = entry.map(|e| e.settings.id.clone());
+                    if pending.as_ref().is_some_and(|p| p.action == "delete") {
+                        format!("Deleted {name}.")
+                    } else {
+                        format!(
+                            "Saved {name}. Connection state and traffic refresh every 2 seconds."
+                        )
+                    }
+                }
+            };
+            self.network.interface_action_notice = Some(summary.clone());
+            self.interface_activity(summary, result.is_err());
         }
         match result {
             Ok(inventory) => {
+                let changes: Vec<_> = inventory
+                    .entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let previous = self
+                            .network
+                            .interface_inventory
+                            .as_ref()?
+                            .entries
+                            .iter()
+                            .find(|p| p.settings.id == entry.settings.id)?;
+                        if previous.state == entry.state && previous.error == entry.error {
+                            return None;
+                        }
+                        Some((
+                            format!(
+                                "{}: {}{}",
+                                entry.settings.name,
+                                entry.state,
+                                entry.error.as_ref().map(|e| format!(" — {e}")).unwrap_or_default()
+                            ),
+                            entry.error.is_some(),
+                        ))
+                    })
+                    .collect();
+                for (summary, error) in changes {
+                    self.interface_activity(summary, error);
+                }
                 self.network.interface_inventory = Some(inventory);
                 self.network.interface_unavailable = None;
             }
@@ -3037,5 +3126,74 @@ mod interface_management_tests {
         stores.set_interface_inventory(ConnectionGeneration(2), Ok(Default::default()), true);
         assert!(stores.network.interface_error.is_none());
         assert_eq!(stores.network.interface_result_serial, 2);
+    }
+}
+
+#[cfg(test)]
+mod interface_feedback_tests {
+    use super::*;
+    use styrene_ipc::types::{InterfaceInventory, InterfaceMutation, ManagedInterface};
+
+    #[test]
+    fn create_result_focuses_saved_interface_and_tracks_state_without_traffic_log_spam() {
+        let generation = ConnectionGeneration(7);
+        let mut stores = DomainStores::default();
+        stores.runtime.generation = generation;
+        let mut request = InterfaceMutation::default();
+        request.action = "create".into();
+        request.settings.name = "Community hub".into();
+        request.settings.host = "hub.invalid".into();
+        request.settings.port = 4242;
+        stores.begin_interface_mutation(generation, request.clone());
+        assert!(stores.network.interface_action_notice.as_ref().unwrap().contains("requested"));
+        let mut entry = ManagedInterface::default();
+        entry.settings = request.settings;
+        entry.settings.id = "saved-hub".into();
+        entry.state = "connecting".into();
+        let mut inventory = InterfaceInventory::default();
+        inventory.entries.push(entry);
+        stores.set_interface_inventory(generation, Ok(inventory.clone()), true);
+        assert_eq!(stores.network.interface_focus.as_deref(), Some("saved-hub"));
+        assert!(stores.network.interface_pending.is_none());
+        assert!(
+            stores
+                .network
+                .interface_action_notice
+                .as_ref()
+                .unwrap()
+                .starts_with("Saved Community hub")
+        );
+        let count = stores.activity.entries.len();
+        inventory.entries[0].state = "connected".into();
+        inventory.entries[0].rx_bytes = 1234;
+        stores.set_interface_inventory(generation, Ok(inventory.clone()), false);
+        assert_eq!(stores.activity.entries.len(), count + 1);
+        assert!(stores.activity.entries.last().unwrap().summary.contains("connected"));
+        inventory.entries[0].rx_bytes += 321;
+        stores.set_interface_inventory(generation, Ok(inventory), false);
+        assert_eq!(stores.activity.entries.len(), count + 1);
+        assert_eq!(stores.network.interface_inventory.as_ref().unwrap().entries[0].rx_bytes, 1555);
+        assert_eq!(stores.network.interface_result_serial, 1);
+    }
+
+    #[test]
+    fn failed_actions_remain_visible_and_old_sessions_cannot_start_actions() {
+        let mut stores = DomainStores::default();
+        stores.runtime.generation = ConnectionGeneration(2);
+        stores.begin_interface_mutation(ConnectionGeneration(1), Default::default());
+        assert!(stores.network.interface_pending.is_none());
+        assert!(stores.activity.entries.is_empty());
+        stores.begin_interface_mutation(ConnectionGeneration(2), Default::default());
+        stores.set_interface_inventory(
+            ConnectionGeneration(2),
+            Err("configuration changed".into()),
+            true,
+        );
+        stores.set_interface_inventory(ConnectionGeneration(2), Ok(Default::default()), false);
+        assert!(stores.network.interface_action_notice.as_ref().unwrap().contains("failed"));
+        assert!(matches!(
+            stores.activity.entries.last().unwrap().severity,
+            state::ActivitySeverity::Error
+        ));
     }
 }

@@ -89,8 +89,8 @@ fn App() -> Element {
         use_signal(|| None);
 
     // Own exactly one backend. Profile requests are handled before a replacement opens.
-    let profile_session =
-        use_coroutine(move |mut profile_rx: UnboundedReceiver<backend::RuntimeProfile>| {
+    let profile_session = use_coroutine(
+        move |mut profile_rx: UnboundedReceiver<backend::RuntimeProfile>| {
             let mut requested_profile = initial_profile.clone();
             async move {
                 loop {
@@ -115,7 +115,18 @@ fn App() -> Element {
 
                             let cmd_bridge = br.clone();
                             let command_task = spawn(async move {
-                                while let Some(cmd) = cmd_rx.recv().await {
+                                let mut refresh = tokio::time::interval_at(
+                                    tokio::time::Instant::now() + std::time::Duration::from_secs(2),
+                                    std::time::Duration::from_secs(2),
+                                );
+                                refresh.set_missed_tick_behavior(
+                                    tokio::time::MissedTickBehavior::Skip,
+                                );
+                                loop {
+                                    let cmd = tokio::select! {
+                                        command = cmd_rx.recv() => match command { Some(command) => command, None => break },
+                                        _ = refresh.tick() => daemon_bridge::DaemonCommand::RefreshInterfaces,
+                                    };
                                     handle_ui_command(
                                         cmd,
                                         &cmd_bridge,
@@ -263,7 +274,8 @@ fn App() -> Element {
                     }
                 }
             }
-        });
+        },
+    );
 
     let view = stores.read().clone();
     let id_display = view
@@ -581,6 +593,8 @@ fn App() -> Element {
                             interface_unavailable: view.network.interface_unavailable.clone(),
                             interface_error: view.network.interface_error.clone(),
                             interface_result_serial: view.network.interface_result_serial,
+                            interface_action_notice: view.network.interface_action_notice.clone(),
+                            interface_focus: view.network.interface_focus.clone(),
                             interface_edit_unavailable: view.mutation_availability("rpc.config_update").err(),
                             operations: view.network.operations.clone(),
                             requests: view.network.requests.clone(),
@@ -1396,6 +1410,7 @@ async fn handle_ui_command(
             stores.write().set_interface_inventory(generation, result, false);
         }
         daemon_bridge::DaemonCommand::MutateInterface(request) => {
+            stores.write().begin_interface_mutation(generation, request.clone());
             let availability =
                 stores.read().mutation_availability_at(generation, "rpc.config_update");
             let result = match availability {
@@ -1403,6 +1418,12 @@ async fn handle_ui_command(
                 Err(error) => Err(error),
             };
             stores.write().set_interface_inventory(generation, result, true);
+            match bridge.interface_stats().await {
+                Ok(interfaces) => stores.write().set_interfaces(generation, interfaces),
+                Err(error) => {
+                    tracing::warn!(target: "dx::iface", %error, "post-mutation interface refresh failed")
+                }
+            }
         }
         daemon_bridge::DaemonCommand::RefreshLinks => match bridge.links().await {
             Ok(snapshot) => stores.write().set_links(generation, snapshot),
