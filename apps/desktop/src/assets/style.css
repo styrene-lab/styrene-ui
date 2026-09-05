@@ -2928,6 +2928,11 @@ body {
 .network-connection-card .network-identifier { align-items: flex-start; flex-direction: column; gap: 10px; }
 .network-connection-card .network-identifier code, .network-address { font-family: var(--font-mono); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .network-connection-card .network-mode { padding: 5px 9px; font-size: 12px; }
+.network-observed-identity { border-top: 1px solid var(--border); margin-top: 16px; }
+.network-identity-evidence { color: #abb5c1; font-size: 12px; line-height: 1.5; margin: 12px 0; }
+.network-identity-destinations { display: flex; flex-direction: column; gap: 8px; }
+.network-identity-destinations > span { color: #9aa8b8; font-size: 12px; }
+.network-identity-destinations > button { color: var(--accent); font-size: 13px; }
 
 /* Operator-owned interface inventory and type-specific editors. */
 .interface-manager { flex: 1; min-height: 440px; }

@@ -4,6 +4,7 @@ mod lab_page;
 mod mesh_status;
 mod message_lifecycle;
 mod network_graph;
+mod network_identity;
 mod network_inspector;
 mod network_interaction;
 mod network_layout;

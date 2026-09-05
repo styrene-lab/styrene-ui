@@ -325,9 +325,7 @@ pub fn NetworkPage(
                 ),
                 cells: Vec::new(),
                 details,
-                diagnostics: format!(
-                    "Configured target: {target}\nRemote mesh identity: not established"
-                ),
+                diagnostics: format!("Configured target: {target}"),
                 destination: String::new(),
                 link_id: String::new(),
                 can_browse: false,
@@ -593,6 +591,35 @@ pub fn NetworkPage(
                                                 dd { CopyIdentifier { value: format!("{}:{}", entry.settings.host, entry.settings.port), address: true } }
                                                 dt { "Resolved address" }
                                                 dd { class: "network-address", {entry.remote_endpoint.as_deref().unwrap_or("Not connected")} }
+                                            }
+                                            {
+                                                let identities = super::network_identity::connection_identities(entry, &paths, &peers, now);
+                                                rsx! {
+                                                    if identities.is_empty() {
+                                                        p { class: "network-identity-evidence", "No current forwarded-route identity observed on this connection." }
+                                                    }
+                                                    for identity in identities {
+                                                        div { class: "network-observed-identity",
+                                                            dl {
+                                                                dt { "Observed mesh identity" }
+                                                                dd { CopyIdentifier { value: identity.hash.clone(), full: true } }
+                                                            }
+                                                            p { class: "network-identity-evidence", "Reported as next hop by {identity.route_count} current routes on this connection." }
+                                                            if !identity.destinations.is_empty() {
+                                                                div { class: "network-identity-destinations",
+                                                                    span { "Discovered destinations" }
+                                                                    for peer in identity.destinations {
+                                                                        button {
+                                                                            class: "network-row-select",
+                                                                            onclick: move |_| selected.set(Some(format!("peer:{}", peer.hash))),
+                                                                            {peer.name.clone().unwrap_or_else(|| peer.hash.clone())}
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1246,9 +1273,13 @@ fn relationship_label(label: &str, value: Option<&str>) -> String {
 }
 
 #[component]
-fn CopyIdentifier(value: String, #[props(default = false)] address: bool) -> Element {
+fn CopyIdentifier(
+    value: String,
+    #[props(default = false)] address: bool,
+    #[props(default = false)] full: bool,
+) -> Element {
     let mut feedback = use_signal(String::new);
-    let short = if address || value.chars().count() <= 16 {
+    let short = if address || full || value.chars().count() <= 16 {
         value.clone()
     } else {
         format!("{}…", value.chars().take(16).collect::<String>())
