@@ -10,10 +10,12 @@ For the community hub, use a TCP client with host `rns.styrene.io` and port
 `4242`. Saving with **Enable now and on daemon startup** checked starts the
 interface. Saving disabled retains it without starting a connection.
 
-The interface count includes saved disabled entries. Connection state and sent /
+The interface count includes saved disabled entries. Connection state and TX queued /
 received byte counters refresh every two seconds, and runtime inventory refreshes
 immediately after an action. Byte counters are cumulative for the current worker
-and reset when it restarts. A successful save does not mean the TCP connection has
+and reset when it restarts. TX counts bytes admitted to the transport queue; a
+listener can accept broadcast submissions even when it has no connected clients.
+These counters do not confirm delivery to another node. A successful save does not mean the TCP connection has
 succeeded: check the live state and any reported error. Action requests, results,
 and subsequent connection-state changes appear in Activity. Traffic updates do
 not create an Activity entry for every packet.

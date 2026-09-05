@@ -112,7 +112,7 @@ pub fn InterfaceManager(
                     else {
                         div { class:"interface-table-scroll",
                             table { class:"interface-table",
-                                thead { tr { th { "Name" } th { "Type" } th { "Endpoint" } th { "Enabled" } th { "State" } th { "Received" } th { "Sent" } } }
+                                thead { tr { th { "Name" } th { "Type" } th { "Endpoint" } th { "Enabled" } th { "State" } th { "Received" } th { title:"Bytes queued to the interface for transmission", "TX queued" } } }
                                 tbody {
                                     for entry in visible {
                                         {
@@ -184,7 +184,7 @@ pub fn InterfaceManager(
                             dl { dt {"Configured endpoint"} dd {"{entry.settings.host}:{entry.settings.port}"}
                                 dt {"Local endpoint"} dd {{entry.local_endpoint.as_deref().unwrap_or("Not reported")}}
                                 dt {"Remote endpoint"} dd {{entry.remote_endpoint.as_deref().unwrap_or("Not reported")}}
-                                dt {"Sent / received"} dd {"{entry.tx_bytes} B / {entry.rx_bytes} B"}
+                                dt {"TX queued / received"} dd {"{entry.tx_bytes} B / {entry.rx_bytes} B"}
                             }
                             div {class:"interface-buttons",
                                 button {disabled:!can_act,onclick:move |_|{port.set(edit_settings.port.to_string());draft.set(Some(edit_settings.clone()));submitted_revision.set(edit_revision.clone());},"Edit"}
