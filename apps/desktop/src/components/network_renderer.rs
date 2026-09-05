@@ -120,9 +120,7 @@ pub(crate) fn GraphRenderer(
                                 let opacity = if dragging {
                                     "0.85"
                                 } else if has_search && !search_match {
-                                    "0.15"
-                                } else if selected_index.is_some() && !is_selected && !neighbor && !local {
-                                    "0.25"
+                                    "0.5"
                                 } else {
                                     "1"
                                 };
