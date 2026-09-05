@@ -167,8 +167,8 @@ pub(crate) fn project(
     result.omitted_interfaces = sorted_interfaces.len().saturating_sub(16);
     for (row, interface) in sorted_interfaces.into_iter().take(16).enumerate() {
         let id = format!("iface:{}", interface.hash);
-        let online =
-            matches!(interface.status.as_str(), "online" | "active" | "connected" | "listening");
+        let online = !interface.observation.stale
+            && matches!(interface.status.as_str(), "online" | "active" | "connected" | "listening");
         let index = add_node(
             &mut result,
             &mut indices,

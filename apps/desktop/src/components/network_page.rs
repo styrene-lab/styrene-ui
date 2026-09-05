@@ -363,7 +363,7 @@ pub fn NetworkPage(
                     value: "{query}",
                     oninput: move |event| query.set(event.value()),
                 }
-                if matches!(*mode.read(), NetworkMode::Discovery | NetworkMode::Combined) {
+                if *mode.read() == NetworkMode::Discovery {
                     button {
                         class: "network-mode",
                         aria_expanded: "{filters_open}",

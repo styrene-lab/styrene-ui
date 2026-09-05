@@ -43,6 +43,7 @@ pub fn NetworkGraph(
     let mut previous_query = use_signal(String::new);
     if *previous_query.read() != query {
         page.set(0);
+        selected.set(None);
         previous_query.set(query.clone());
     }
     let view_key = format!("{}|{}|{}", expanded_group.read(), query, page.read());
@@ -201,14 +202,14 @@ pub fn NetworkGraph(
     let selected_detail = selected.read().and_then(|index| nodes.read().get(index).cloned());
 
     use_effect(move || {
-        if let Some(index) = *selected.read()
-            && let Some(node) = nodes.read().get(index)
-        {
+        let detail = selected.read().and_then(|index| nodes.read().get(index).cloned());
+        if let Some(node) = detail {
             if let Some(group) = node.id.strip_prefix("group:") {
-                if *expanded_group.peek() != group {
-                    expanded_group.set(group.to_string());
-                    page.set(0);
-                }
+                // A group opens a neighborhood; it must not remain selected and
+                // dim all of the destinations that were just revealed.
+                selected.set(None);
+                expanded_group.set(group.to_string());
+                page.set(0);
             } else if !matches!(node.node_type, GraphNodeType::Endpoint | GraphNodeType::Summary)
                 && let Some(callback) = inspection
             {
