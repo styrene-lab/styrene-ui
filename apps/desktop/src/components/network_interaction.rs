@@ -3,8 +3,37 @@ use crate::state::GraphNode;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Interaction {
     None,
+    PressingNode { idx: usize, start_x: f64, start_y: f64 },
     Panning { last_x: f64, last_y: f64 },
     DraggingNode { idx: usize, last_x: f64, last_y: f64 },
+}
+
+impl Interaction {
+    /// A small amount of pointer jitter still counts as a click.
+    pub(crate) fn clicked_node(&self, x: f64, y: f64) -> Option<usize> {
+        match *self {
+            Self::PressingNode { idx, start_x, start_y }
+                if (x - start_x).hypot(y - start_y) < 5.0 =>
+            {
+                Some(idx)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn move_node(&mut self, x: f64, y: f64) -> Option<(usize, f64, f64)> {
+        let (idx, last_x, last_y) = match *self {
+            Self::PressingNode { idx, start_x, start_y }
+                if (x - start_x).hypot(y - start_y) >= 5.0 =>
+            {
+                (idx, start_x, start_y)
+            }
+            Self::DraggingNode { idx, last_x, last_y } => (idx, last_x, last_y),
+            _ => return None,
+        };
+        *self = Self::DraggingNode { idx, last_x: x, last_y: y };
+        Some((idx, x - last_x, y - last_y))
+    }
 }
 
 /// Scale by gesture distance, not by the number of trackpad events.
@@ -32,6 +61,23 @@ pub(crate) fn hit_test(nodes: &[GraphNode], world_x: f64, world_y: f64) -> Optio
 mod tests {
     use super::*;
     use crate::state::GraphNodeType;
+
+    #[test]
+    fn node_click_tolerates_jitter_but_drag_never_selects_even_after_returning() {
+        let mut gesture = Interaction::PressingNode { idx: 2, start_x: 100.0, start_y: 100.0 };
+        assert_eq!(gesture.move_node(102.0, 101.0), None);
+        assert_eq!(gesture.clicked_node(102.0, 101.0), Some(2));
+        assert_eq!(gesture.move_node(106.0, 100.0), Some((2, 6.0, 0.0)));
+        assert_eq!(gesture.move_node(100.0, 100.0), Some((2, -6.0, 0.0)));
+        assert_eq!(gesture.clicked_node(100.0, 100.0), None);
+    }
+
+    #[test]
+    fn release_far_from_press_without_a_move_event_does_not_select() {
+        let gesture = Interaction::PressingNode { idx: 2, start_x: 100.0, start_y: 100.0 };
+        assert_eq!(gesture.clicked_node(120.0, 100.0), None);
+        assert_eq!(Interaction::None.clicked_node(100.0, 100.0), None);
+    }
 
     #[test]
     fn trackpad_zoom_depends_on_distance_and_ignores_zero_motion() {

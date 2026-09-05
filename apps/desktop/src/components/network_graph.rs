@@ -97,7 +97,11 @@ pub fn NetworkGraph(
             previous_view.set(view_key);
         }
         projection.set(next_projection);
-        selected.set(selected_id.and_then(|id| next_nodes.iter().position(|node| node.id == id)));
+        let next_selected =
+            selected_id.and_then(|id| next_nodes.iter().position(|node| node.id == id));
+        if *selected.peek() != next_selected {
+            selected.set(next_selected);
+        }
         nodes.set(next_nodes);
         edges.set(next_edges);
         model_key.set(current_key);
@@ -133,7 +137,8 @@ pub fn NetworkGraph(
                 continue;
             }
             let mut pinned = vec![0];
-            if let Interaction::DraggingNode { idx, .. } = *interaction.read()
+            if let Interaction::DraggingNode { idx, .. } | Interaction::PressingNode { idx, .. } =
+                *interaction.read()
                 && !pinned.contains(&idx)
             {
                 pinned.push(idx);
@@ -204,7 +209,8 @@ pub fn NetworkGraph(
     let selected_detail = selected.read().and_then(|index| nodes.read().get(index).cloned());
 
     use_effect(move || {
-        let detail = selected.read().and_then(|index| nodes.read().get(index).cloned());
+        // Moving a selected node must not re-open its inspector.
+        let detail = selected.read().and_then(|index| nodes.peek().get(index).cloned());
         if let Some(node) = detail {
             if let Some(group) = node.id.strip_prefix("group:") {
                 // A group opens a neighborhood; it must not remain selected and
@@ -361,7 +367,7 @@ pub fn NetworkGraph(
                     });
                 },
                 onmousedown: move |event: MouseEvent| {
-                    auto_fit.set(false);
+                    if event.trigger_button() != Some(dioxus::html::input_data::MouseButton::Primary) { return; }
                     let client = event.client_coordinates();
                     let element = event.element_coordinates();
                     let (container_width, container_height) = *container_size.read();
@@ -377,12 +383,11 @@ pub fn NetworkGraph(
                         world_x,
                         world_y,
                     ) {
-                        selected.set(Some(index));
                         interaction
-                            .set(Interaction::DraggingNode {
+                            .set(Interaction::PressingNode {
                                 idx: index,
-                                last_x: client.x,
-                                last_y: client.y,
+                                start_x: client.x,
+                                start_y: client.y,
                             });
                     } else {
                         selected.set(None);
@@ -399,6 +404,7 @@ pub fn NetworkGraph(
                     let current_interaction = interaction.read().clone();
                     match current_interaction {
                         Interaction::Panning { last_x, last_y } => {
+                            auto_fit.set(false);
                             camera_x -= (client.x - last_x) * pixel_to_world.0;
                             camera_y -= (client.y - last_y) * pixel_to_world.1;
                             interaction
@@ -407,24 +413,29 @@ pub fn NetworkGraph(
                                     last_y: client.y,
                                 });
                         }
-                        Interaction::DraggingNode { idx, last_x, last_y } => {
-                            if let Some(node) = nodes.write().get_mut(idx) {
-                                node.x += (client.x - last_x) * pixel_to_world.0;
-                                node.y += (client.y - last_y) * pixel_to_world.1;
-                                node.vx = 0.0;
-                                node.vy = 0.0;
+                        Interaction::PressingNode { .. } | Interaction::DraggingNode { .. } => {
+                            let mut next = current_interaction;
+                            if let Some((idx, dx, dy)) = next.move_node(client.x, client.y) {
+                                auto_fit.set(false);
+                                if let Some(node) = nodes.write().get_mut(idx) {
+                                    node.x += dx * pixel_to_world.0;
+                                    node.y += dy * pixel_to_world.1;
+                                    node.vx = 0.0;
+                                    node.vy = 0.0;
+                                }
+                                interaction.set(next);
                             }
-                            interaction
-                                .set(Interaction::DraggingNode {
-                                    idx,
-                                    last_x: client.x,
-                                    last_y: client.y,
-                                });
                         }
                         Interaction::None => {}
                     }
                 },
-                onmouseup: move |_| interaction.set(Interaction::None),
+                onmouseup: move |event: MouseEvent| {
+                    if event.trigger_button() != Some(dioxus::html::input_data::MouseButton::Primary) { return; }
+                    let point = event.client_coordinates();
+                    let clicked = interaction.peek().clicked_node(point.x, point.y);
+                    interaction.set(Interaction::None);
+                    if let Some(index) = clicked { selected.set(Some(index)); }
+                },
                 onmouseleave: move |_| {
                     interaction.set(Interaction::None);
                     tooltip.set(None);
