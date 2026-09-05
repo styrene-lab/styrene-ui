@@ -2918,6 +2918,16 @@ body {
 .network-identifier { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .network-identifier code { font-size: 12px; color: #abb5c1; }
 .network-identifier span { font-size: 12px; color: #abb5c1; }
+.network-connection-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin: 16px 0; }
+.network-connection-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; font-size: 13px; }
+.network-connection-status { color: #abb5c1; text-transform: capitalize; }
+.network-connection-name { margin: 8px 0 0; color: #abb5c1; font-size: 12px; overflow-wrap: anywhere; }
+.network-connection-card dl { margin: 0; }
+.network-connection-card dt { font-size: 12px; margin-top: 16px; }
+.network-connection-card dd { margin-top: 6px; }
+.network-connection-card .network-identifier { align-items: flex-start; flex-direction: column; gap: 10px; }
+.network-connection-card .network-identifier code, .network-address { font-family: var(--font-mono); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.network-connection-card .network-mode { padding: 5px 9px; font-size: 12px; }
 
 /* Operator-owned interface inventory and type-specific editors. */
 .interface-manager { flex: 1; min-height: 440px; }

@@ -318,7 +318,11 @@ pub fn NetworkPage(
                 key: format!("entity:{target}"),
                 mode: NetworkMode::Interfaces,
                 name: connections[0].settings.name.clone(),
-                kind: format!("Remote entity · {} connections", connections.len()),
+                kind: format!(
+                    "Remote host · {} {}",
+                    connections.len(),
+                    if connections.len() == 1 { "connection" } else { "connections" }
+                ),
                 cells: Vec::new(),
                 details,
                 diagnostics: format!(
@@ -573,11 +577,33 @@ pub fn NetworkPage(
                         if let Some(row) = selected_row.clone() {
                             h3 { "{row.name}" }
                             p { class: "network-detail-kind", "{row.kind}" }
-                            CopyIdentifier { value: row.key.split_once(':').map_or(row.key.as_str(), |(_, value)| value).to_string() }
-                            dl {
-                                for (label, value) in row.details.iter() {
-                                    dt { "{label}" }
-                                    dd { "{value}" }
+                            if let Some(target) = row.key.strip_prefix("entity:") {
+                                if let Some(inventory) = &interface_inventory {
+                                    for entry in inventory.entries.iter().filter(|entry| entry.settings.kind == "tcp_client" && crate::state::remote_target_key(&entry.settings.host) == target) {
+                                        section { class: "network-connection-card",
+                                            div { class: "network-connection-heading",
+                                                strong { "TCP connection" }
+                                                span { class: "network-connection-status", "{entry.state}" }
+                                            }
+                                            if entry.settings.name != row.name {
+                                                p { class: "network-connection-name", "{entry.settings.name}" }
+                                            }
+                                            dl {
+                                                dt { "Configured address" }
+                                                dd { CopyIdentifier { value: format!("{}:{}", entry.settings.host, entry.settings.port), address: true } }
+                                                dt { "Resolved address" }
+                                                dd { class: "network-address", {entry.remote_endpoint.as_deref().unwrap_or("Not connected")} }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                CopyIdentifier { value: row.key.split_once(':').map_or(row.key.as_str(), |(_, value)| value).to_string() }
+                                dl {
+                                    for (label, value) in row.details.iter() {
+                                        dt { "{label}" }
+                                        dd { "{value}" }
+                                    }
                                 }
                             }
                             if !row.destination.is_empty() {
@@ -1220,12 +1246,16 @@ fn relationship_label(label: &str, value: Option<&str>) -> String {
 }
 
 #[component]
-fn CopyIdentifier(value: String) -> Element {
+fn CopyIdentifier(value: String, #[props(default = false)] address: bool) -> Element {
     let mut feedback = use_signal(String::new);
-    let short: String = value.chars().take(16).collect();
+    let short = if address || value.chars().count() <= 16 {
+        value.clone()
+    } else {
+        format!("{}…", value.chars().take(16).collect::<String>())
+    };
     rsx! {
         div { class: "network-identifier",
-            code { title: "{value}", "{short}…" }
+            code { title: "{value}", "{short}" }
             button {
                 class: "network-mode",
                 onclick: move |_| {
@@ -1254,7 +1284,7 @@ fn CopyIdentifier(value: String) -> Element {
                             );
                     });
                 },
-                "Copy ID"
+                if address { "Copy address" } else { "Copy ID" }
             }
             span { role: "status", "{feedback}" }
         }
