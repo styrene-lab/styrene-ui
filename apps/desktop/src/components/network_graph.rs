@@ -31,9 +31,15 @@ pub fn NetworkGraph(
     let current_key = format!(
         "{local_hash}|{local_name:?}|{}|{:?}|{:?}|{:?}",
         peer_key(&peers),
-        paths,
-        interfaces,
-        links
+        paths
+            .iter()
+            .map(|p| (&p.destination_hash, &p.next_hop, &p.interface, p.hops, p.observation.stale))
+            .collect::<Vec<_>>(),
+        interfaces
+            .iter()
+            .map(|i| (&i.hash, &i.name, &i.status, &i.parent_hash))
+            .collect::<Vec<_>>(),
+        links.iter().map(|l| (&l.peer_hash, &l.activity, l.observation.stale)).collect::<Vec<_>>()
     );
     if *model_key.read() != current_key {
         let (mut next_nodes, next_edges) = network_model::build_graph(
@@ -47,7 +53,9 @@ pub fn NetworkGraph(
         );
         let selected_id =
             selected.read().and_then(|index| nodes.read().get(index).map(|node| node.id.clone()));
-        network_model::preserve_positions(&nodes.read(), &mut next_nodes);
+        if (nodes.read().len() > 200) == (next_nodes.len() > 200) {
+            network_model::preserve_positions(&nodes.read(), &mut next_nodes);
+        }
         selected.set(selected_id.and_then(|id| next_nodes.iter().position(|node| node.id == id)));
         nodes.set(next_nodes);
         edges.set(next_edges);
@@ -60,6 +68,17 @@ pub fn NetworkGraph(
     let mut zoom = use_signal(move || initial_camera.2);
     let mut interaction = use_signal(|| Interaction::None);
     let mut container_size = use_signal(|| (800.0_f64, 600.0_f64));
+    let mut auto_fit = use_signal(|| true);
+    use_effect(move || {
+        let _ = model_key();
+        let size = container_size();
+        if auto_fit() {
+            let (x, y, scale) = fit_camera(&nodes.peek(), size);
+            camera_x.set(x);
+            camera_y.set(y);
+            zoom.set(scale);
+        }
+    });
     let mut tooltip = use_signal(|| None::<GraphTooltip>);
     let mut physics_on = use_signal(initial_physics_enabled);
     let search_query = use_signal(String::new);
@@ -148,6 +167,7 @@ pub fn NetworkGraph(
             .map(|(index, _)| index)
             .collect()
     };
+    let focus_query = query.clone();
     let selected_detail = selected.read().and_then(|index| nodes.read().get(index).cloned());
 
     use_effect(move || {
@@ -164,6 +184,7 @@ pub fn NetworkGraph(
             div { class: "network-map-tools",
                 button {
                     onclick: move |_| {
+                        auto_fit.set(true);
                         let (x, y, scale) = fit_camera(&nodes.read(), *container_size.read());
                         camera_x.set(x);
                         camera_y.set(y);
@@ -171,9 +192,19 @@ pub fn NetworkGraph(
                     },
                     "Fit to view"
                 }
+                if !search_matches.is_empty() {
+                    button { onclick: move |_| {
+                        auto_fit.set(false);
+                        let matching: Vec<_> = nodes.read().iter().filter(|n| n.label.to_ascii_lowercase().contains(&focus_query) || n.id.to_ascii_lowercase().contains(&focus_query)).cloned().collect();
+                        let (x,y,scale) = fit_camera(&matching, *container_size.read());
+                        camera_x.set(x);camera_y.set(y);zoom.set(scale);
+                    }, "Focus matches" }
+                }
+                span { class:"network-map-summary", "{nodes.read().len()} nodes · {edges.read().len()} connections" }
                 button {
                     aria_label: "Zoom in",
                     onclick: move |_| {
+                        auto_fit.set(false);
                         let value = *zoom.read();
                         zoom.set((value * 1.25).min(5.0));
                     },
@@ -182,8 +213,9 @@ pub fn NetworkGraph(
                 button {
                     aria_label: "Zoom out",
                     onclick: move |_| {
+                        auto_fit.set(false);
                         let value = *zoom.read();
-                        zoom.set((value / 1.25).max(0.15));
+                        zoom.set((value / 1.25).max(0.001));
                     },
                     "−"
                 }
@@ -214,6 +246,7 @@ pub fn NetworkGraph(
                     });
                 },
                 onmousedown: move |event: MouseEvent| {
+                    auto_fit.set(false);
                     let client = event.client_coordinates();
                     let element = event.element_coordinates();
                     let (container_width, container_height) = *container_size.read();
@@ -282,9 +315,10 @@ pub fn NetworkGraph(
                     tooltip.set(None);
                 },
                 onwheel: move |event: WheelEvent| {
+                    auto_fit.set(false);
                     let factor = if event.delta().strip_units().y < 0.0 { 1.1 } else { 1.0 / 1.1 };
                     let current_zoom = *zoom.read();
-                    zoom.set((current_zoom * factor).clamp(0.15, 5.0));
+                    zoom.set((current_zoom * factor).clamp(0.001, 5.0));
                 },
                 GraphRenderer {
                     nodes,
@@ -345,7 +379,7 @@ fn fit_camera(nodes: &[GraphNode], size: (f64, f64)) -> (f64, f64, f64) {
         bottom = bottom.max(node.y);
     }
     let zoom =
-        (size.0 / (right - left + 180.0)).min(size.1 / (bottom - top + 160.0)).clamp(0.15, 2.0);
+        (size.0 / (right - left + 180.0)).min(size.1 / (bottom - top + 160.0)).clamp(0.000001, 2.0);
     ((left + right) / 2.0, (top + bottom) / 2.0, zoom)
 }
 
@@ -355,7 +389,15 @@ const fn initial_physics_enabled() -> bool {
 }
 
 fn peer_key(peers: &[PeerEntry]) -> String {
-    let mut hashes: Vec<&str> = peers.iter().map(|peer| peer.hash.as_str()).collect();
+    let mut hashes: Vec<String> = peers
+        .iter()
+        .map(|peer| {
+            format!(
+                "{}:{:?}:{}:{:?}:{:?}",
+                peer.hash, peer.name, peer.status, peer.node_role, peer.capabilities
+            )
+        })
+        .collect();
     hashes.sort_unstable();
     hashes.join(",")
 }
@@ -374,6 +416,26 @@ fn is_interesting(node: &GraphNode) -> bool {
 #[cfg(test)]
 mod accessibility_tests {
     use super::*;
+
+    #[test]
+    fn fit_camera_encloses_even_extreme_route_extents() {
+        let node = |x, y| GraphNode {
+            id: "node".into(),
+            label: String::new(),
+            node_type: GraphNodeType::Unknown,
+            capabilities: Vec::new(),
+            x,
+            y,
+            vx: 0.0,
+            vy: 0.0,
+        };
+        let nodes = vec![node(-250.0, 0.0), node(100.0, 50000.0)];
+        let (x, y, zoom) = fit_camera(&nodes, (1200.0, 700.0));
+        for node in nodes {
+            assert!((node.x - x).abs() < 1200.0 / zoom / 2.0);
+            assert!((node.y - y).abs() < 700.0 / zoom / 2.0);
+        }
+    }
 
     #[test]
     fn force_layout_requires_explicit_operator_opt_in() {

@@ -1,3 +1,24 @@
+pub(crate) fn compact_layout(nodes: &mut [GraphNode], anchors: &[usize]) {
+    let count = nodes.len().saturating_sub(anchors.len()).max(1);
+    let columns = (count as f64 * 1.5).sqrt().ceil() as usize;
+    let rows = count.div_ceil(columns);
+    let left = -(columns.saturating_sub(1) as f64) * 36.0;
+    let top = -(rows.saturating_sub(1) as f64) * 36.0;
+    let mut slot = 0;
+    for (index, node) in nodes.iter_mut().enumerate() {
+        if let Some(anchor) = anchors.iter().position(|value| *value == index) {
+            node.x = left - 180.0;
+            node.y = (anchor as f64 - anchors.len().saturating_sub(1) as f64 / 2.0) * 100.0;
+        } else {
+            node.x = left + (slot % columns) as f64 * 72.0;
+            node.y = top + (slot / columns) as f64 * 72.0;
+            slot += 1;
+        }
+        node.vx = 0.0;
+        node.vy = 0.0;
+    }
+}
+
 use crate::state::{GraphEdge, GraphNode};
 
 pub(crate) fn force_tick(nodes: &mut [GraphNode], edges: &[GraphEdge], pinned: &[usize]) {

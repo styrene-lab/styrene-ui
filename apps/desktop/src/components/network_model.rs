@@ -39,7 +39,10 @@ pub(crate) fn build_graph(
             id: format!("iface:{}", interface.hash),
             label: interface.name.clone(),
             node_type: GraphNodeType::Interface {
-                online: matches!(interface.status.as_str(), "online" | "active" | "listening"),
+                online: matches!(
+                    interface.status.as_str(),
+                    "online" | "active" | "listening" | "connected"
+                ),
             },
             capabilities: Vec::new(),
             x: -150.0,
@@ -99,13 +102,16 @@ pub(crate) fn build_graph(
             continue;
         }
         let index = nodes.len();
+        let slot = index.saturating_sub(1 + interfaces.len() + peers.len()) as f64;
+        let angle = slot * 2.399963229728653;
+        let radius = 80.0 * (slot + 1.0).sqrt();
         nodes.push(GraphNode {
             id: hash.clone(),
             label: hash.chars().take(8).collect(),
             node_type: GraphNodeType::Unknown,
             capabilities: Vec::new(),
-            x: 100.0,
-            y: index as f64 * 50.0,
+            x: 450.0 + radius * angle.cos(),
+            y: radius * angle.sin(),
             vx: 0.0,
             vy: 0.0,
         });
@@ -152,7 +158,13 @@ pub(crate) fn build_graph(
 
     let pinned: Vec<usize> =
         std::iter::once(0).chain(interface_indices.values().copied()).collect();
-    network_layout::settle_layout(&mut nodes, &edges, &pinned);
+    if nodes.len() > 200 {
+        // Large inventories need bounded two-dimensional geometry, not a column
+        // whose height grows linearly with the number of route-only endpoints.
+        network_layout::compact_layout(&mut nodes, &pinned);
+    } else {
+        network_layout::settle_layout(&mut nodes, &edges, &pinned);
+    }
     (nodes, edges)
 }
 
@@ -274,6 +286,32 @@ mod tests {
         preserve_positions(&previous, &mut next);
         assert_eq!((next[1].x, next[1].y), (321.0, 123.0));
         assert!(matches!(next[1].node_type, GraphNodeType::Rns { online: false }));
+    }
+
+    #[test]
+    fn large_route_inventory_is_compact_and_preserves_all_destinations() {
+        let paths: Vec<_> = (0..1000)
+            .map(|index| {
+                let hash = format!("{index:032x}");
+                PathEntry {
+                    destination_hash: hash.clone(),
+                    next_hop: hash,
+                    hops: 1,
+                    interface: String::new(),
+                    expires: None,
+                    observation: Default::default(),
+                }
+            })
+            .collect();
+        let (nodes, edges) = build_graph("local", None, &[], &paths, &[], &[], &[]);
+        assert_eq!(nodes.len(), 1001);
+        assert_eq!(edges.len(), 1000);
+        let width = nodes.iter().map(|n| n.x).fold(f64::NEG_INFINITY, f64::max)
+            - nodes.iter().map(|n| n.x).fold(f64::INFINITY, f64::min);
+        let height = nodes.iter().map(|n| n.y).fold(f64::NEG_INFINITY, f64::max)
+            - nodes.iter().map(|n| n.y).fold(f64::INFINITY, f64::min);
+        assert!(width < 4000.0 && height < 4000.0);
+        assert!(width / height > 0.5 && width / height < 2.0);
     }
 
     #[test]
