@@ -23,13 +23,14 @@ pub fn NetworkGraph(
     on_browse_page: EventHandler<String>,
     links: Vec<crate::state::LinkInfo>,
     interfaces: Vec<crate::state::InterfaceInfo>,
+    interface_names: Vec<(String, String)>,
 ) -> Element {
     let mut nodes = use_signal(Vec::<GraphNode>::new);
     let mut edges = use_signal(Vec::<GraphEdge>::new);
     let mut selected = use_signal(|| None::<usize>);
     let mut model_key = use_signal(String::new);
     let current_key = format!(
-        "{local_hash}|{local_name:?}|{}|{:?}|{:?}|{:?}",
+        "{local_hash}|{local_name:?}|{interface_names:?}|{}|{:?}|{:?}|{:?}",
         peer_key(&peers),
         paths
             .iter()
@@ -51,6 +52,13 @@ pub fn NetworkGraph(
             &links,
             &[],
         );
+        for node in &mut next_nodes {
+            if let Some(hash) = node.id.strip_prefix("iface:")
+                && let Some((_, name)) = interface_names.iter().find(|(id, _)| id == hash)
+            {
+                node.label = name.clone();
+            }
+        }
         let selected_id =
             selected.read().and_then(|index| nodes.read().get(index).map(|node| node.id.clone()));
         if (nodes.read().len() > 200) == (next_nodes.len() > 200) {

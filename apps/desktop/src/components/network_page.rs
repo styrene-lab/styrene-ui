@@ -220,6 +220,21 @@ pub fn NetworkPage(
         })
         .cloned()
         .collect();
+    let interface_names: Vec<_> = interface_inventory
+        .as_ref()
+        .map(|inventory| {
+            inventory
+                .entries
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .runtime_hash
+                        .as_ref()
+                        .map(|hash| (hash.clone(), entry.settings.name.clone()))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let interface_count = interface_inventory
         .as_ref()
         .map(|inventory| inventory.entries.len())
@@ -444,6 +459,7 @@ pub fn NetworkPage(
                             on_browse_page,
                             links: filtered_links,
                             interfaces: interfaces.clone(),
+                            interface_names: interface_names.clone(),
                             inspection: Some(
                                 EventHandler::new(move |id: String| {
                                     if let Some(row) = selected_for_map

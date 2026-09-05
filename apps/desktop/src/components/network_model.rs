@@ -156,8 +156,22 @@ pub(crate) fn build_graph(
         }
     }
 
-    let pinned: Vec<usize> =
+    let mut pinned: Vec<usize> =
         std::iter::once(0).chain(interface_indices.values().copied()).collect();
+    if nodes.len() > 200 {
+        let mut outgoing = vec![0_usize; nodes.len()];
+        for edge in &edges {
+            if edge.kind == GraphEdgeKind::Route {
+                outgoing[edge.source] += 1;
+            }
+        }
+        for (index, count) in outgoing.iter().enumerate() {
+            if *count >= 8 && !pinned.contains(&index) {
+                pinned.push(index);
+            }
+        }
+    }
+    pinned.sort_unstable();
     if nodes.len() > 200 {
         // Large inventories need bounded two-dimensional geometry, not a column
         // whose height grows linearly with the number of route-only endpoints.

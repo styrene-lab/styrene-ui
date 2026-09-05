@@ -20,6 +20,14 @@ pub(crate) fn GraphRenderer(
     interaction: Signal<Interaction>,
     mut tooltip: Signal<Option<GraphTooltip>>,
 ) -> Element {
+    let mut route_sources = std::collections::HashMap::<usize, usize>::new();
+    for edge in edges.read().iter().filter(|edge| edge.kind == GraphEdgeKind::Route) {
+        *route_sources.entry(edge.source).or_default() += 1;
+    }
+    let route_sources: std::collections::HashSet<_> = route_sources
+        .into_iter()
+        .filter_map(|(index, count)| (count >= 8).then_some(index))
+        .collect();
     let show_all_labels = zoom > 1.5;
     let show_named_labels = zoom > 0.6;
     rsx! {
@@ -43,7 +51,7 @@ pub(crate) fn GraphRenderer(
                             matches!(source, GraphNodeType::Local | GraphNodeType::Interface { .. } | GraphNodeType::Hub { .. })
                                 || matches!(target, GraphNodeType::Local | GraphNodeType::Interface { .. } | GraphNodeType::Hub { .. })
                         };
-                        let show = structural || match selected_index {
+                        let show = structural || route_sources.contains(&edge.source) || match selected_index {
                             Some(index) => edge.source == index || edge.target == index,
                             None => zoom > 0.8,
                         };
@@ -65,6 +73,8 @@ pub(crate) fn GraphRenderer(
                             rsx! {
                                 line {
                                     class: "{class}",
+                                    vector_effect: "non-scaling-stroke",
+                                    style: if zoom < 0.6 && edge.kind == GraphEdgeKind::Route { "stroke-width: 0.7; stroke-opacity: 0.18;" } else { "" },
                                     x1: "{source.x}",
                                     y1: "{source.y}",
                                     x2: "{target.x}",
@@ -96,7 +106,9 @@ pub(crate) fn GraphRenderer(
                                     node.id.clone()
                                 };
                                 let local = node.node_type == GraphNodeType::Local;
-                                let label_offset = radius + 14.0;
+                                let anchor = local || matches!(node.node_type, GraphNodeType::Interface { .. }) || route_sources.contains(&index);
+                                let label_offset = radius + if anchor { 14.0 / zoom.max(0.01) } else { 14.0 };
+                                let label_style = if anchor { format!("font-size: {}px; paint-order: stroke; stroke: #0e1319; stroke-width: {}px;", 12.0 / zoom.max(0.01), 3.0 / zoom.max(0.01)) } else { String::new() };
                                 let custom_path = node.shape_path(x, y);
                                 let tooltip_label = label.clone();
                                 let tooltip_hash = node.id.clone();
@@ -127,7 +139,7 @@ pub(crate) fn GraphRenderer(
                                 } else {
                                     "1"
                                 };
-                                let show_label = is_selected
+                                let show_label = anchor || is_selected
                                     || neighbor
                                     || search_match
                                     || show_all_labels
@@ -196,8 +208,8 @@ pub(crate) fn GraphRenderer(
                                             }
                                         }
                                         if show_label {
-                                            text { class: "graph-label", x: "{x}", y: "{y + label_offset}", "{label}" }
-                                            if !local {
+                                            text { class: "graph-label", style:"{label_style}", x: "{x}", y: "{y + label_offset}", "{label}" }
+                                            if !anchor {
                                                 text {
                                                     class: "graph-label-hash", x: "{x}",
                                                     y: "{y + label_offset + 13.0}", "{short_hash}"
