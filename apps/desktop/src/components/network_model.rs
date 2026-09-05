@@ -39,7 +39,7 @@ pub(crate) fn build_graph(
             id: format!("iface:{}", interface.hash),
             label: interface.name.clone(),
             node_type: GraphNodeType::Interface {
-                online: interface.status == "online" || interface.status == "active",
+                online: matches!(interface.status.as_str(), "online" | "active" | "listening"),
             },
             capabilities: Vec::new(),
             x: -150.0,
@@ -62,11 +62,15 @@ pub(crate) fn build_graph(
         let angle = (fraction - 0.5) * std::f64::consts::PI * 1.6;
         let online = peer.status != "offline" && !peer.status.is_empty();
         let (x, y) = initial_peer_position(peer, angle);
-        let node_type = match &peer.node_role {
-            PeerRole::Hub => GraphNodeType::Hub { online },
-            PeerRole::PageHost => GraphNodeType::PageHost { online },
-            PeerRole::Styrene => GraphNodeType::Styrene { online },
-            PeerRole::Rns => GraphNodeType::Rns { online },
+        let node_type = if peer.status.is_empty() || peer.status == "unknown" {
+            GraphNodeType::Unknown
+        } else {
+            match &peer.node_role {
+                PeerRole::Hub => GraphNodeType::Hub { online },
+                PeerRole::PageHost => GraphNodeType::PageHost { online },
+                PeerRole::Styrene => GraphNodeType::Styrene { online },
+                PeerRole::Rns => GraphNodeType::Rns { online },
+            }
         };
         let node_index = nodes.len();
         nodes.push(GraphNode {
@@ -85,7 +89,30 @@ pub(crate) fn build_graph(
         node_indices.insert(peer.hash.clone(), node_index);
     }
 
-    for path in paths {
+    // Routes and links are independent observations; discovery is not required.
+    for hash in paths
+        .iter()
+        .flat_map(|path| [&path.destination_hash, &path.next_hop])
+        .chain(links.iter().map(|link| &link.peer_hash))
+    {
+        if hash.is_empty() || node_indices.contains_key(hash) {
+            continue;
+        }
+        let index = nodes.len();
+        nodes.push(GraphNode {
+            id: hash.clone(),
+            label: hash.chars().take(8).collect(),
+            node_type: GraphNodeType::Unknown,
+            capabilities: Vec::new(),
+            x: 100.0,
+            y: index as f64 * 50.0,
+            vx: 0.0,
+            vy: 0.0,
+        });
+        node_indices.insert(hash.clone(), index);
+    }
+
+    for path in paths.iter().filter(|path| !path.observation.stale) {
         let Some(&target) = node_indices.get(&path.destination_hash) else {
             continue;
         };
@@ -107,7 +134,9 @@ pub(crate) fn build_graph(
         }
     }
 
-    for link in links {
+    for link in links.iter().filter(|link| {
+        !link.observation.stale && link.activity == styrene_ipc::types::LinkActivity::Active
+    }) {
         if let Some(&target) = node_indices.get(&link.peer_hash) {
             edges.push(GraphEdge { source: 0, target, hops: 0, kind: GraphEdgeKind::Link });
         }
@@ -171,6 +200,23 @@ mod tests {
             last_announce: None,
             announce_count: 1,
         }
+    }
+
+    #[test]
+    fn undiscovered_destination_remains_visible_with_unknown_status() {
+        let path = PathEntry {
+            destination_hash: "unheard".into(),
+            hops: 1,
+            next_hop: "unheard".into(),
+            interface: "".into(),
+            expires: None,
+            observation: Default::default(),
+        };
+        let (nodes, edges) = build_graph("local", None, &[], &[path], &[], &[], &[]);
+        let unknown = nodes.iter().find(|node| node.id == "unheard").expect("observed destination");
+        assert_eq!(unknown.node_type, GraphNodeType::Unknown);
+        assert_eq!(unknown.type_label(), "Destination (status unknown)");
+        assert_eq!(edges.iter().filter(|edge| edge.kind == GraphEdgeKind::Route).count(), 1);
     }
 
     #[test]

@@ -154,6 +154,8 @@ pub struct GraphNode {
 /// Node type for the graph — determines shape, color, size, and click behavior.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GraphNodeType {
+    /// Observed destination whose discovery/status metadata is unavailable.
+    Unknown,
     /// The local node (center of the graph).
     Local,
     /// A transport interface (TCP, UDP, Serial).
@@ -172,6 +174,7 @@ impl GraphNodeType {
     pub fn is_online(&self) -> bool {
         match self {
             Self::Local => true,
+            Self::Unknown => false,
             Self::Interface { online }
             | Self::Rns { online }
             | Self::Styrene { online }
@@ -184,23 +187,25 @@ impl GraphNodeType {
 impl GraphNode {
     pub fn color(&self) -> &'static str {
         match &self.node_type {
-            GraphNodeType::Local => "#58a6ff",                       // blue
-            GraphNodeType::Interface { online: true } => "#3fb950",  // green
+            GraphNodeType::Unknown => "#8b949e",
+            GraphNodeType::Local => "#58a6ff", // blue
+            GraphNodeType::Interface { online: true } => "#3fb950", // green
             GraphNodeType::Interface { online: false } => "#f85149", // red
-            GraphNodeType::Hub { online: true } => "#bc8cff",        // purple
-            GraphNodeType::Hub { online: false } => "#6e40aa",       // dim purple
-            GraphNodeType::PageHost { online: true } => "#39d2c0",   // teal
-            GraphNodeType::PageHost { online: false } => "#1a7f72",  // dim teal
-            GraphNodeType::Styrene { online: true } => "#3fb950",    // green
-            GraphNodeType::Styrene { online: false } => "#2ea043",   // dim green
-            GraphNodeType::Rns { online: true } => "#d29922",        // amber
-            GraphNodeType::Rns { online: false } => "#484f58",       // grey
+            GraphNodeType::Hub { online: true } => "#bc8cff", // purple
+            GraphNodeType::Hub { online: false } => "#6e40aa", // dim purple
+            GraphNodeType::PageHost { online: true } => "#39d2c0", // teal
+            GraphNodeType::PageHost { online: false } => "#1a7f72", // dim teal
+            GraphNodeType::Styrene { online: true } => "#3fb950", // green
+            GraphNodeType::Styrene { online: false } => "#2ea043", // dim green
+            GraphNodeType::Rns { online: true } => "#d29922", // amber
+            GraphNodeType::Rns { online: false } => "#484f58", // grey
         }
     }
 
     /// Base radius — small enough that 400 nodes don't overlap.
     pub fn radius(&self) -> f64 {
         match self.node_type {
+            GraphNodeType::Unknown => 6.0,
             GraphNodeType::Local => 12.0,
             GraphNodeType::Interface { .. } => 8.0,
             GraphNodeType::Hub { .. } => 10.0,
@@ -212,6 +217,7 @@ impl GraphNode {
 
     pub fn border_color(&self) -> &'static str {
         match &self.node_type {
+            GraphNodeType::Unknown => "#abb5c1",
             GraphNodeType::Local => "#79c0ff",
             GraphNodeType::Interface { online: true } => "#56d364",
             GraphNodeType::Interface { online: false } => "#f85149",
@@ -228,8 +234,9 @@ impl GraphNode {
 
     pub fn type_label(&self) -> &'static str {
         match &self.node_type {
+            GraphNodeType::Unknown => "Destination (status unknown)",
             GraphNodeType::Local => "Local Node",
-            GraphNodeType::Interface { online: true } => "Interface (connected)",
+            GraphNodeType::Interface { online: true } => "Interface (active)",
             GraphNodeType::Interface { online: false } => "Interface (disconnected)",
             GraphNodeType::Hub { online: true } => "Hub (online)",
             GraphNodeType::Hub { online: false } => "Hub (offline)",

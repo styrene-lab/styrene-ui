@@ -66,7 +66,15 @@ fn App() -> Element {
     let mut profile_error = use_signal(|| None::<String>);
     let mut stores = use_signal(stores::DomainStores::default);
     let mut selected_peer = use_signal(|| None::<String>);
-    let mut active_route = use_signal(state::AppRoute::default);
+    let mut active_route = use_signal(|| {
+        if std::env::var("STYRENE_DX_ROUTE")
+            .is_ok_and(|route| route == "network" || route.starts_with("network/"))
+        {
+            state::AppRoute::Network
+        } else {
+            state::AppRoute::default()
+        }
+    });
     let mut activity_open = use_signal(|| false);
     let mut activity_export = use_signal(|| None::<String>);
     let scenario_backend = use_hook(|| {
@@ -364,10 +372,14 @@ fn App() -> Element {
                     class: if view.runtime.connected { "badge connected" } else { "badge disconnected" },
                     if matches!(&*selected_profile.read(), backend::RuntimeProfile::Fixture { .. }) {
                         "Fixture: {fixture_id}"
+                    } else if view.runtime.connected {
+                        "Connected"
                     } else {
                         "{profile_label}: {view.runtime.connection_mode}"
                     }
                 }
+                details { class: "connection-menu",
+                    summary { "Connection" }
                 div { class: "profile-config", aria_label: "Runtime profile configuration",
                     select {
                         aria_label: "Runtime profile",
@@ -416,6 +428,7 @@ fn App() -> Element {
                         },
                         "Activate"
                     }
+                }
                 }
                 if let Some(error) = profile_error.read().as_ref() {
                     span { class: "profile-error", role: "alert", "{error}" }
@@ -539,6 +552,7 @@ fn App() -> Element {
                     },
                     state::AppRoute::Network => rsx! {
                         components::NetworkPage {
+                            connected: view.runtime.connected,
                             peers: view.network.peers.clone(),
                             paths: view.network.paths.clone(),
                             status: view.network.status.clone(),

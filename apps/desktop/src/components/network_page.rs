@@ -1,5 +1,4 @@
-use std::collections::HashSet;
-
+use dioxus::document;
 use dioxus::prelude::*;
 
 use crate::daemon_bridge::DaemonCommand;
@@ -14,11 +13,11 @@ use super::NetworkGraph;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum NetworkMode {
+    #[default]
     Discovery,
     Routes,
     Links,
     Interfaces,
-    #[default]
     Combined,
 }
 
@@ -77,6 +76,7 @@ const DISPLAYED_NETWORK_OPERATIONS: [(NetworkOperationKind, &str); 5] = [
 
 #[component]
 pub fn NetworkPage(
+    connected: bool,
     peers: Vec<PeerEntry>,
     paths: Vec<PathEntry>,
     status: MeshStatusInfo,
@@ -93,7 +93,16 @@ pub fn NetworkPage(
     on_network_command: EventHandler<DaemonCommand>,
 ) -> Element {
     let safety_policy = safety;
-    let mut mode = use_signal(NetworkMode::default);
+    let mut mode = use_signal(|| match std::env::var("STYRENE_DX_ROUTE").as_deref() {
+        Ok("network/interfaces") => NetworkMode::Interfaces,
+        Ok("network/routes") => NetworkMode::Routes,
+        Ok("network/links") => NetworkMode::Links,
+        Ok("network/map") => NetworkMode::Combined,
+        _ => NetworkMode::default(),
+    });
+    let mut selected = use_signal(|| None::<String>);
+    let mut actions_open = use_signal(|| false);
+    let mut filters_open = use_signal(|| false);
     let mut query = use_signal(String::new);
     let mut capability = use_signal(String::new);
     let mut role = use_signal(RoleFilter::default);
@@ -107,6 +116,8 @@ pub fn NetworkPage(
     let mut confirmation = use_signal(|| None::<NetworkConfirmation>);
     use_effect(move || {
         let _generation = safety_policy.read().generation_key();
+        selected.set(None);
+        actions_open.set(false);
         target.set(String::new());
         link_control_id.set(String::new());
         request_link_id.set(String::new());
@@ -202,385 +213,795 @@ pub fn NetworkPage(
         })
         .cloned()
         .collect();
-    let visible_hashes: HashSet<&str> =
-        filtered_peers.iter().map(|peer| peer.hash.as_str()).collect();
-    let filtered_paths: Vec<PathEntry> = paths
+    let mut all_rows = inventory_rows(&peers, &paths, &links, &interfaces, now);
+    all_rows.push(InventoryRow {
+        key: format!("local:{local_hash}"),
+        mode: NetworkMode::Combined,
+        name: local_name.clone().unwrap_or_else(|| "This node".into()),
+        kind: "Local node".into(),
+        cells: Vec::new(),
+        details: vec![
+            ("Destination".into(), local_hash.clone()),
+            (
+                "Transport".into(),
+                if status.transport_active { "Active" } else { "Inactive" }.into(),
+            ),
+            ("Interfaces".into(), interfaces.len().to_string()),
+        ],
+        diagnostics: "Local daemon observation".into(),
+        destination: String::new(),
+        link_id: String::new(),
+        can_browse: false,
+    });
+    let visible_rows: Vec<_> = all_rows
         .iter()
-        .filter(|path| visible_hashes.contains(path.destination_hash.as_str()))
+        .filter(|row| {
+            row.mode == *mode.read()
+                && row.matches(&query_value)
+                && (row.mode != NetworkMode::Discovery
+                    || filtered_peers.iter().any(|peer| peer.hash == row.destination))
+        })
         .cloned()
         .collect();
-    let filtered_links: Vec<LinkInfo> = links
+    let selected_row =
+        all_rows.iter().find(|row| Some(&row.key) == selected.read().as_ref()).cloned();
+    let selected_for_map = all_rows.clone();
+    let mut select_row = move |row: InventoryRow| {
+        target.set(row.destination.clone());
+        link_control_id.set(row.link_id.clone());
+        request_link_id.set(row.link_id.clone());
+        actions_open.set(!matches!(row.mode, NetworkMode::Interfaces | NetworkMode::Combined));
+        selected.set(Some(row.key));
+    };
+    let local_only = !interfaces.is_empty()
+        && interfaces.iter().all(|interface| {
+            interface.local_endpoint.as_deref().is_some_and(|endpoint| {
+                endpoint.starts_with("127.") || endpoint.starts_with("[::1]:")
+            }) && interface.remote_endpoint.is_none()
+        });
+    let filtered_paths: Vec<_> = paths
         .iter()
-        .filter(|link| visible_hashes.contains(link.peer_hash.as_str()))
+        .filter(|path| {
+            query_value.is_empty()
+                || path.destination_hash.to_ascii_lowercase().contains(&query_value)
+                || peer_label(&peers, &path.destination_hash)
+                    .to_ascii_lowercase()
+                    .contains(&query_value)
+        })
+        .cloned()
+        .collect();
+    let filtered_links: Vec<_> = links
+        .iter()
+        .filter(|link| {
+            query_value.is_empty()
+                || link.peer_hash.to_ascii_lowercase().contains(&query_value)
+                || peer_label(&peers, &link.peer_hash).to_ascii_lowercase().contains(&query_value)
+        })
         .cloned()
         .collect();
 
     rsx! {
         div { class: "network-page",
-            section { class: "network-operations",
-                div { class: "network-operation-heading",
-                    div {
-                        span { class: "network-operation-kicker", "Network control" }
-                        h2 { "Network operations" }
-                        p { "Start a bounded daemon operation. Results remain separate from submitted commands." }
-                    }
-                    match network_availability {
-                        NetworkAvailability::Available => rsx! {
-                            span { class: "network-operation-status available", "Available" }
-                        },
-                        NetworkAvailability::PartiallyAvailable => rsx! {
-                            span { class: "network-operation-status partial", "Partially available" }
-                        },
-                        NetworkAvailability::ReadOnly => rsx! {
-                            span { id: "network-operation-disabled", class: "network-operation-status unavailable", "Read-only" }
-                        },
-                    }
-                }
-                div { class: "network-operation-inputs",
-                    label { class: "network-operation-field",
-                        span { "Destination hash" }
-                        input {
-                            placeholder: "Enter a destination hash",
-                            value: "{target}",
-                            oninput: move |event| target.set(event.value()),
-                        }
-                    }
-                    label { class: "network-operation-field",
-                        span { "Link control ID" }
-                        input {
-                            placeholder: "Link to probe or close",
-                            value: "{link_control_id}",
-                            oninput: move |event| link_control_id.set(event.value()),
-                        }
-                    }
-                    label { class: "network-operation-field",
-                        span { "Request link ID" }
-                        input {
-                            placeholder: "Link for native request",
-                            value: "{request_link_id}",
-                            oninput: move |event| request_link_id.set(event.value()),
-                        }
-                    }
-                    label { class: "network-operation-field",
-                        span { "Request path" }
-                        input {
-                            placeholder: "/request/path",
-                            value: "{request_path}",
-                            oninput: move |event| request_path.set(event.value()),
-                        }
-                    }
-                    label { class: "network-operation-field",
-                        span { "Request data" }
-                        input {
-                            placeholder: "Optional request payload",
-                            value: "{request_data}",
-                            oninput: move |event| request_data.set(event.value()),
+            header { class: "network-heading",
+                div {
+                    h2 { "Network" }
+                    p {
+                        if connected {
+                            "Interfaces: {interfaces.len()} · Observed peers: {peers.len()} · Routes: {paths.len()} · Link records: {links.len()}"
+                        } else {
+                            "Disconnected · Network observations unavailable"
                         }
                     }
                 }
-                div { class: "network-operation-actions",
-                    for (kind, label) in DISPLAYED_NETWORK_OPERATIONS {
-                        {
-                            let destructive = kind == NetworkOperationKind::LinkClose;
-                            let action = SafetyAction::operate(network_operation_capability(kind), destructive);
-                            let destination = target.read().trim().to_string();
-                            let selected_link = link_control_id.read().trim().to_string();
-                            let input_missing = operation_input_missing(kind, &destination, &selected_link);
-                            let authorization = safety_policy.read().authorization(ControlPlane::Operate, &action);
-                            let disabled = authorization.is_err() || input_missing;
-                            let input_hint = if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) { "Requires an active link ID" } else if kind == NetworkOperationKind::Announce { "No destination required" } else { "Requires a destination hash" };
-                            let guidance = authorization.as_ref().err().map_or(input_hint, |denial| denial.operator_message());
-                            rsx! {
-                                div { class: "network-action-tile",
-                                    button {
-                                        class: if destructive { "network-operation-button danger" } else { "network-operation-button" },
-                                        disabled,
-                                        title: if input_missing { input_hint } else if let Err(denial) = &authorization { denial.operator_message() } else { "Submit typed daemon operation" },
-                                        aria_describedby: disabled.then_some("network-action-guidance"),
-                                        aria_label: format!("{label} using {}", if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) { selected_link.as_str() } else { destination.as_str() }),
-                                        onclick: move |_| {
-                                            let mut request = StartNetworkOperationInfo::default();
-                                            request.kind = kind;
-                                            request.timeout_ms = 15_000;
-                                            if matches!(kind, NetworkOperationKind::PathRequest | NetworkOperationKind::LinkOpen) && !destination.is_empty() {
-                                                request.destination_hash = Some(destination.clone());
-                                            }
-                                            if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose) && !selected_link.is_empty() {
-                                                request.link_id = Some(selected_link.clone());
-                                            }
-                                            let command = DaemonCommand::StartNetworkOperation(request);
-                                            if action.is_destructive() {
-                                                if let Some(pending) = network_confirmation(
-                                                    &safety_policy.read(),
-                                                    label,
-                                                    if selected_link.is_empty() { destination.clone() } else { selected_link.clone() },
-                                                    "timeout=15000 ms",
-                                                    "Closes the active link and interrupts traffic using it.",
-                                                    action.clone(),
-                                                    command,
-                                                ) {
-                                                    confirmation.set(Some(pending));
-                                                }
-                                            } else {
-                                                on_network_command.call(command);
-                                            }
-                                        },
-                                        "{label}"
-                                    }
-                                    small { "{guidance}" }
-                                }
-                            }
-                        }
-                    }
-                    {
-                        let request_action = SafetyAction::operate("network.request", false);
-                        let request_authorization = safety_policy.read().authorization(ControlPlane::Operate, &request_action);
-                        let request_input_missing = request_input_missing(&request_link_id.read(), &request_path.read());
-                        let request_disabled = request_authorization.is_err() || request_input_missing;
-                        let request_guidance = request_authorization.as_ref().err().map_or("Requires a link ID and request path", |denial| denial.operator_message());
-                        rsx! {
-                            div { class: "network-action-tile",
-                                button {
-                                    class: "network-operation-button",
-                                    disabled: request_disabled,
-                                    title: if request_link_id.read().trim().is_empty() { "Requires a request link ID" } else if request_path.read().trim().is_empty() { "Requires a request path" } else if let Err(denial) = &request_authorization { denial.operator_message() } else { "Send native request" },
-                                    aria_describedby: request_disabled.then_some("network-action-guidance"),
-                                    onclick: move |_| {
-                                        let mut request = StartRequestInfo::default();
-                                        request.link_id = request_link_id.read().trim().to_string();
-                                        request.path = request_path.read().trim().to_string();
-                                        request.data = request_data.read().as_bytes().to_vec();
-                                        request.timeout_ms = 15_000;
-                                        request.max_response_size = 4 * 1024 * 1024;
-                                        on_network_command.call(DaemonCommand::StartRequest(request));
-                                    },
-                                    "Send request"
-                                }
-                                small { "{request_guidance}" }
-                            }
-                        }
-                    }
-                }
-                p { id: "network-action-guidance", class: "network-action-guidance", "Unavailable actions need required input or permission from the active session." }
-                div { class: "network-observation-grid",
-                    div { class: "network-observation-panel",
-                        h3 { "Operation observations" }
-                        if operations.is_empty() { p { class: "network-observation-empty", "None recorded in this session." } }
-                        for operation in operations.iter().rev() {
-                            article { class: "network-observation",
-                                strong { "{operation.kind.as_str()}" }
-                                code { "{operation.operation_id}" }
-                                span { {operation.outcome.map(|value| value.as_str()).unwrap_or(operation.progress.as_str())} }
-                                p { class: "network-observation-relations",
-                                    span { {relationship_label("Link", operation.link_id.as_deref())} }
-                                    span { {relationship_label("Correlation", operation.observation.correlation_id.as_deref())} }
-                                }
-                                if let Some(detail) = &operation.detail { p { "{detail}" } }
-                                if operation.cancellable && operation.outcome.is_none() {
-                                    button {
-                                        disabled: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate_session(true)).is_err(),
-                                        title: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate_session(true)).err().map_or("Confirm cancellation", |denial| denial.operator_message()),
-                                        aria_describedby: "network-action-guidance",
-                                        onclick: {
-                                            let id = operation.operation_id.clone();
-                                            let target = operation.operation_id.clone();
-                                            move |_| {
-                                                let action = SafetyAction::operate_session(true);
-                                                if let Some(pending) = network_confirmation(
-                                                    &safety_policy.read(),
-                                                    "Cancel operation",
-                                                    target.clone(),
-                                                    "cancel the selected operation ID",
-                                                    "Stops the in-flight network operation before it reaches a terminal outcome.",
-                                                    action,
-                                                    DaemonCommand::CancelNetworkOperation { operation_id: id.clone() },
-                                                ) {
-                                                    confirmation.set(Some(pending));
-                                                }
-                                            }
-                                        },
-                                        aria_label: format!("Cancel {} operation {}", operation.kind.as_str(), operation.operation_id),
-                                        "Cancel"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    div { class: "network-observation-panel",
-                        h3 { "Native requests" }
-                        if requests.is_empty() { p { class: "network-observation-empty", "None recorded in this session." } }
-                        for request in requests.iter().rev() {
-                            article { class: "network-observation",
-                                strong { "{request.path_hash}" }
-                                code { "{request.request_id}" }
-                                span { {format!("{:?} · {:.0}%", request.state, request.progress * 100.0)} }
-                                p { class: "network-observation-relations",
-                                    span { {relationship_label("Link", nonempty(&request.link_id))} }
-                                    span { {relationship_label("Request resource", request.request_resource_hash.as_deref())} }
-                                    span { {relationship_label("Response resource", request.resource_hash.as_deref())} }
-                                    span { {relationship_label("Correlation", request.observation.correlation_id.as_deref())} }
-                                }
-                                if !request.state.is_terminal() {
-                                    button {
-                                        disabled: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate("network.request_cancel", true)).is_err(),
-                                        title: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate("network.request_cancel", true)).err().map_or("Confirm request cancellation", |denial| denial.operator_message()),
-                                        aria_describedby: "network-action-guidance",
-                                        onclick: {
-                                            let id = request.request_id.clone();
-                                            let target = request.request_id.clone();
-                                            move |_| {
-                                                let action = SafetyAction::operate("network.request_cancel", true);
-                                                if let Some(pending) = network_confirmation(
-                                                    &safety_policy.read(),
-                                                    "Cancel request",
-                                                    target.clone(),
-                                                    "cancel the selected request ID",
-                                                    "Stops the native request and discards any incomplete response.",
-                                                    action,
-                                                    DaemonCommand::CancelRequest { request_id: id.clone() },
-                                                ) {
-                                                    confirmation.set(Some(pending));
-                                                }
-                                            }
-                                        },
-                                        aria_label: format!("Cancel request {}", request.request_id),
-                                        "Cancel"
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    div { class: "network-observation-panel",
-                        h3 { "Resource transfers" }
-                        if resources.is_empty() { p { class: "network-observation-empty", "None recorded in this session." } }
-                        for resource in resources.iter().rev() {
-                            article { class: "network-observation",
-                                strong { {format!("{:?}", resource.direction)} }
-                                code { "{resource.resource_hash}" }
-                                span { {format!("{:?} · {:.0}%", resource.state, resource.progress * 100.0)} }
-                                span { "{resource.received_bytes}/{resource.total_bytes} bytes" }
-                                p { class: "network-observation-relations",
-                                    span { {relationship_label("Link", nonempty(&resource.link_id))} }
-                                    span { {relationship_label("Correlation", resource.observation.correlation_id.as_deref())} }
-                                }
-                                if resource.cancellable && !resource.state.is_terminal() {
-                                    button {
-                                        disabled: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate("network.resource_cancel", true)).is_err(),
-                                        title: safety_policy.read().authorization(ControlPlane::Operate, &SafetyAction::operate("network.resource_cancel", true)).err().map_or("Confirm resource cancellation", |denial| denial.operator_message()),
-                                        aria_describedby: "network-action-guidance",
-                                        onclick: {
-                                            let hash = resource.resource_hash.clone();
-                                            let target = resource.resource_hash.clone();
-                                            move |_| {
-                                                let action = SafetyAction::operate("network.resource_cancel", true);
-                                                if let Some(pending) = network_confirmation(
-                                                    &safety_policy.read(),
-                                                    "Cancel resource",
-                                                    target.clone(),
-                                                    "cancel the selected resource hash",
-                                                    "Stops this transfer and leaves the resource incomplete.",
-                                                    action,
-                                                    DaemonCommand::CancelResource { resource_hash: hash.clone() },
-                                                ) {
-                                                    confirmation.set(Some(pending));
-                                                }
-                                            }
-                                        },
-                                        aria_label: format!("Cancel resource {}", resource.resource_hash),
-                                        "Cancel"
-                                    }
-                                }
-                            }
-                        }
-                    }
+                button {
+                    class: "network-action-menu",
+                    aria_expanded: "{actions_open}",
+                    onclick: move |_| {
+                        selected.set(None);
+                        target.set(String::new());
+                        link_control_id.set(String::new());
+                        request_link_id.set(String::new());
+                        actions_open.toggle();
+                    },
+                    "Actions"
                 }
             }
             div { class: "network-mode-bar",
                 for (value, label) in [
-                    (NetworkMode::Discovery, "Discovery"),
+                    (NetworkMode::Discovery, "Peers"),
+                    (NetworkMode::Interfaces, "Interfaces"),
                     (NetworkMode::Routes, "Routes"),
                     (NetworkMode::Links, "Links"),
-                    (NetworkMode::Interfaces, "Interfaces"),
-                    (NetworkMode::Combined, "Combined"),
-                ] {
+                    (NetworkMode::Combined, "Map"),
+                ]
+                {
                     button {
-                        class: if *mode.read() == value { "network-mode active" } else { "network-mode" },
-                        onclick: move |_| mode.set(value),
+                        class:
+                        if *mode.read() == value {
+                            "network-mode active"
+                        } else {
+                            "network-mode"
+                        },
+                        onclick: move |_| {
+                            mode.set(value);
+                            selected.set(None);
+                            actions_open.set(false);
+                            target.set(String::new());
+                            link_control_id.set(String::new());
+                            request_link_id.set(String::new());
+                        },
                         "{label}"
                     }
                 }
             }
             div { class: "network-filter-bar",
                 input {
-                    aria_label: "Search peers",
-                    placeholder: "Search name or hash",
+                    aria_label: "Search current network inventory",
+                    placeholder: "Search this view…",
                     value: "{query}",
                     oninput: move |event| query.set(event.value()),
                 }
-                select {
-                    aria_label: "Filter by role",
-                    onchange: move |event| role.set(parse_role(&event.value())),
-                    option { value: "all", "All roles" }
-                    option { value: "styrene", "Styrene" }
-                    option { value: "hub", "Hub" }
-                    option { value: "pages", "Page host" }
-                    option { value: "rns", "RNS" }
+                if matches!(*mode.read(), NetworkMode::Discovery | NetworkMode::Combined) {
+                    button {
+                        class: "network-mode",
+                        aria_expanded: "{filters_open}",
+                        onclick: move |_| filters_open.toggle(),
+                        "Filters"
+                    }
+                    if *filters_open.read() {
+                        select {
+                            aria_label: "Filter by role",
+                            onchange: move |event| role.set(parse_role(&event.value())),
+                            option { value: "all", "All roles" }
+                            option { value: "styrene", "Styrene" }
+                            option { value: "hub", "Hub" }
+                            option { value: "pages", "Page host" }
+                            option { value: "rns", "RNS" }
+                        }
+                        select {
+                            aria_label: "Filter by status",
+                            onchange: move |event| peer_status.set(parse_status(&event.value())),
+                            option { value: "all", "All status" }
+                            option { value: "online", "Online" }
+                            option { value: "offline", "Offline" }
+                        }
+                        select {
+                            aria_label: "Filter by freshness",
+                            onchange: move |event| freshness.set(parse_freshness(&event.value())),
+                            option { value: "all", "All freshness" }
+                            option { value: "recent", "Recent <1h" }
+                            option { value: "stale", "Stale ≥1h" }
+                            option { value: "unknown", "Unknown" }
+                        }
+                        input {
+                            aria_label: "Filter by capability",
+                            placeholder: "Capability",
+                            value: "{capability}",
+                            oninput: move |event| capability.set(event.value()),
+                        }
+                    }
                 }
-                select {
-                    aria_label: "Filter by status",
-                    onchange: move |event| peer_status.set(parse_status(&event.value())),
-                    option { value: "all", "All status" }
-                    option { value: "online", "Online" }
-                    option { value: "offline", "Offline" }
+                span { class: "network-filter-count",
+                    if *mode.read() != NetworkMode::Combined {
+                        if visible_rows.len() == 1 {
+                            "1 result"
+                        } else {
+                            "{visible_rows.len()} results"
+                        }
+                    }
                 }
-                select {
-                    aria_label: "Filter by freshness",
-                    onchange: move |event| freshness.set(parse_freshness(&event.value())),
-                    option { value: "all", "All freshness" }
-                    option { value: "recent", "Recent <1h" }
-                    option { value: "stale", "Stale ≥1h" }
-                    option { value: "unknown", "Unknown" }
-                }
-                input {
-                    aria_label: "Filter by capability",
-                    placeholder: "Capability",
-                    value: "{capability}",
-                    oninput: move |event| capability.set(event.value()),
-                }
-                span { class: "network-filter-count", "{filtered_peers.len()}/{peers.len()} peers" }
             }
 
-            match *mode.read() {
-                NetworkMode::Discovery => rsx! {
-                    DiscoveryView { peers: filtered_peers }
+            div { class:
+                if connected && (selected_row.is_some() || *actions_open.read()) {
+                    "network-workspace inspecting"
+                } else {
+                    "network-workspace"
                 },
-                NetworkMode::Routes => rsx! {
-                    RoutesView { paths: filtered_paths, peers: peers.clone() }
-                },
-                NetworkMode::Links => rsx! {
-                    LinksView {
-                        links: filtered_links,
-                        peers: peers.clone(),
-                        on_use_for_control: move |id| link_control_id.set(id),
-                        on_use_for_request: move |id| request_link_id.set(id),
+                div { class: "network-inventory",
+                    if !connected {
+                        div { class: "network-empty", role: "status",
+                            h3 { "Network unavailable" }
+                            p {
+                                "Connect to a daemon to inspect its network. Previous observations are not current status."
+                            }
+                        }
+                    } else if *mode.read() == NetworkMode::Combined {
+                        NetworkGraph {
+                            peers: filtered_peers,
+                            paths: filtered_paths,
+                            status: status.clone(),
+                            local_hash: local_hash.clone(),
+                            local_name: local_name.clone(),
+                            on_select_peer,
+                            on_browse_page,
+                            links: filtered_links,
+                            interfaces: interfaces.clone(),
+                            inspection: Some(
+                                EventHandler::new(move |id: String| {
+                                    if let Some(row) = selected_for_map
+                                        .iter()
+                                        .find(|row| {
+                                            row.key == format!("interface:{}", id.trim_start_matches("iface:"))
+                                                || row.key == format!("peer:{id}")
+                                                || row.key == format!("route:{id}")
+                                                    || row.key == format!("local:{id}")
+                                                    || (row.mode == NetworkMode::Links && row.destination == id)
+                                        })
+                                    {
+                                        select_row(row.clone());
+                                    }
+                                }),
+                            ),
+                            search: query_value.clone(),
+                        }
+                    } else if visible_rows.is_empty() {
+                        div { class: "network-empty",
+                            h3 {
+                                if !query_value.is_empty() || (*mode.read() == NetworkMode::Discovery && !peers.is_empty()) {
+                                    "No matches"
+                                } else {
+                                    {empty_title(*mode.read())}
+                                }
+                            }
+                            p {
+                                if !query_value.is_empty() || (*mode.read() == NetworkMode::Discovery && !peers.is_empty()) {
+                                    "Try another search or clear the filters."
+                                } else if *mode.read() == NetworkMode::Discovery && local_only {
+                                    "Your interfaces accept local connections only. No external connection is configured."
+                                } else if *mode.read() == NetworkMode::Discovery {
+                                    "No peer announcements have been observed. Review your interfaces and their connection status."
+                                } else {
+                                    "This session has not supplied any records for this view."
+                                }
+                            }
+                            if *mode.read() == NetworkMode::Discovery {
+                                button {
+                                    class: "network-mode",
+                                    onclick: move |_| {
+                                        mode.set(NetworkMode::Interfaces);
+                                        query.set(String::new());
+                                    },
+                                    "View interfaces"
+                                }
+                            }
+                        }
+                    } else {
+                        InventoryTable {
+                            rows: visible_rows,
+                            mode: *mode.read(),
+                            selected: selected.read().clone(),
+                            on_select: select_row,
+                        }
                     }
-                },
-                NetworkMode::Interfaces => rsx! {
-                    InterfacesView { interfaces: interfaces.clone() }
-                },
-                NetworkMode::Combined => rsx! {
-                    NetworkGraph {
-                        peers: filtered_peers,
-                        paths: filtered_paths.clone(),
-                        status: status.clone(),
-                        local_hash: local_hash.clone(),
-                        local_name: local_name.clone(),
-                        on_select_peer,
-                        on_browse_page,
-                        links: filtered_links,
-                        interfaces: interfaces.clone(),
+                }
+                if connected && (selected_row.is_some() || *actions_open.read()) {
+                    aside {
+                        class: "network-detail",
+                        aria_label: "Network selection",
+                        button {
+                            class: "network-detail-close",
+                            onclick: move |_| {
+                                selected.set(None);
+                                actions_open.set(false);
+                            },
+                            "Close details"
+                        }
+                        if let Some(row) = selected_row.clone() {
+                            h3 { "{row.name}" }
+                            p { class: "network-detail-kind", "{row.kind}" }
+                            CopyIdentifier { value: row.key.split_once(':').map_or(row.key.as_str(), |(_, value)| value).to_string() }
+                            dl {
+                                for (label, value) in row.details.iter() {
+                                    dt { "{label}" }
+                                    dd { "{value}" }
+                                }
+                            }
+                            if !row.destination.is_empty() {
+                                button {
+                                    class: "network-mode",
+                                    onclick: {
+                                        let destination = row.destination.clone();
+                                        move |_| on_select_peer.call(destination.clone())
+                                    },
+                                    "Message"
+                                }
+                            }
+                            if row.can_browse {
+                                button {
+                                    class: "network-mode",
+                                    onclick: {
+                                        let destination = row.destination.clone();
+                                        move |_| on_browse_page.call(destination.clone())
+                                    },
+                                    "Browse content"
+                                }
+                            }
+                            details { class: "network-advanced",
+                                summary { "Diagnostics" }
+                                code { "{row.diagnostics}" }
+                            }
+                        }
+                        if *actions_open.read() {
+                            section { class: "network-operations contextual-operations",
+                                div { class: "network-operation-heading",
+                                    div {
+                                        h2 { "Actions" }
+                                    }
+                                    match network_availability {
+                                        NetworkAvailability::Available => rsx! {
+                                            span { class: "network-operation-status available", "Available" }
+                                        },
+                                        NetworkAvailability::PartiallyAvailable => rsx! {
+                                            span { class: "network-operation-status partial", "Partially available" }
+                                        },
+                                        NetworkAvailability::ReadOnly => rsx! {
+                                            span {
+                                                id: "network-operation-disabled",
+                                                class: "network-operation-status unavailable",
+                                                "Read-only"
+                                            }
+                                        },
+                                    }
+                                }
+                                details { class: "network-advanced",
+                                    summary { "Advanced targeting" }
+                                    div { class: "network-operation-inputs",
+                                        label { class: "network-operation-field",
+                                            span { "Destination hash" }
+                                            input {
+                                                placeholder: "Enter a destination hash",
+                                                value: "{target}",
+                                                oninput: move |event| target.set(event.value()),
+                                            }
+                                        }
+                                        label { class: "network-operation-field",
+                                            span { "Link control ID" }
+                                            input {
+                                                placeholder: "Link to probe or close",
+                                                value: "{link_control_id}",
+                                                oninput: move |event| link_control_id.set(event.value()),
+                                            }
+                                        }
+
+                                    }
+                                }
+                                div { class: "network-operation-actions",
+                                    for (kind, label) in DISPLAYED_NETWORK_OPERATIONS
+                                        .into_iter()
+                                        .filter(|(kind, _)| {
+                                            match kind {
+                                                NetworkOperationKind::Announce => selected.read().is_none(),
+                                                NetworkOperationKind::PathRequest | NetworkOperationKind::LinkOpen => {
+                                                    !target.read().is_empty()
+                                                }
+                                                NetworkOperationKind::Probe | NetworkOperationKind::LinkClose => {
+                                                    !link_control_id.read().is_empty()
+                                                }
+                                                _ => false,
+                                            }
+                                        })
+                                    {
+                                        {
+                                            let destructive = kind == NetworkOperationKind::LinkClose;
+                                            let action = SafetyAction::operate(
+                                                network_operation_capability(kind),
+                                                destructive,
+                                            );
+                                            let destination = target.read().trim().to_string();
+                                            let selected_link = link_control_id.read().trim().to_string();
+                                            let input_missing = operation_input_missing(kind, &destination, &selected_link);
+                                            let authorization = safety_policy
+                                                .read()
+                                                .authorization(ControlPlane::Operate, &action);
+                                            let disabled = authorization.is_err() || input_missing;
+                                            let input_hint = if matches!(
+                                                kind,
+                                                NetworkOperationKind::Probe | NetworkOperationKind::LinkClose
+                                            ) {
+                                                "Requires an active link ID"
+                                            } else if kind == NetworkOperationKind::Announce {
+                                                "No destination required"
+                                            } else {
+                                                "Requires a destination hash"
+                                            };
+                                            let guidance = authorization
+                                                .as_ref()
+                                                .err()
+                                                .map_or(input_hint, |denial| denial.operator_message());
+                                            rsx! {
+                                                div { class: "network-action-tile",
+                                                    button {
+                                                        class:
+                                                        if destructive {
+                                                            "network-operation-button danger"
+                                                        } else {
+                                                            "network-operation-button"
+                                                        },
+                                                        disabled,
+                                                        title:
+                                                        if input_missing {
+                                                            input_hint
+                                                        } else if let Err(denial) = &authorization {
+                                                            denial.operator_message()
+                                                        } else {
+                                                            "Submit typed daemon operation"
+                                                        },
+                                                        aria_describedby: disabled.then_some("network-action-guidance"),
+                                                        aria_label: format!(
+                                                            "{label} using {}",
+                                                            if matches!(
+                                                                kind,
+                                                                NetworkOperationKind::Probe | NetworkOperationKind::LinkClose
+                                                            ) {
+                                                                selected_link.as_str()
+                                                            } else {
+                                                                destination.as_str()
+                                                            },
+                                                        ),
+                                                        onclick: move |_| {
+                                                            let mut request = StartNetworkOperationInfo::default();
+                                                            request.kind = kind;
+                                                            request.timeout_ms = 15_000;
+                                                            if matches!(
+                                                                kind,
+                                                                NetworkOperationKind::PathRequest | NetworkOperationKind::LinkOpen
+                                                            ) && !destination.is_empty()
+                                                            {
+                                                                request.destination_hash = Some(destination.clone());
+                                                            }
+                                                            if matches!(kind, NetworkOperationKind::Probe | NetworkOperationKind::LinkClose)
+                                                                && !selected_link.is_empty()
+                                                            {
+                                                                request.link_id = Some(selected_link.clone());
+                                                            }
+                                                            let command = DaemonCommand::StartNetworkOperation(request);
+                                                            if action.is_destructive() {
+                                                                if let Some(pending) = network_confirmation(
+                                                                    &safety_policy.read(),
+                                                                    label,
+                                                                    if selected_link.is_empty() {
+                                                                        destination.clone()
+                                                                    } else {
+                                                                        selected_link.clone()
+                                                                    },
+                                                                    "timeout=15000 ms",
+                                                                    "Closes the active link and interrupts traffic using it.",
+                                                                    action.clone(),
+                                                                    command,
+                                                                ) {
+                                                                    confirmation.set(Some(pending));
+                                                                }
+                                                            } else {
+                                                                on_network_command.call(command);
+                                                            }
+                                                        },
+                                                        "{label}"
+                                                    }
+                                                    small { "{guidance}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if !request_link_id.read().is_empty() {
+                                        {
+                                            let request_action = SafetyAction::operate("network.request", false);
+                                            let request_authorization = safety_policy
+                                                .read()
+                                                .authorization(ControlPlane::Operate, &request_action);
+                                            let request_input_missing = request_input_missing(
+                                                &request_link_id.read(),
+                                                &request_path.read(),
+                                            );
+                                            let request_disabled = request_authorization.is_err() || request_input_missing;
+                                            let request_guidance = request_authorization
+                                                .as_ref()
+                                                .err()
+                                                .map_or(
+                                                    "Requires a link ID and request path",
+                                                    |denial| denial.operator_message(),
+                                                );
+                                            rsx! {
+                                                details { class: "network-advanced",
+                                                    summary { "Native request" }
+                                                    div { class: "network-operation-inputs",
+                                        label { class: "network-operation-field",
+                                            span { "Request link ID" }
+                                            input {
+                                                placeholder: "Link for native request",
+                                                value: "{request_link_id}",
+                                                readonly: true,
+                                            }
+                                        }
+                                        label { class: "network-operation-field",
+                                            span { "Request path" }
+                                            input {
+                                                placeholder: "/request/path",
+                                                value: "{request_path}",
+                                                oninput: move |event| request_path.set(event.value()),
+                                            }
+                                        }
+                                        label { class: "network-operation-field",
+                                            span { "Request data" }
+                                            input {
+                                                placeholder: "Optional request payload",
+                                                value: "{request_data}",
+                                                oninput: move |event| request_data.set(event.value()),
+                                            }
+                                        }
+                                                    }
+
+                                                div { class: "network-action-tile",
+                                                    button {
+                                                        class: "network-operation-button",
+                                                        disabled: request_disabled,
+                                                        title:
+                                                        if request_link_id.read().trim().is_empty() {
+                                                            "Requires a request link ID"
+                                                        } else if request_path.read().trim().is_empty() {
+                                                            "Requires a request path"
+                                                        } else if let Err(denial) = &request_authorization {
+                                                            denial.operator_message()
+                                                        } else {
+                                                            "Send native request"
+                                                        },
+                                                        aria_describedby: request_disabled.then_some("network-action-guidance"),
+                                                        onclick: move |_| {
+                                                            let mut request = StartRequestInfo::default();
+                                                            request.link_id = request_link_id.read().trim().to_string();
+                                                            request.path = request_path.read().trim().to_string();
+                                                            request.data = request_data.read().as_bytes().to_vec();
+                                                            request.timeout_ms = 15_000;
+                                                            request.max_response_size = 4 * 1024 * 1024;
+                                                            on_network_command.call(DaemonCommand::StartRequest(request));
+                                                        },
+                                                        "Send request"
+                                                    }
+                                                    small { "{request_guidance}" }
+                                                }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                p {
+                                    id: "network-action-guidance",
+                                    class: "network-action-guidance",
+                                    "Unavailable actions need required input or permission from the active session."
+                                }
+                            }
+                        }
                     }
-                },
+                }
+            }
+            details { class: "network-activity",
+                summary {
+                    "Activity · {operations.len()} operations · {requests.len()} requests · {resources.len()} transfers"
+                }
+                if operations.is_empty() && requests.is_empty() && resources.is_empty() {
+                    p { "No operations recorded in this session." }
+                }
+                div { class: "network-observation-grid",
+                    if !operations.is_empty() {
+                        div { class: "network-observation-panel",
+                            h3 { "Operation observations" }
+                            if operations.is_empty() {
+                                p { class: "network-observation-empty",
+                                    "None recorded in this session."
+                                }
+                            }
+                            for operation in operations.iter().rev() {
+                                article { class: "network-observation",
+                                    strong { "{operation.kind.as_str()}" }
+                                    code { "{operation.operation_id}" }
+                                    span {
+                                        {
+                                            operation
+                                                .outcome
+                                                .map(|value| value.as_str())
+                                                .unwrap_or(operation.progress.as_str())
+                                        }
+                                    }
+                                    p { class: "network-observation-relations",
+                                        span {
+                                            {relationship_label("Link", operation.link_id.as_deref())}
+                                        }
+                                        span {
+                                            {
+                                                relationship_label(
+                                                    "Correlation",
+                                                    operation.observation.correlation_id.as_deref(),
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if let Some(detail) = &operation.detail {
+                                        p { "{detail}" }
+                                    }
+                                    if operation.cancellable && operation.outcome.is_none() {
+                                        button {
+                                            disabled: safety_policy
+                                                .read()
+                                                .authorization(ControlPlane::Operate, &SafetyAction::operate_session(true))
+                                                .is_err(),
+                                            title: safety_policy
+                                                .read()
+                                                .authorization(ControlPlane::Operate, &SafetyAction::operate_session(true))
+                                                .err()
+                                                .map_or("Confirm cancellation", |denial| denial.operator_message()),
+                                            aria_describedby: "network-action-guidance",
+                                            onclick: {
+                                                let id = operation.operation_id.clone();
+                                                let target = operation.operation_id.clone();
+                                                move |_| {
+                                                    let action = SafetyAction::operate_session(true);
+                                                    if let Some(pending) = network_confirmation(
+                                                        &safety_policy.read(),
+                                                        "Cancel operation",
+                                                        target.clone(),
+                                                        "cancel the selected operation ID",
+                                                        "Stops the in-flight network operation before it reaches a terminal outcome.",
+                                                        action,
+                                                        DaemonCommand::CancelNetworkOperation {
+                                                            operation_id: id.clone(),
+                                                        },
+                                                    ) {
+                                                        confirmation.set(Some(pending));
+                                                    }
+                                                }
+                                            },
+                                            aria_label: format!("Cancel {} operation {}", operation.kind.as_str(), operation.operation_id),
+                                            "Cancel"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !requests.is_empty() {
+                        div { class: "network-observation-panel",
+                            h3 { "Native requests" }
+                            if requests.is_empty() {
+                                p { class: "network-observation-empty",
+                                    "None recorded in this session."
+                                }
+                            }
+                            for request in requests.iter().rev() {
+                                article { class: "network-observation",
+                                    strong { "{request.path_hash}" }
+                                    code { "{request.request_id}" }
+                                    span {
+                                        {format!("{:?} · {:.0}%", request.state, request.progress * 100.0)}
+                                    }
+                                    p { class: "network-observation-relations",
+                                        span { {relationship_label("Link", nonempty(&request.link_id))} }
+                                        span {
+                                            {relationship_label("Request resource", request.request_resource_hash.as_deref())}
+                                        }
+                                        span {
+                                            {relationship_label("Response resource", request.resource_hash.as_deref())}
+                                        }
+                                        span {
+                                            {relationship_label("Correlation", request.observation.correlation_id.as_deref())}
+                                        }
+                                    }
+                                    if !request.state.is_terminal() {
+                                        button {
+                                            disabled: safety_policy
+                                                .read()
+                                                .authorization(
+                                                    ControlPlane::Operate,
+                                                    &SafetyAction::operate("network.request_cancel", true),
+                                                )
+                                                .is_err(),
+                                            title: safety_policy
+                                                .read()
+                                                .authorization(
+                                                    ControlPlane::Operate,
+                                                    &SafetyAction::operate("network.request_cancel", true),
+                                                )
+                                                .err()
+                                                .map_or("Confirm request cancellation", |denial| denial.operator_message()),
+                                            aria_describedby: "network-action-guidance",
+                                            onclick: {
+                                                let id = request.request_id.clone();
+                                                let target = request.request_id.clone();
+                                                move |_| {
+                                                    let action = SafetyAction::operate("network.request_cancel", true);
+                                                    if let Some(pending) = network_confirmation(
+                                                        &safety_policy.read(),
+                                                        "Cancel request",
+                                                        target.clone(),
+                                                        "cancel the selected request ID",
+                                                        "Stops the native request and discards any incomplete response.",
+                                                        action,
+                                                        DaemonCommand::CancelRequest {
+                                                            request_id: id.clone(),
+                                                        },
+                                                    ) {
+                                                        confirmation.set(Some(pending));
+                                                    }
+                                                }
+                                            },
+                                            aria_label: format!("Cancel request {}", request.request_id),
+                                            "Cancel"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !resources.is_empty() {
+                        div { class: "network-observation-panel",
+                            h3 { "Resource transfers" }
+                            if resources.is_empty() {
+                                p { class: "network-observation-empty",
+                                    "None recorded in this session."
+                                }
+                            }
+                            for resource in resources.iter().rev() {
+                                article { class: "network-observation",
+                                    strong { {format!("{:?}", resource.direction)} }
+                                    code { "{resource.resource_hash}" }
+                                    span {
+                                        {format!("{:?} · {:.0}%", resource.state, resource.progress * 100.0)}
+                                    }
+                                    span { "{resource.received_bytes}/{resource.total_bytes} bytes" }
+                                    p { class: "network-observation-relations",
+                                        span { {relationship_label("Link", nonempty(&resource.link_id))} }
+                                        span {
+                                            {
+                                                relationship_label("Correlation", resource.observation.correlation_id.as_deref())
+                                            }
+                                        }
+                                    }
+                                    if resource.cancellable && !resource.state.is_terminal() {
+                                        button {
+                                            disabled: safety_policy
+                                                .read()
+                                                .authorization(
+                                                    ControlPlane::Operate,
+                                                    &SafetyAction::operate("network.resource_cancel", true),
+                                                )
+                                                .is_err(),
+                                            title: safety_policy
+                                                .read()
+                                                .authorization(
+                                                    ControlPlane::Operate,
+                                                    &SafetyAction::operate("network.resource_cancel", true),
+                                                )
+                                                .err()
+                                                .map_or("Confirm resource cancellation", |denial| denial.operator_message()),
+                                            aria_describedby: "network-action-guidance",
+                                            onclick: {
+                                                let hash = resource.resource_hash.clone();
+                                                let target = resource.resource_hash.clone();
+                                                move |_| {
+                                                    let action = SafetyAction::operate("network.resource_cancel", true);
+                                                    if let Some(pending) = network_confirmation(
+                                                        &safety_policy.read(),
+                                                        "Cancel resource",
+                                                        target.clone(),
+                                                        "cancel the selected resource hash",
+                                                        "Stops this transfer and leaves the resource incomplete.",
+                                                        action,
+                                                        DaemonCommand::CancelResource {
+                                                            resource_hash: hash.clone(),
+                                                        },
+                                                    ) {
+                                                        confirmation.set(Some(pending));
+                                                    }
+                                                }
+                                            },
+                                            aria_label: format!("Cancel resource {}", resource.resource_hash),
+                                            "Cancel"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             if let Some(pending) = confirmation.read().clone() {
                 div { class: "confirmation-backdrop",
@@ -589,30 +1010,51 @@ pub fn NetworkPage(
                         role: "dialog",
                         aria_modal: "true",
                         aria_labelledby: "network-confirmation-title",
-                        onkeydown: move |event: KeyboardEvent| if event.key() == Key::Escape {
-                            confirmation.set(None);
+                        onkeydown: move |event: KeyboardEvent| {
+                            if event.key() == Key::Escape {
+                                confirmation.set(None);
+                            }
                         },
                         h2 { id: "network-confirmation-title", "Confirm {pending.label}" }
                         p { "Target: {pending.target}" }
                         p { "Parameters: {pending.parameters}" }
                         p { "Consequence: {pending.consequence}" }
                         div { class: "confirmation-actions",
-                            button { autofocus: true, onclick: move |_| confirmation.set(None), "Cancel" }
+                            button {
+                                autofocus: true,
+                                onclick: move |_| confirmation.set(None),
+                                "Cancel"
+                            }
                             button {
                                 class: "danger",
-                                disabled: safety_policy.read().confirm_authorization(ControlPlane::Operate, &pending.action, pending.token).is_err(),
+                                disabled: safety_policy
+                                    .read()
+                                    .confirm_authorization(ControlPlane::Operate, &pending.action, pending.token)
+                                    .is_err(),
                                 onclick: move |_| {
-                                    match safety_policy.read().confirm(ControlPlane::Operate, &pending.action, pending.token) {
+                                    match safety_policy
+                                        .read()
+                                        .confirm(ControlPlane::Operate, &pending.action, pending.token)
+                                    {
                                         Ok(()) => on_network_command.call(pending.command.clone()),
-                                        Err(error) => tracing::warn!(target: "dx::safety", %error, "network confirmation rejected"),
+                                        Err(error) => {
+                                            tracing::warn!(
+                                                target : "dx::safety", % error, "network confirmation rejected"
+                                            )
+                                        }
                                     }
                                     confirmation.set(None);
                                 },
                                 "Confirm"
                             }
                         }
-                        if let Err(denial) = safety_policy.read().confirm_authorization(ControlPlane::Operate, &pending.action, pending.token) {
-                            p { class: "control-disabled-reason", "Confirmation unavailable: {denial.operator_message()}" }
+                        if let Err(denial) = safety_policy
+                            .read()
+                            .confirm_authorization(ControlPlane::Operate, &pending.action, pending.token)
+                        {
+                            p { class: "control-disabled-reason",
+                                "Confirmation unavailable: {denial.operator_message()}"
+                            }
                         }
                     }
                 }
@@ -694,144 +1136,280 @@ fn relationship_label(label: &str, value: Option<&str>) -> String {
 }
 
 #[component]
-fn DiscoveryView(peers: Vec<PeerEntry>) -> Element {
+fn CopyIdentifier(value: String) -> Element {
+    let mut feedback = use_signal(String::new);
+    let short: String = value.chars().take(16).collect();
     rsx! {
-        div { class: "network-mode-content",
-            h2 { "Discovery Observations" }
-            p { class: "network-mode-description", "Accepted announces. Discovery does not imply a route or active link." }
-            if peers.is_empty() {
-                div { class: "network-mode-empty", "No peer observations match the current filters." }
-            } else {
-                div { class: "network-record-list",
-                    for peer in peers {
-                        article { class: "network-record",
-                            div { class: "network-record-primary",
-                                strong { {peer.name.as_deref().unwrap_or("Unnamed peer")} }
-                                code { "{peer.hash}" }
-                            }
-                            span { class: "network-record-kind", "{role_label(&peer.node_role)}" }
-                            span { "{peer.status}" }
-                            span { {peer.last_announce.map(format_epoch).unwrap_or_else(|| "unknown".into())} }
-                        }
-                    }
-                }
+        div { class: "network-identifier",
+            code { title: "{value}", "{short}…" }
+            button {
+                class: "network-mode",
+                onclick: move |_| {
+                    let Ok(encoded) = serde_json::to_string(&value) else {
+                        return;
+                    };
+                    spawn(async move {
+                        let script = format!(
+                            r#"
+                                        const value = {encoded};
+                                        try {{ await navigator.clipboard.writeText(value); return true; }} catch (_) {{}}
+                                        const field = document.createElement('textarea');
+                                        field.value = value; document.body.appendChild(field); field.select();
+                                        const copied = document.execCommand('copy'); field.remove(); return copied;
+                                    "#,
+                        );
+                        let copied = document::eval(&script).join::<bool>().await.unwrap_or(false);
+                        feedback
+                            .set(
+                                if copied {
+                                    "Copied"
+                                } else {
+                                    "Copy unavailable; select the identifier in Details."
+                                }
+                                    .into(),
+                            );
+                    });
+                },
+                "Copy ID"
             }
+            span { role: "status", "{feedback}" }
         }
     }
 }
 
-#[component]
-fn RoutesView(paths: Vec<PathEntry>, peers: Vec<PeerEntry>) -> Element {
-    rsx! {
-        div { class: "network-mode-content",
-            h2 { "Route Table" }
-            p { class: "network-mode-description", "Daemon-authoritative next hops and hop counts." }
-            if paths.is_empty() {
-                div { class: "network-mode-empty", "No routes match the current filters." }
-            } else {
-                div { class: "network-record-list",
-                    for path in paths {
-                        article { class: "network-record",
-                            div { class: "network-record-primary",
-                                strong { {peer_label(&peers, &path.destination_hash)} }
-                                code { "{path.destination_hash}" }
-                            }
-                            span { class: "network-record-kind", "{path.hops} hops" }
-                            span { "via {peer_label(&peers, &path.next_hop)}" }
-                            span { "{path.interface}" }
-                        }
-                    }
+#[derive(Clone, PartialEq)]
+struct InventoryRow {
+    key: String,
+    mode: NetworkMode,
+    name: String,
+    kind: String,
+    cells: Vec<String>,
+    details: Vec<(String, String)>,
+    diagnostics: String,
+    destination: String,
+    link_id: String,
+    can_browse: bool,
+}
+
+impl InventoryRow {
+    fn matches(&self, query: &str) -> bool {
+        query.is_empty()
+            || self.name.to_ascii_lowercase().contains(query)
+            || self.key.to_ascii_lowercase().contains(query)
+            || self.cells.iter().any(|cell| cell.to_ascii_lowercase().contains(query))
+    }
+}
+
+fn inventory_rows(
+    peers: &[PeerEntry],
+    paths: &[PathEntry],
+    links: &[LinkInfo],
+    interfaces: &[InterfaceInfo],
+    now: i64,
+) -> Vec<InventoryRow> {
+    let mut rows = Vec::new();
+    for peer in peers {
+        let route =
+            paths.iter().find(|path| path.destination_hash == peer.hash && !path.observation.stale);
+        let active_link = links.iter().find(|link| {
+            link.peer_hash == peer.hash && link.status == "active" && !link.observation.stale
+        });
+        let reachability = if active_link.is_some() {
+            "Link active"
+        } else if route.is_some() {
+            "Route known"
+        } else {
+            "Not established"
+        };
+        let heard = match peer.last_announce.filter(|time| *time > 0) {
+            Some(time) => {
+                let age = now.saturating_sub(time);
+                if age < 60 {
+                    "Just now".into()
+                } else if age < 3600 {
+                    format!("{} min ago", age / 60)
+                } else {
+                    format!("{} h ago", age / 3600)
                 }
             }
-        }
+            None => "Unknown".into(),
+        };
+        rows.push(InventoryRow {
+            key: format!("peer:{}", peer.hash),
+            mode: NetworkMode::Discovery,
+            name: peer
+                .name
+                .clone()
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| peer_label(peers, &peer.hash)),
+            kind: role_label(&peer.node_role).into(),
+            cells: vec![
+                role_label(&peer.node_role).into(),
+                reachability.into(),
+                heard.clone(),
+                route.map_or_else(|| "Unknown".into(), |route| route.interface.clone()),
+            ],
+            details: vec![
+                ("Destination".into(), peer.hash.clone()),
+                ("Reachability".into(), reachability.into()),
+                ("Last heard".into(), heard),
+                ("Capabilities".into(), peer.capabilities.join(", ")),
+            ],
+            diagnostics: format!(
+                "Announces: {}\nReported status: {}",
+                peer.announce_count, peer.status
+            ),
+            destination: peer.hash.clone(),
+            link_id: String::new(),
+            can_browse: matches!(peer.node_role, PeerRole::PageHost | PeerRole::Hub),
+        });
+    }
+    for path in paths {
+        rows.push(InventoryRow {
+            key: format!("route:{}", path.destination_hash),
+            mode: NetworkMode::Routes,
+            name: peer_label(peers, &path.destination_hash),
+            kind: "Route".into(),
+            cells: vec![
+                peer_label(peers, &path.next_hop),
+                path.hops.to_string(),
+                path.interface.clone(),
+                if path.observation.stale { "Stale" } else { "Observed" }.into(),
+            ],
+            details: vec![
+                ("Destination".into(), path.destination_hash.clone()),
+                ("Next hop".into(), path.next_hop.clone()),
+                ("Interface".into(), path.interface.clone()),
+            ],
+            diagnostics: format!("{:?}", path.observation),
+            destination: path.destination_hash.clone(),
+            link_id: String::new(),
+            can_browse: false,
+        });
+    }
+    for link in links {
+        rows.push(InventoryRow {
+            key: format!("link:{}", link.link_id),
+            mode: NetworkMode::Links,
+            name: peer_label(peers, &link.peer_hash),
+            kind: "Link".into(),
+            cells: vec![
+                if link.status.is_empty() { "Unknown".into() } else { link.status.clone() },
+                link.rtt_ms.map_or_else(|| "Unknown".into(), |rtt| format!("{rtt:.0} ms")),
+                if link.observation.stale { "Stale" } else { "Observed" }.into(),
+                link.link_id.chars().take(12).collect(),
+            ],
+            details: vec![
+                ("Peer".into(), link.peer_hash.clone()),
+                ("Link ID".into(), link.link_id.clone()),
+                ("State".into(), link.status.clone()),
+            ],
+            diagnostics: format!("{:?}\n{:?}", link.activity, link.observation),
+            destination: link.peer_hash.clone(),
+            link_id: link.link_id.clone(),
+            can_browse: false,
+        });
+    }
+    for interface in interfaces {
+        rows.push(InventoryRow {
+            key: format!("interface:{}", interface.hash),
+            mode: NetworkMode::Interfaces,
+            name: interface.name.clone(),
+            kind: interface.kind.clone(),
+            cells: vec![
+                interface.kind.clone(),
+                if interface.status.is_empty() {
+                    "Unknown".into()
+                } else {
+                    interface.status.clone()
+                },
+                format_bytes(interface.tx_bytes),
+                format_bytes(interface.rx_bytes),
+            ],
+            details: vec![
+                (
+                    "Local endpoint".into(),
+                    interface.local_endpoint.clone().unwrap_or_else(|| "Unknown".into()),
+                ),
+                (
+                    "Remote endpoint".into(),
+                    interface.remote_endpoint.clone().unwrap_or_else(|| "Not reported".into()),
+                ),
+                ("Mode".into(), interface.mode.clone()),
+                ("Enabled".into(), interface.enabled.to_string()),
+                ("Connected peers".into(), interface.peers_connected.to_string()),
+            ],
+            diagnostics: format!("{}\n{:?}", interface.hash, interface.observation),
+            destination: String::new(),
+            link_id: String::new(),
+            can_browse: false,
+        });
+    }
+    rows.sort_by(|left, right| {
+        left.name
+            .to_ascii_lowercase()
+            .cmp(&right.name.to_ascii_lowercase())
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    rows
+}
+
+fn empty_title(mode: NetworkMode) -> &'static str {
+    match mode {
+        NetworkMode::Discovery => "No peers observed yet",
+        NetworkMode::Interfaces => "No interface telemetry",
+        NetworkMode::Routes => "No routes observed",
+        NetworkMode::Links => "No links observed",
+        NetworkMode::Combined => "No topology observations",
     }
 }
 
 #[component]
-fn LinksView(
-    links: Vec<LinkInfo>,
-    peers: Vec<PeerEntry>,
-    on_use_for_control: EventHandler<String>,
-    on_use_for_request: EventHandler<String>,
+fn InventoryTable(
+    rows: Vec<InventoryRow>,
+    mode: NetworkMode,
+    selected: Option<String>,
+    on_select: EventHandler<InventoryRow>,
 ) -> Element {
+    let headings = match mode {
+        NetworkMode::Discovery => ["Peer", "Role", "Reachability", "Last heard", "Interface"],
+        NetworkMode::Routes => ["Destination", "Next hop", "Hops", "Interface", "Observation"],
+        NetworkMode::Links => ["Peer", "State", "RTT", "Observation", "Link"],
+        NetworkMode::Interfaces => ["Interface", "Type", "State", "Sent", "Received"],
+        NetworkMode::Combined => ["Node", "Role", "Reachability", "Last heard", "Interface"],
+    };
     rsx! {
-        div { class: "network-mode-content",
-            h2 { "Link Lifecycle" }
-            p { class: "network-mode-description", "Observed RNS link state and round-trip telemetry." }
-            if links.is_empty() {
-                div { class: "network-mode-empty", "No links match the current filters." }
-            } else {
-                div { class: "network-record-list",
-                    for link in links {
-                        article { class: "network-record",
-                            div { class: "network-record-primary",
-                                strong { {peer_label(&peers, &link.peer_hash)} }
-                                code { "{link.peer_hash}" }
-                            }
-                            span { class: "network-record-kind", "{link.status}" }
-                            span { {format!("{:?}", link.activity)} }
-                            code { "{link.link_id}" }
-                            span { {link.rtt_ms.map(|value| format!("{value:.0} ms")).unwrap_or_else(|| "RTT unknown".into())} }
-                            span { {if link.observation.stale { "stale".to_string() } else { format_epoch(link.timestamp) }} }
-                            span { {relationship_label("Correlation", link.observation.correlation_id.as_deref())} }
-                            div { class: "network-record-actions",
-                                button {
-                                    onclick: {
-                                        let id = link.link_id.clone();
-                                        move |_| on_use_for_control.call(id.clone())
-                                    },
-                                    "Use for controls"
-                                }
-                                button {
-                                    onclick: {
-                                        let id = link.link_id.clone();
-                                        move |_| on_use_for_request.call(id.clone())
-                                    },
-                                    "Use for request"
-                                }
-                            }
-                        }
+        table { class: "network-table",
+            caption { class: "sr-only", "Network inventory. Select a name to inspect its details." }
+            thead {
+                tr {
+                    for heading in headings {
+                        th { scope: "col", "{heading}" }
                     }
                 }
             }
-        }
-    }
-}
-
-#[component]
-fn InterfacesView(interfaces: Vec<InterfaceInfo>) -> Element {
-    rsx! {
-        div { class: "network-mode-content",
-            h2 { "Transport Interfaces" }
-            p { class: "network-mode-description", "Configured transport interfaces and observed byte counters." }
-            if interfaces.is_empty() {
-                div { class: "network-mode-empty", "No interface telemetry is available." }
-            } else {
-                div { class: "network-record-list",
-                    for interface in interfaces {
-                        article { class: "network-record",
-                            div { class: "network-record-primary",
-                                strong { "{interface.name}" }
-                                code { "{interface.hash}" }
+            tbody {
+                for row in rows {
+                    tr {
+                        key: "{row.key}",
+                        class:
+                        if selected.as_deref() == Some(row.key.as_str()) {
+                            "selected"
+                        } else {
+                            ""
+                        },
+                        td {
+                            button {
+                                class: "network-row-select",
+                                onclick: {
+                                    let row = row.clone();
+                                    move |_| on_select.call(row.clone())
+                                },
+                                "{row.name}"
                             }
-                            span { class: "network-record-kind", "{interface.status}" }
-                            span { "type {interface.kind} · mode {interface.mode} · enabled {interface.enabled}" }
-                            span { {format!("local {}", interface.local_endpoint.as_deref().unwrap_or("unknown"))} }
-                            span { {format!("remote {}", interface.remote_endpoint.as_deref().unwrap_or("unknown"))} }
-                            span { {format!("host {} · port {}", interface.host.as_deref().unwrap_or("unknown"), interface.port.map(|value| value.to_string()).unwrap_or_else(|| "unknown".into()))} }
-                            span { {format!("parent {} · peers {}", interface.parent_hash.as_deref().unwrap_or("none"), interface.peers_connected)} }
-                            span { "TX {format_bytes(interface.tx_bytes)}" }
-                            span { "RX {format_bytes(interface.rx_bytes)}" }
-                            span { {format!(
-                                "source {:?} · observed {:?} · age {:?} · threshold {:?} · stale {} · generation {:?} · correlation {}",
-                                interface.observation.source,
-                                interface.observation.observed_at,
-                                interface.observation.age_secs,
-                                interface.observation.freshness_threshold_secs,
-                                interface.observation.stale,
-                                interface.observation.connection_generation,
-                                interface.observation.correlation_id.as_deref().unwrap_or("none")
-                            )} }
+                        }
+                        for cell in &row.cells {
+                            td { "{cell}" }
                         }
                     }
                 }
@@ -851,11 +1429,11 @@ fn role_matches(peer: &PeerEntry, filter: RoleFilter) -> bool {
 }
 
 fn status_matches(peer: &PeerEntry, filter: StatusFilter) -> bool {
-    let online = peer.status != "offline" && !peer.status.is_empty();
+    let online = peer.status == "online";
     match filter {
         StatusFilter::All => true,
         StatusFilter::Online => online,
-        StatusFilter::Offline => !online,
+        StatusFilter::Offline => peer.status == "offline",
     }
 }
 
@@ -913,10 +1491,6 @@ fn peer_label(peers: &[PeerEntry], hash: &str) -> String {
         .unwrap_or_else(|| hash[..8.min(hash.len())].to_string())
 }
 
-fn format_epoch(timestamp: i64) -> String {
-    if timestamp <= 0 { "unknown".into() } else { format!("epoch {timestamp}") }
-}
-
 fn format_bytes(bytes: u64) -> String {
     if bytes < 1024 {
         format!("{bytes} B")
@@ -943,6 +1517,45 @@ mod tests {
             last_announce,
             announce_count: 1,
         }
+    }
+
+    #[test]
+    fn unknown_peer_status_is_not_offline() {
+        let value = peer(PeerRole::Rns, "", None);
+        assert!(!status_matches(&value, StatusFilter::Online));
+        assert!(!status_matches(&value, StatusFilter::Offline));
+        let rows = inventory_rows(&[value], &[], &[], &[], 10_000);
+        assert_eq!(rows[0].cells[1], "Not established");
+        assert_eq!(rows[0].cells[2], "Unknown");
+    }
+
+    #[test]
+    fn inventories_preserve_routes_and_links_without_discovery() {
+        let path = PathEntry {
+            destination_hash: "undiscovered".into(),
+            hops: 2,
+            next_hop: "relay".into(),
+            interface: "Radio".into(),
+            expires: None,
+            observation: Default::default(),
+        };
+        let link = LinkInfo {
+            link_id: "link-1".into(),
+            peer_hash: "undiscovered".into(),
+            status: "active".into(),
+            activity: styrene_ipc::types::LinkActivity::Active,
+            rtt_ms: None,
+            timestamp: 1,
+            observation: Default::default(),
+        };
+        let rows = inventory_rows(&[], &[path], &[link], &[], 10_000);
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row.mode == NetworkMode::Routes && row.matches("radio")));
+        let link = rows.iter().find(|row| row.mode == NetworkMode::Links).expect("link inventory");
+        assert_eq!(link.link_id, "link-1");
+        assert_eq!(link.destination, "undiscovered");
+        assert_eq!(link.cells[1], "Unknown");
+        assert!(!link.matches("unrelated"));
     }
 
     #[test]
