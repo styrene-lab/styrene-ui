@@ -48,6 +48,14 @@ enum FreshnessFilter {
     Unknown,
 }
 
+#[derive(Clone, Copy, Default, PartialEq)]
+enum PeerSort {
+    #[default]
+    Reachable,
+    Recent,
+    Name,
+}
+
 #[derive(Clone)]
 struct NetworkConfirmation {
     label: String,
@@ -115,6 +123,7 @@ pub fn NetworkPage(
     let mut role = use_signal(RoleFilter::default);
     let mut peer_status = use_signal(StatusFilter::default);
     let mut freshness = use_signal(FreshnessFilter::default);
+    let mut peer_sort = use_signal(PeerSort::default);
     let mut target = use_signal(String::new);
     let mut link_control_id = use_signal(String::new);
     let mut request_link_id = use_signal(String::new);
@@ -201,14 +210,7 @@ pub fn NetworkPage(
     let filtered_peers: Vec<PeerEntry> = peers
         .iter()
         .filter(|peer| {
-            (query_value.is_empty()
-                || peer.hash.to_ascii_lowercase().contains(&query_value)
-                || peer
-                    .name
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase()
-                    .contains(&query_value))
+            peer_matches_query(peer, &query_value)
                 && (capability_value.is_empty()
                     || peer
                         .capabilities
@@ -276,16 +278,21 @@ pub fn NetworkPage(
         link_id: String::new(),
         can_browse: false,
     });
-    let visible_rows: Vec<_> = all_rows
+    let mut visible_rows: Vec<_> = all_rows
         .iter()
         .filter(|row| {
             row.mode == *mode.read()
-                && row.matches(&query_value)
-                && (row.mode != NetworkMode::Discovery
-                    || filtered_peers.iter().any(|peer| peer.hash == row.destination))
+                && if row.mode == NetworkMode::Discovery {
+                    filtered_peers.iter().any(|peer| peer.hash == row.destination)
+                } else {
+                    row.matches(&query_value)
+                }
         })
         .cloned()
         .collect();
+    if *mode.read() == NetworkMode::Discovery {
+        sort_peer_rows(&mut visible_rows, &peers, *peer_sort.read());
+    }
     let mut selected_for_map = all_rows.clone();
     if let Some(inventory) = &interface_inventory {
         let mut entities = std::collections::BTreeMap::<String, Vec<_>>::new();
@@ -338,7 +345,7 @@ pub fn NetworkPage(
         target.set(row.destination.clone());
         link_control_id.set(row.link_id.clone());
         request_link_id.set(row.link_id.clone());
-        actions_open.set(!matches!(row.mode, NetworkMode::Interfaces | NetworkMode::Combined));
+        actions_open.set(matches!(row.mode, NetworkMode::Routes | NetworkMode::Links));
         selected.set(Some(row.key));
     };
     let local_only = !interfaces.is_empty()
@@ -349,13 +356,17 @@ pub fn NetworkPage(
         });
 
     rsx! {
-        div { class: if *mode.read() == NetworkMode::Combined { "network-page network-map-page" } else { "network-page" },
+        div { class: match *mode.read() { NetworkMode::Combined => "network-page network-map-page", NetworkMode::Discovery => "network-page network-peers-page", _ => "network-page" },
             header { class: "network-heading",
                 div {
-                    h2 { "Network" }
+                    h2 { if *mode.read() == NetworkMode::Discovery { "Peers" } else { "Network" } }
                     p {
                         if connected {
-                            "Interfaces: {interface_count} · Observed peers: {peers.len()} · Routes: {paths.len()} · Link records: {links.len()}"
+                            if *mode.read() == NetworkMode::Discovery {
+                                "{peers.len()} discovered destinations · Route availability is separate from reported online status."
+                            } else {
+                                "Interfaces: {interface_count} · Observed peers: {peers.len()} · Routes: {paths.len()} · Link records: {links.len()}"
+                            }
                         } else {
                             "Disconnected · Network observations unavailable"
                         }
@@ -421,20 +432,34 @@ pub fn NetworkPage(
             div { class: "network-filter-bar",
                 input {
                     aria_label: "Search current network inventory",
-                    placeholder: if *mode.read() == NetworkMode::Combined { "Find a destination…" } else { "Search this view…" },
+                    placeholder: if *mode.read() == NetworkMode::Discovery { "Name, identity, destination, capability…" } else if *mode.read() == NetworkMode::Combined { "Find a destination…" } else { "Search this view…" },
                     value: "{query}",
                     oninput: move |event| query.set(event.value()),
                 }
                 if *mode.read() == NetworkMode::Discovery {
+                    select {
+                        aria_label: "Sort peers",
+                        value: match *peer_sort.read() { PeerSort::Reachable => "reachable", PeerSort::Recent => "recent", PeerSort::Name => "name" },
+                        onchange: move |event| peer_sort.set(match event.value().as_str() { "recent" => PeerSort::Recent, "name" => PeerSort::Name, _ => PeerSort::Reachable }),
+                        option { value: "reachable", "Reachable first" }
+                        option { value: "recent", "Recently heard" }
+                        option { value: "name", "Name A–Z" }
+                    }
                     button {
                         class: "network-mode",
                         aria_expanded: "{filters_open}",
                         onclick: move |_| filters_open.toggle(),
-                        "Filters"
+                        if *role.read() != RoleFilter::All || *peer_status.read() != StatusFilter::All || *freshness.read() != FreshnessFilter::All || !capability_value.is_empty() { "Filters · active" } else { "Filters" }
+                    }
+                    if !query_value.is_empty() || !capability_value.is_empty() || *role.read() != RoleFilter::All || *peer_status.read() != StatusFilter::All || *freshness.read() != FreshnessFilter::All {
+                        button { class: "network-mode", onclick: move |_| {
+                            query.set(String::new()); capability.set(String::new()); role.set(RoleFilter::All); peer_status.set(StatusFilter::All); freshness.set(FreshnessFilter::All);
+                        }, "Clear filters" }
                     }
                     if *filters_open.read() {
                         select {
                             aria_label: "Filter by role",
+                            value: match *role.read() { RoleFilter::All => "all", RoleFilter::Styrene => "styrene", RoleFilter::Hub => "hub", RoleFilter::PageHost => "pages", RoleFilter::Rns => "rns" },
                             onchange: move |event| role.set(parse_role(&event.value())),
                             option { value: "all", "All roles" }
                             option { value: "styrene", "Styrene" }
@@ -444,13 +469,15 @@ pub fn NetworkPage(
                         }
                         select {
                             aria_label: "Filter by status",
+                            value: match *peer_status.read() { StatusFilter::All => "all", StatusFilter::Online => "online", StatusFilter::Offline => "offline" },
                             onchange: move |event| peer_status.set(parse_status(&event.value())),
-                            option { value: "all", "All status" }
-                            option { value: "online", "Online" }
-                            option { value: "offline", "Offline" }
+                            option { value: "all", "All reported status" }
+                            option { value: "online", "Reported online" }
+                            option { value: "offline", "Reported offline" }
                         }
                         select {
                             aria_label: "Filter by freshness",
+                            value: match *freshness.read() { FreshnessFilter::All => "all", FreshnessFilter::Recent => "recent", FreshnessFilter::Stale => "stale", FreshnessFilter::Unknown => "unknown" },
                             onchange: move |event| freshness.set(parse_freshness(&event.value())),
                             option { value: "all", "All freshness" }
                             option { value: "recent", "Recent <1h" }
@@ -1345,6 +1372,40 @@ impl InventoryRow {
     }
 }
 
+fn peer_matches_query(peer: &PeerEntry, query: &str) -> bool {
+    query.is_empty()
+        || peer.hash.to_ascii_lowercase().contains(query)
+        || peer
+            .identity_hash
+            .as_deref()
+            .is_some_and(|value| value.to_ascii_lowercase().contains(query))
+        || peer.name.as_deref().is_some_and(|value| value.to_ascii_lowercase().contains(query))
+        || peer.capabilities.iter().any(|value| value.to_ascii_lowercase().contains(query))
+}
+
+fn sort_peer_rows(rows: &mut [InventoryRow], peers: &[PeerEntry], order: PeerSort) {
+    let heard: std::collections::HashMap<_, _> = peers
+        .iter()
+        .map(|peer| (peer.hash.as_str(), peer.last_announce.filter(|time| *time > 0).unwrap_or(0)))
+        .collect();
+    let rank = |row: &InventoryRow| match row.cells.get(1).map(String::as_str) {
+        Some("Link active") => 0,
+        Some("Route known") => 1,
+        _ => 2,
+    };
+    rows.sort_by(|a, b| {
+        let recent = || heard.get(b.destination.as_str()).cmp(&heard.get(a.destination.as_str()));
+        let primary = match order {
+            PeerSort::Reachable => rank(a).cmp(&rank(b)).then_with(recent),
+            PeerSort::Recent => recent(),
+            PeerSort::Name => std::cmp::Ordering::Equal,
+        };
+        primary
+            .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+            .then_with(|| a.key.cmp(&b.key))
+    });
+}
+
 fn inventory_rows(
     peers: &[PeerEntry],
     paths: &[PathEntry],
@@ -1354,8 +1415,11 @@ fn inventory_rows(
 ) -> Vec<InventoryRow> {
     let mut rows = Vec::new();
     for peer in peers {
-        let route =
-            paths.iter().find(|path| path.destination_hash == peer.hash && !path.observation.stale);
+        let route = paths.iter().find(|path| {
+            path.destination_hash == peer.hash
+                && !path.observation.stale
+                && path.expires.is_none_or(|expiry| expiry > now)
+        });
         let active_link = links.iter().find(|link| {
             link.peer_hash == peer.hash && link.status == "active" && !link.observation.stale
         });
@@ -1364,7 +1428,7 @@ fn inventory_rows(
         } else if route.is_some() {
             "Route known"
         } else {
-            "Not established"
+            "No current route"
         };
         let heard = match peer.last_announce.filter(|time| *time > 0) {
             Some(time) => {
@@ -1373,8 +1437,10 @@ fn inventory_rows(
                     "Just now".into()
                 } else if age < 3600 {
                     format!("{} min ago", age / 60)
-                } else {
+                } else if age < 86400 {
                     format!("{} h ago", age / 3600)
+                } else {
+                    format!("{} d ago", age / 86400)
                 }
             }
             None => "Unknown".into(),
@@ -1392,13 +1458,41 @@ fn inventory_rows(
                 role_label(&peer.node_role).into(),
                 reachability.into(),
                 heard.clone(),
-                route.map_or_else(|| "Unknown".into(), |route| route.interface.clone()),
+                route.map_or_else(
+                    || "—".into(),
+                    |route| {
+                        interfaces
+                            .iter()
+                            .find(|interface| {
+                                interface.hash == route.interface
+                                    || interface.name == route.interface
+                            })
+                            .map_or_else(
+                                || route.interface.clone(),
+                                |interface| interface.name.clone(),
+                            )
+                    },
+                ),
             ],
             details: vec![
                 ("Destination".into(), peer.hash.clone()),
+                (
+                    "Mesh identity".into(),
+                    peer.identity_hash
+                        .clone()
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or_else(|| "Not included in discovery record".into()),
+                ),
                 ("Reachability".into(), reachability.into()),
                 ("Last heard".into(), heard),
-                ("Capabilities".into(), peer.capabilities.join(", ")),
+                (
+                    "Capabilities".into(),
+                    if peer.capabilities.is_empty() {
+                        "None reported".into()
+                    } else {
+                        peer.capabilities.join(", ")
+                    },
+                ),
             ],
             diagnostics: format!(
                 "Announces: {}\nReported status: {}",
@@ -1552,6 +1646,9 @@ fn InventoryTable(
                                 },
                                 "{row.name}"
                             }
+                            if mode == NetworkMode::Discovery {
+                                code { class: "network-peer-address", title: "{row.destination}", {row.destination.chars().take(12).collect::<String>()} }
+                            }
                         }
                         for cell in &row.cells {
                             td { "{cell}" }
@@ -1665,12 +1762,55 @@ mod tests {
     }
 
     #[test]
+    fn peer_search_includes_identity_and_capabilities() {
+        let mut value = peer(PeerRole::Rns, "", None);
+        value.identity_hash = Some("abc123identity".into());
+        assert!(peer_matches_query(&value, "123identity"));
+        assert!(peer_matches_query(&value, "pages"));
+        assert!(!peer_matches_query(&value, "unrelated"));
+    }
+
+    #[test]
+    fn reachable_sort_uses_current_routes_and_recent_sort_uses_announce_time() {
+        let mut recent = peer(PeerRole::Rns, "online", Some(900));
+        recent.hash = "recent".into();
+        recent.name = Some("Alpha".into());
+        let mut routed = peer(PeerRole::Rns, "", Some(100));
+        routed.hash = "routed".into();
+        routed.name = Some("Zulu".into());
+        let peers = vec![recent, routed];
+        let mut path = PathEntry {
+            destination_hash: "routed".into(),
+            hops: 1,
+            next_hop: "routed".into(),
+            interface: "tcp".into(),
+            expires: Some(1100),
+            observation: Default::default(),
+        };
+        let mut rows = inventory_rows(&peers, &[path.clone()], &[], &[], 1000);
+        rows.retain(|row| row.mode == NetworkMode::Discovery);
+        sort_peer_rows(&mut rows, &peers, PeerSort::Reachable);
+        assert_eq!(rows[0].destination, "routed");
+        sort_peer_rows(&mut rows, &peers, PeerSort::Recent);
+        assert_eq!(rows[0].destination, "recent");
+        path.expires = Some(1000);
+        let rows = inventory_rows(&peers, &[path], &[], &[], 1000);
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.key == "peer:routed")
+                .expect("routed peer remains in inventory")
+                .cells[1],
+            "No current route"
+        );
+    }
+
+    #[test]
     fn unknown_peer_status_is_not_offline() {
         let value = peer(PeerRole::Rns, "", None);
         assert!(!status_matches(&value, StatusFilter::Online));
         assert!(!status_matches(&value, StatusFilter::Offline));
         let rows = inventory_rows(&[value], &[], &[], &[], 10_000);
-        assert_eq!(rows[0].cells[1], "Not established");
+        assert_eq!(rows[0].cells[1], "No current route");
         assert_eq!(rows[0].cells[2], "Unknown");
     }
 

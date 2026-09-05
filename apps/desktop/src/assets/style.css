@@ -2846,10 +2846,10 @@ body {
 .network-heading p { margin: 0; color: #abb5c1; font-size: 14px; }
 .network-page button, .network-page input, .network-page select { font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, sans-serif); font-size: 14px; }
 .network-action-menu, .network-map-tools button { padding: 8px 14px; color: var(--text); background: var(--bg-secondary, #171c22); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
-.network-mode-bar { padding: 0 28px; gap: 24px; background: transparent; }
+.network-mode-bar { order: -1; min-height: 56px; box-sizing: border-box; flex: 0 0 auto; padding: 0 20px; gap: 20px; background: transparent; }
 .network-mode-bar .network-mode { padding: 12px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; font-size: 15px; color: #abb5c1; }
 .network-mode-bar .network-mode.active { border-bottom-color: var(--accent); color: var(--accent); }
-.network-mode-bar .network-mode:last-child { margin-left: auto; }
+.network-mode-bar .network-mode:last-child { margin-left: 0; }
 .network-filter-bar { padding: 14px 28px; gap: 10px; background: transparent; flex-wrap: wrap; }
 .network-filter-bar input:first-child { width: 300px; max-width: 100%; }
 .network-filter-bar input, .network-filter-bar select { min-height: 36px; color: var(--text); }
@@ -2909,8 +2909,7 @@ body {
   .network-workspace.inspecting .network-inventory { display: none; }
   .network-detail { border-left: 0; }
   .network-heading { padding: 18px; }
-  .network-filter-bar, .network-mode-bar { padding-left: 18px; padding-right: 18px; }
-  .network-mode-bar { gap: 16px; }
+  .network-filter-bar { padding-left: 18px; padding-right: 18px; }
   .network-map-legend { display: none; }
   .network-page .network-view { min-height: 440px; }
   .connection-menu .profile-config { width: min(360px, 80vw); }
@@ -2933,6 +2932,15 @@ body {
 .network-identity-destinations { display: flex; flex-direction: column; gap: 8px; }
 .network-identity-destinations > span { color: #9aa8b8; font-size: 12px; }
 .network-identity-destinations > button { color: var(--accent); font-size: 13px; }
+.network-peers-page .network-heading { padding: 16px 28px 10px; }
+.network-peers-page .network-heading h2 { font-size: 22px; }
+.network-peers-page .network-heading p { font-size: 13px; }
+.network-peers-page .network-filter-bar input:first-child { width: min(360px, 100%); }
+.network-peers-page .network-filter-count { margin-left: auto; }
+.network-peers-page .network-table td { padding-top: 12px; padding-bottom: 12px; }
+.network-peers-page .network-table th:first-child { width: 34%; }
+.network-peer-address { display: block; color: #9aa8b8; font-size: 11px; font-weight: normal; margin-top: 5px; }
+.network-peers-page .network-table td:not(:first-child) { font-size: 13px; }
 
 /* Operator-owned interface inventory and type-specific editors. */
 .interface-manager { flex: 1; min-height: 440px; }
@@ -3008,13 +3016,13 @@ body {
 .network-map-page {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    grid-template-areas: "modes search actions" "workspace workspace workspace" "activity activity activity";
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas: "modes modes modes" "search search actions" "workspace workspace workspace" "activity activity activity";
     overflow: hidden;
 }
 .network-map-page > .network-heading { grid-area: actions; padding: 8px 16px 8px 0; border-bottom: 1px solid var(--border); }
 .network-map-page > .network-heading > div { display: none; }
-.network-map-page > .network-mode-bar { grid-area: modes; padding: 0 20px; gap: 20px; }
+.network-map-page > .network-mode-bar { grid-area: modes; }
 .network-map-page .network-mode-bar .network-mode:last-child { margin-left: 0; }
 .network-map-page > .network-filter-bar { grid-area: search; padding: 8px 16px; }
 .network-map-page .network-filter-bar input:first-child { width: 220px; }
@@ -3031,7 +3039,7 @@ body {
 .network-map-page .network-map-tools { padding: 6px 20px; flex: 0 0 auto; }
 .network-map-page .network-activity { padding: 2px 20px; }
 @media (max-width: 900px) {
-    .network-map-page { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "modes actions" "search search" "workspace workspace" "activity activity"; }
+    .network-map-page { grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto minmax(0, 1fr) auto; grid-template-areas: "modes modes" "search actions" "workspace workspace" "activity activity"; }
     .network-map-page > .network-filter-bar { padding: 6px 20px; }
     .network-map-page .network-filter-bar input:first-child { width: 100%; }
     .network-map-page .network-map-explore { gap: 6px; }
