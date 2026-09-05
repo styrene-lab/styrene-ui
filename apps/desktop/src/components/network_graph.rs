@@ -29,6 +29,7 @@ pub fn NetworkGraph(
     let mut edges = use_signal(Vec::<GraphEdge>::new);
     let mut selected = use_signal(|| None::<usize>);
     let mut model_key = use_signal(String::new);
+    let mut auto_fit = use_signal(|| true);
     let current_key = format!(
         "{local_hash}|{local_name:?}|{interface_names:?}|{}|{:?}|{:?}|{:?}",
         peer_key(&peers),
@@ -62,7 +63,30 @@ pub fn NetworkGraph(
         let selected_id =
             selected.read().and_then(|index| nodes.read().get(index).map(|node| node.id.clone()));
         if (nodes.read().len() > 200) == (next_nodes.len() > 200) {
+            let mut degree = vec![0_usize; next_nodes.len()];
+            for edge in &next_edges {
+                if edge.kind == crate::state::GraphEdgeKind::Route {
+                    degree[edge.source] += 1;
+                }
+            }
+            let anchors: Vec<_> = next_nodes
+                .iter()
+                .enumerate()
+                .filter(|(index, node)| {
+                    matches!(node.node_type, GraphNodeType::Local | GraphNodeType::Interface { .. })
+                        || degree[*index] >= 8
+                })
+                .map(|(index, node)| (index, node.x, node.y))
+                .collect();
             network_model::preserve_positions(&nodes.read(), &mut next_nodes);
+            // While following discovery, reserve label space for anchors that
+            // arrive after the initial peer snapshot. Manual layouts stay put.
+            if *auto_fit.read() && next_nodes.len() > 200 {
+                for (index, x, y) in anchors {
+                    next_nodes[index].x = x;
+                    next_nodes[index].y = y;
+                }
+            }
         }
         selected.set(selected_id.and_then(|id| next_nodes.iter().position(|node| node.id == id)));
         nodes.set(next_nodes);
@@ -76,7 +100,6 @@ pub fn NetworkGraph(
     let mut zoom = use_signal(move || initial_camera.2);
     let mut interaction = use_signal(|| Interaction::None);
     let mut container_size = use_signal(|| (800.0_f64, 600.0_f64));
-    let mut auto_fit = use_signal(|| true);
     use_effect(move || {
         let _ = model_key();
         let size = container_size();
