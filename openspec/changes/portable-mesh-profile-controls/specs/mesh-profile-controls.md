@@ -75,3 +75,15 @@ Given the local lab contains a raw RNS identity, saved interfaces, and message h
 When the operator adopts it into managed profiles
 Then its RNS identity and saved data remain unchanged
 And its custody is labeled legacy RNS rather than a recovered Styrene root
+
+### Requirement: Profiles distinguish substrate identities and service evidence
+Profile presentation SHALL distinguish Styrene Identity IDs, RNS identities,
+LXMF service addresses, public metadata, and app session readiness. It SHALL NOT
+infer Fleet authorization from a name, role advertisement, or connected interface.
+
+#### Scenario: Display a legacy RNS profile
+Given a profile reports an RNS identity and LXMF address without a Styrene Identity binding
+When the operator opens its identity details
+Then the identifiers are labeled by their actual namespace
+And names and icons are presented as optional metadata
+And missing Styrene Identity evidence is not synthesized from the RNS hash

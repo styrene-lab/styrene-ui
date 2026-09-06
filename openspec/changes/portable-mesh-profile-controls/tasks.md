@@ -27,3 +27,4 @@
 - [ ] Verify identity-preserving encrypted transfer on Apple and Android against an exact revision pair.
 - [ ] Verify wrong-password, corruption, conflict, cancellation and interrupted-operation cleanup.
 - [ ] Record any unavailable native/hardware lanes; do not infer them from mock adapters.
+- [ ] Add shared typed identity/address projections and capability provenance; distinguish session readiness from network delivery and Fleet authorization.

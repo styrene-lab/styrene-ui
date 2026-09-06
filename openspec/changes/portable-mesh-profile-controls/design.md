@@ -75,3 +75,12 @@ automatic rollback must not accidentally run both identities.
 
 No new profile controls are considered delivered merely because this plan exists.
 The dismissal correction does not rename Connection until profile data is available.
+
+## Substrate terminology
+
+System's preliminary desktop correction separates RNS/LXMF addressing from public
+metadata and labels the app connection Session ready. Shared Profile components
+must retain that distinction. IdentityInfo does not provide a canonical Styrene
+Identity ID or general signed node binding; absence must remain explicit.
+A legacy announce-name role is advertised behavior, not verified Fleet authority.
+The coordination evidence is docs/rns-and-styrene-boundaries.md in comms-lab.

@@ -400,7 +400,7 @@ fn App() -> Element {
                     if matches!(&*selected_profile.read(), backend::RuntimeProfile::Fixture { .. }) {
                         "Fixture: {fixture_id}"
                     } else if view.runtime.connected {
-                        "Connected"
+                        "Session ready"
                     } else {
                         "{profile_label}: {view.runtime.connection_mode}"
                     }
