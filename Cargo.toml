@@ -36,17 +36,17 @@ rmp-serde = "1.3.0"
 rmpv = { version = "1.3.0", features = ["with-serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-styrene-interop-runner = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "579ee533cf37f15f61e3d3661bb52635b0dd897d" }
-styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "579ee533cf37f15f61e3d3661bb52635b0dd897d" }
-styrene-ipc-server = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "579ee533cf37f15f61e3d3661bb52635b0dd897d" }
-styrene-micron = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "579ee533cf37f15f61e3d3661bb52635b0dd897d" }
-styrene-rns = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "579ee533cf37f15f61e3d3661bb52635b0dd897d" }
+styrene-interop-runner = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef" }
+styrene-ipc = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef" }
+styrene-ipc-server = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef" }
+styrene-micron = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef" }
+styrene-rns = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef" }
 styrene-ui-state = { path = "crates/styrene-ui-state" }
 styrene-ui-platform = { path = "crates/styrene-ui-platform" }
-styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "579ee533cf37f15f61e3d3661bb52635b0dd897d" }
-styrene-ipc-client = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "579ee533cf37f15f61e3d3661bb52635b0dd897d" }
-styrene-ipc-wire = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "579ee533cf37f15f61e3d3661bb52635b0dd897d" }
-styrene-session = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "579ee533cf37f15f61e3d3661bb52635b0dd897d" }
+styrened = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef" }
+styrene-ipc-client = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef" }
+styrene-ipc-wire = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef" }
+styrene-session = { git = "https://github.com/styrene-lab/styrene-rs.git", rev = "f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef" }
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 tracing = "0.1"
 

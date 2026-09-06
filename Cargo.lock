@@ -4960,9 +4960,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-a2a"
+version = "0.1.2"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
+dependencies = [
+ "a2a-lf",
+ "chrono",
+ "minicbor",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
 name = "styrene-content"
 version = "0.1.0"
 source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d#579ee533cf37f15f61e3d3661bb52635b0dd897d"
+dependencies = [
+ "blake3",
+ "ciborium",
+ "ciborium-io",
+ "heapless",
+ "serde",
+]
+
+[[package]]
+name = "styrene-content"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
 dependencies = [
  "blake3",
  "ciborium",
@@ -4984,10 +5011,10 @@ dependencies = [
  "serde",
  "serde_json",
  "styrene-interop-runner",
- "styrene-ipc",
+ "styrene-ipc 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "styrene-ipc-client",
  "styrene-ipc-wire",
- "styrene-micron",
+ "styrene-micron 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "styrene-session",
  "tokio",
  "tracing",
@@ -5023,7 +5050,7 @@ dependencies = [
 [[package]]
 name = "styrene-interop-runner"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d#579ee533cf37f15f61e3d3661bb52635b0dd897d"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
 dependencies = [
  "clap",
  "hex",
@@ -5046,15 +5073,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-ipc"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "styrene-ipc-client"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d#579ee533cf37f15f61e3d3661bb52635b0dd897d"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
 dependencies = [
  "base64",
  "rmpv",
  "serde",
  "serde_json",
- "styrene-ipc",
+ "styrene-ipc 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "styrene-ipc-wire",
  "thiserror 1.0.69",
  "tokio",
@@ -5063,7 +5102,7 @@ dependencies = [
 [[package]]
 name = "styrene-ipc-server"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d#579ee533cf37f15f61e3d3661bb52635b0dd897d"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
 dependencies = [
  "async-trait",
  "base64",
@@ -5072,7 +5111,7 @@ dependencies = [
  "rmpv",
  "serde",
  "serde_json",
- "styrene-ipc",
+ "styrene-ipc 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "styrene-ipc-wire",
  "thiserror 1.0.69",
  "tokio",
@@ -5082,7 +5121,7 @@ dependencies = [
 [[package]]
 name = "styrene-ipc-wire"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d#579ee533cf37f15f61e3d3661bb52635b0dd897d"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
 dependencies = [
  "rmp-serde",
  "rmpv",
@@ -5106,7 +5145,27 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "sha2",
- "styrene-rns",
+ "styrene-rns 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "styrene-lxmf"
+version = "0.1.1"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
+dependencies = [
+ "base64",
+ "ed25519-dalek",
+ "hex",
+ "hkdf",
+ "rand_core 0.6.4",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "styrene-rns 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "x25519-dalek",
 ]
 
@@ -5122,7 +5181,23 @@ dependencies = [
  "serde",
  "serde_bytes",
  "sha2",
- "styrene-rns",
+ "styrene-rns 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "styrene-mesh"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
+dependencies = [
+ "ciborium",
+ "hex",
+ "rand_core 0.6.4",
+ "rmp-serde",
+ "serde",
+ "serde_bytes",
+ "sha2",
+ "styrene-rns 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "thiserror 1.0.69",
 ]
 
@@ -5130,6 +5205,11 @@ dependencies = [
 name = "styrene-micron"
 version = "0.1.0"
 source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d#579ee533cf37f15f61e3d3661bb52635b0dd897d"
+
+[[package]]
+name = "styrene-micron"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
 
 [[package]]
 name = "styrene-mobile"
@@ -5146,12 +5226,12 @@ dependencies = [
  "objc2-user-notifications",
  "serde",
  "serde_json",
- "styrene-ipc",
+ "styrene-ipc 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
  "styrene-ui-app",
  "styrene-ui-apple-bridge",
  "styrene-ui-platform",
  "styrene-ui-state",
- "styrened",
+ "styrened 0.3.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
  "tokio",
  "wry",
 ]
@@ -5185,9 +5265,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-rbac"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
+dependencies = [
+ "ed25519-dalek",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "styrene-rnode-firmware"
 version = "0.1.0"
 source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d#579ee533cf37f15f61e3d3661bb52635b0dd897d"
+dependencies = [
+ "ed25519-dalek",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "styrene-rnode-firmware"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
 dependencies = [
  "ed25519-dalek",
  "serde",
@@ -5226,6 +5330,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "styrene-rns"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
+dependencies = [
+ "aes",
+ "bzip2",
+ "cbc",
+ "crypto-common",
+ "ed25519-dalek",
+ "hex",
+ "hkdf",
+ "hmac",
+ "log",
+ "rand_core 0.6.4",
+ "rmp",
+ "rmp-serde",
+ "rmpv",
+ "rusqlite",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "socket2",
+ "tokio",
+ "tokio-util",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "styrene-services"
 version = "0.1.0"
 source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d#579ee533cf37f15f61e3d3661bb52635b0dd897d"
@@ -5235,7 +5368,22 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "styrene-a2a",
+ "styrene-a2a 0.1.2 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
+name = "styrene-services"
+version = "0.1.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
+dependencies = [
+ "async-trait",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "styrene-a2a 0.1.2 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -5243,15 +5391,15 @@ dependencies = [
 [[package]]
 name = "styrene-session"
 version = "0.1.0"
-source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d#579ee533cf37f15f61e3d3661bb52635b0dd897d"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
 dependencies = [
  "rmpv",
  "serde",
  "serde_json",
- "styrene-ipc",
+ "styrene-ipc 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "styrene-ipc-client",
  "styrene-ipc-wire",
- "styrened",
+ "styrened 0.3.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -5324,6 +5472,56 @@ dependencies = [
  "hkdf",
  "hmac",
  "log",
+ "rand_core 0.6.4",
+ "rmp-serde",
+ "rmpv",
+ "rusqlite",
+ "rustix",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "sha2",
+ "styrene-content 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "styrene-identity",
+ "styrene-ipc 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "styrene-lxmf 0.1.1 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "styrene-mesh 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "styrene-micron 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "styrene-rbac 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "styrene-rnode-firmware 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "styrene-rns 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "styrene-services 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=579ee533cf37f15f61e3d3661bb52635b0dd897d)",
+ "subtle",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "toml",
+ "x25519-dalek",
+ "x509-parser",
+ "zeroize",
+]
+
+[[package]]
+name = "styrened"
+version = "0.3.0"
+source = "git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef#f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "async-trait",
+ "base64",
+ "chacha20poly1305",
+ "ciborium",
+ "clap",
+ "dirs",
+ "fs2",
+ "hex",
+ "hkdf",
+ "hmac",
+ "log",
  "portable-pty",
  "rand_core 0.6.4",
  "rmp-serde",
@@ -5335,17 +5533,16 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "styrene-content",
- "styrene-identity",
- "styrene-ipc",
+ "styrene-content 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
+ "styrene-ipc 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "styrene-ipc-server",
- "styrene-lxmf",
- "styrene-mesh",
- "styrene-micron",
- "styrene-rbac",
- "styrene-rnode-firmware",
- "styrene-rns",
- "styrene-services",
+ "styrene-lxmf 0.1.1 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
+ "styrene-mesh 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
+ "styrene-micron 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
+ "styrene-rbac 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
+ "styrene-rnode-firmware 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
+ "styrene-rns 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
+ "styrene-services 0.1.0 (git+https://github.com/styrene-lab/styrene-rs.git?rev=f20d4a4ac2f47aa8c2fa6c8343ad576efa261aef)",
  "subtle",
  "tempfile",
  "thiserror 1.0.69",
