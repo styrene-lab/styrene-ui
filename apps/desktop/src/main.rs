@@ -68,13 +68,7 @@ fn App() -> Element {
     let mut stores = use_signal(stores::DomainStores::default);
     let mut selected_peer = use_signal(|| None::<String>);
     let mut active_route = use_signal(|| {
-        if std::env::var("STYRENE_DX_ROUTE")
-            .is_ok_and(|route| route == "network" || route.starts_with("network/"))
-        {
-            state::AppRoute::Network
-        } else {
-            state::AppRoute::default()
-        }
+        state::AppRoute::from_hint(&std::env::var("STYRENE_DX_ROUTE").unwrap_or_default())
     });
     let mut activity_open = use_signal(|| false);
     let mut activity_export = use_signal(|| None::<String>);
@@ -319,7 +313,7 @@ fn App() -> Element {
     let diagnostics =
         session.read().as_ref().map(|backend| backend.diagnostics()).unwrap_or_default();
     let route_state = view.route_state(&active_route.read(), capabilities);
-    let command = view.command_summary();
+    let navigation = components::workspaces::destinations(&view);
     let mut chat_input = use_signal(String::new);
     let mut chat_title = use_signal(String::new);
     let mut chat_method = use_signal(|| "direct".to_string());
@@ -490,58 +484,13 @@ fn App() -> Element {
                 }
             }
 
-            // Tab bar
-            nav { class: "tab-bar", aria_label: "Primary navigation",
-                button {
-                    class: if *active_route.read() == state::AppRoute::Command { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Command).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Command),
-                    "Command"
+            div { class: "workspace-shell",
+                components::workspaces::WorkspaceNav {
+                    items: navigation.clone(),
+                    active: active_route.read().clone(),
+                    on_select: move |route| active_route.set(route),
                 }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Network { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Network).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Network),
-                    "Network"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Messages { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Messages).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Messages),
-                    "Messages"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Fleet { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Fleet).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Fleet),
-                    "Fleet"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Propagation { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Propagation).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Propagation),
-                    "Propagation"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Content { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Content).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Content),
-                    "Content"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Lab { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Lab).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Lab),
-                    "Lab"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::System { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::System).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::System),
-                    "System"
-                }
-            }
-
+                div { class: "workspace-main",
             match &route_state {
                 stores::DataState::Loading => rsx! {
                     div { class: "state-banner loading", "Loading current {profile_label} state..." }
@@ -555,46 +504,41 @@ fn App() -> Element {
                 stores::DataState::Empty | stores::DataState::Ready => rsx! {},
             }
 
+            if matches!(*active_route.read(), state::AppRoute::Messages | state::AppRoute::Delivery) {
+                nav { class: "workspace-subnav", aria_label: "Messages navigation",
+                    button { class: if *active_route.read() == state::AppRoute::Messages { "selected" } else { "" },
+                        aria_current: (*active_route.read() == state::AppRoute::Messages).then_some("page"),
+                        onclick: move |_| active_route.set(state::AppRoute::Messages), "Conversations" }
+                    button { class: if *active_route.read() == state::AppRoute::Delivery { "selected" } else { "" },
+                        aria_current: (*active_route.read() == state::AppRoute::Delivery).then_some("page"),
+                        onclick: move |_| active_route.set(state::AppRoute::Delivery), "Delivery" }
+                }
+            }
+            if *active_route.read() == state::AppRoute::Browse {
+                header { class: "browse-heading",
+                    h1 { "Browse" }
+                    p { "NomadNet pages and files · Open a node or enter an address" }
+                }
+            }
             // Body
             div { class: "body",
                 match *active_route.read() {
-                    state::AppRoute::Command => rsx! {
-                        div { class: "main command-page",
-                            div { class: "empty-state",
-                                h2 { "Command" }
-                                p { "Operational summary for the active {profile_label} session." }
-                            }
-                            if view.command_summary_available() {
-                            div { class: "command-grid",
-                                div { class: "command-card",
-                                    h3 { "Transport" }
-                                    strong { if command.transport_active { "Active" } else { "Inactive" } }
-                                    p { "{command.interface_count} interfaces" }
-                                }
-                                div { class: "command-card",
-                                    h3 { "Network" }
-                                    strong { "{command.observed_peers} observed peers" }
-                                    p { "{command.route_count} current routes" }
-                                }
-                                div { class: "command-card",
-                                    h3 { "Links" }
-                                    strong { "{command.active_links} active" }
-                                    p { "{command.link_records} lifecycle records" }
-                                }
-                                div { class: "command-card",
-                                    h3 { "Propagation" }
-                                    strong { if command.propagation_enabled { "Enabled" } else { "Disabled" } }
-                                    p { "Open Propagation for queue and peer state." }
-                                }
-                            }
-                            } else {
-                                div { class: "empty-state", role: "status",
-                                    p { "Network summary unavailable until the daemon supplies status." }
-                                    if !view.runtime.connected {
-                                        p { "Start the daemon for the selected socket, then choose Activate to retry." }
-                                    }
-                                }
-                            }
+                    state::AppRoute::Overview => rsx! {
+                        components::workspaces::OverviewPage {
+                            session_summary: navigation[0].summary.clone(),
+                            profile: view.runtime.backend_profile.as_ref()
+                                .map(|p| p.display_name.clone())
+                                .unwrap_or_else(|| format!("{profile_label} session")),
+                            connections: components::workspaces::connections(&view),
+                            inventory_known: view.network.interface_inventory.is_some(),
+                            activity: components::workspaces::recent_activity(&view),
+                            on_select: move |route| active_route.set(route),
+                            on_connection: move |id: String| {
+                                stores.write().network.interface_focus = Some(id);
+                                active_route.set(state::AppRoute::Network);
+                            },
+                            on_session: move |_| connection_open.set(true),
+                            on_activity: move |_| activity_open.set(true),
                         }
                     },
                     state::AppRoute::Network => rsx! {
@@ -631,7 +575,7 @@ fn App() -> Element {
                                 match state::PageAddress::remote_index(&host_hash) {
                                     Ok(address) => {
                                         send_cmd(daemon_bridge::DaemonCommand::BrowsePage { address });
-                                        active_route.set(state::AppRoute::Content);
+                                        active_route.set(state::AppRoute::Browse);
                                     }
                                     Err(error) => tracing::warn!(target: "dx::content", %error, %host_hash, "invalid page host"),
                                 }
@@ -646,7 +590,7 @@ fn App() -> Element {
                             div { class: "sidebar-header", "Conversations" }
                             if view.messages.conversations.is_empty() {
                                 div { class: "sidebar-empty",
-                                    "No conversations yet. Select a peer from the Network tab to start one."
+                                    "No conversations yet. Select a peer from Network to start one."
                                 }
                             }
                             for convo in view.messages.conversations.iter() {
@@ -914,7 +858,7 @@ fn App() -> Element {
                             on_command: send_cmd,
                         }
                     },
-                    state::AppRoute::Propagation => rsx! {
+                    state::AppRoute::Delivery => rsx! {
                         components::PropagationPage {
                             snapshot: view.propagation.snapshot.clone(),
                             standard_snapshot: view.propagation.standard_snapshot.clone(),
@@ -927,7 +871,7 @@ fn App() -> Element {
                             },
                         }
                     },
-                    state::AppRoute::Content => rsx! {
+                    state::AppRoute::Browse => rsx! {
                         div { class: "content-layout",
                         // Page host sidebar
                         div { class: "sidebar page-host-sidebar",
@@ -1087,6 +1031,8 @@ fn App() -> Element {
                             diagnostics,
                         }
                     },
+                }
+            }
                 }
             }
             if *activity_open.read() {
@@ -1861,11 +1807,11 @@ mod accessibility_tests {
         let fleet = include_str!("components/fleet_page.rs");
         let network = include_str!("components/network_page.rs");
         let lab = include_str!("components/lab_page.rs");
-        assert!(app.contains("nav { class: \"tab-bar\", aria_label: \"Primary navigation\""));
-        let Some(shell) = app.split("match &route_state").next() else {
-            panic!("application shell source is missing");
-        };
-        assert_eq!(shell.matches("aria_current:").count(), 8);
+        assert!(app.contains("components::workspaces::WorkspaceNav"));
+        let navigation = include_str!("components/workspaces.rs");
+        assert!(navigation.contains("aria_label: \"Primary navigation\""));
+        assert!(navigation.contains("aria_current:"));
+        assert!(navigation.contains("aria_expanded:"));
         for source in [app, fleet, network, lab] {
             assert!(source.contains("role: \"dialog\""));
             assert!(source.contains("aria_modal: \"true\""));

@@ -5,50 +5,112 @@
       "id": "empty-session",
       "fixture": "empty",
       "route": "Network",
-      "steps": ["Open an empty Fixture session", "Open Network", "Open Messages"],
-      "expected_visible_state": ["Session is connected", "No peers are listed", "No conversations are listed"]
+      "steps": [
+        "Open an empty Fixture session",
+        "Open Network",
+        "Open Messages"
+      ],
+      "expected_visible_state": [
+        "Session is connected",
+        "No peers are listed",
+        "No conversations are listed"
+      ]
     },
     {
       "id": "inspect-network",
       "fixture": "healthy",
       "route": "Network",
-      "steps": ["Open a healthy Fixture session", "Open Network", "Inspect peers, routes, and interfaces"],
-      "expected_visible_state": ["Three peers are listed", "Three routes are listed", "One interface is listed", "Network mutations are unavailable"]
+      "steps": [
+        "Open a healthy Fixture session",
+        "Open Network",
+        "Inspect peers, routes, and interfaces"
+      ],
+      "expected_visible_state": [
+        "Three peers are listed",
+        "Three routes are listed",
+        "One interface is listed",
+        "Network mutations are unavailable"
+      ]
     },
     {
       "id": "send-message",
       "fixture": "healthy",
       "route": "Messages",
-      "steps": ["Open Messages", "Select the fixture conversation", "Send a direct message"],
-      "expected_visible_state": ["The send is accepted", "The submitted message appears in the conversation"]
+      "steps": [
+        "Open Messages",
+        "Select the fixture conversation",
+        "Send a direct message"
+      ],
+      "expected_visible_state": [
+        "The send is accepted",
+        "The submitted message appears in the conversation"
+      ]
     },
     {
       "id": "browse-content",
       "fixture": "healthy",
-      "route": "Content",
-      "steps": ["Select a peer that advertises page hosting", "Open its fixture page"],
-      "expected_visible_state": ["Authoritative fixture content appears", "The page is not reported as loading or failed"]
+      "route": "Browse",
+      "steps": [
+        "Select a peer that advertises page hosting",
+        "Open its fixture page"
+      ],
+      "expected_visible_state": [
+        "Authoritative fixture content appears",
+        "The page is not reported as loading or failed"
+      ]
     },
     {
       "id": "inspect-degraded-session",
       "fixture": "degraded",
       "route": "System",
-      "steps": ["Open a degraded Fixture session", "Inspect Network and System"],
-      "expected_visible_state": ["Transport is inactive", "The fixture interface is degraded", "Retained inventory remains visible"]
+      "steps": [
+        "Open a degraded Fixture session",
+        "Inspect Network and System"
+      ],
+      "expected_visible_state": [
+        "Transport is inactive",
+        "The fixture interface is degraded",
+        "Retained inventory remains visible"
+      ]
     },
     {
       "id": "inspect-propagation",
       "fixture": "active-scenario",
-      "route": "Propagation",
-      "steps": ["Open the active-scenario Fixture session", "Open Propagation"],
-      "expected_visible_state": ["Propagation is enabled", "One queued item is visible", "Queue size is 4096 bytes"]
+      "route": "Messages/Delivery",
+      "steps": [
+        "Open the active-scenario Fixture session",
+        "Open Messages \u2192 Delivery"
+      ],
+      "expected_visible_state": [
+        "Propagation is enabled",
+        "One queued item is visible",
+        "Queue size is 4096 bytes"
+      ]
     },
     {
       "id": "session-error",
       "fixture": "error",
       "route": "System",
-      "steps": ["Open the error Fixture session"],
-      "expected_visible_state": ["The session fails explicitly", "No Live or Embedded fallback starts"]
+      "steps": [
+        "Open the error Fixture session"
+      ],
+      "expected_visible_state": [
+        "The session fails explicitly",
+        "No Live or Embedded fallback starts"
+      ]
+    },
+    {
+      "id": "resume-browse",
+      "fixture": "healthy",
+      "route": "Browse",
+      "steps": [
+        "Load a NomadNet page",
+        "Visit Messages",
+        "Return to Browse"
+      ],
+      "expected_visible_state": [
+        "The loaded page and its session remain in app-owned state"
+      ]
     }
   ]
 }

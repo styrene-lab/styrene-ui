@@ -22,3 +22,7 @@ This is deterministic UI-flow simulation. It opens no external interface and
 does not provide native window, pointer, keyboard, WebView, or accessibility
 tree evidence. Packaged desktop automation requires a stable application bundle
 and platform automation target. Keep that evidence separate when it is added.
+
+The workspace navigation is described in [Desktop workspaces](../../docs/desktop-workspaces.md).
+The corpus includes Browse state continuity; native input and responsive drawer
+acceptance remain separate from these simulations.

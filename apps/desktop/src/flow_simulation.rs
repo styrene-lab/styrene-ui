@@ -123,7 +123,7 @@ async fn run_use_case(use_case: &UseCase) -> Result<(), String> {
                 return Err("accepted message did not reach visible message state".into());
             }
         }
-        "browse-content" => {
+        "browse-content" | "resume-browse" => {
             let peer = simulation
                 .stores
                 .network
@@ -140,6 +140,17 @@ async fn run_use_case(use_case: &UseCase) -> Result<(), String> {
                 .as_ref()
                 .and_then(|page| page.authoritative.as_ref())
                 .map(|page| page.rendered_text.as_str());
+            if use_case.id == "resume-browse" {
+                let original = simulation.stores.content.page.clone();
+                let capabilities = backend::BackendCapabilities::default();
+                let _ =
+                    simulation.stores.route_state(&crate::state::AppRoute::Messages, capabilities);
+                let _ =
+                    simulation.stores.route_state(&crate::state::AppRoute::Browse, capabilities);
+                if simulation.stores.content.page != original {
+                    return Err("navigation discarded the current browse session".into());
+                }
+            }
             if rendered != Some("# Fixture Page\n\nDeterministic content from Fixture mode.") {
                 return Err("fixture page did not reach visible content state".into());
             }
@@ -180,7 +191,7 @@ fn desktop_flow_corpus_is_versioned_and_unique() {
     for use_case in corpus.use_cases {
         assert!(ids.insert(use_case.id), "duplicate desktop flow ID");
     }
-    assert_eq!(ids.len(), 7, "standard desktop flow count changed");
+    assert_eq!(ids.len(), 8, "standard desktop flow count changed");
 }
 
 #[tokio::test]

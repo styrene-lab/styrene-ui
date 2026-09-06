@@ -56,14 +56,39 @@ pub struct MeshStatusInfo {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum AppRoute {
     #[default]
-    Command,
+    Overview,
     Network,
     Messages,
     Fleet,
-    Propagation,
-    Content,
+    Delivery,
+    Browse,
     Lab,
     System,
+}
+
+impl AppRoute {
+    pub fn from_hint(hint: &str) -> Self {
+        match hint.split('/').next().unwrap_or_default() {
+            "network" => Self::Network,
+            "messages" => {
+                if hint == "messages/delivery" {
+                    Self::Delivery
+                } else {
+                    Self::Messages
+                }
+            }
+            "propagation" => Self::Delivery,
+            "browse" | "content" => Self::Browse,
+            "fleet" => Self::Fleet,
+            "lab" => Self::Lab,
+            "system" => Self::System,
+            _ => Self::Overview,
+        }
+    }
+
+    pub fn primary(&self) -> Self {
+        if *self == Self::Delivery { Self::Messages } else { self.clone() }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]

@@ -113,6 +113,7 @@ pub fn NetworkPage(
         Ok("network/routes") => NetworkMode::Routes,
         Ok("network/links") => NetworkMode::Links,
         Ok("network/map") => NetworkMode::Combined,
+        _ if interface_focus.is_some() => NetworkMode::Interfaces,
         _ => NetworkMode::default(),
     });
     let mut selected = use_signal(|| None::<String>);

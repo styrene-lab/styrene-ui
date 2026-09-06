@@ -184,17 +184,6 @@ pub struct ActivityStore {
     pub entries: Vec<state::ActivityEntry>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CommandSummary {
-    pub transport_active: bool,
-    pub interface_count: u32,
-    pub observed_peers: usize,
-    pub route_count: usize,
-    pub active_links: u32,
-    pub link_records: usize,
-    pub propagation_enabled: bool,
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct DomainStores {
     pub runtime: RuntimeStore,
@@ -1209,7 +1198,7 @@ impl DomainStores {
         capabilities: BackendCapabilities,
     ) -> DataState {
         match route {
-            state::AppRoute::Command | state::AppRoute::System => self.runtime.state.clone(),
+            state::AppRoute::Overview | state::AppRoute::System => self.runtime.state.clone(),
             state::AppRoute::Network => self.network.state.clone(),
             state::AppRoute::Messages if !capabilities.messaging => {
                 DataState::Degraded { reason: "messaging is unsupported by this backend".into() }
@@ -1219,38 +1208,18 @@ impl DomainStores {
                 reason: "fleet operations are unsupported by this backend".into(),
             },
             state::AppRoute::Fleet => self.fleet.state.clone(),
-            state::AppRoute::Propagation if !capabilities.propagation => DataState::Degraded {
+            state::AppRoute::Delivery if !capabilities.propagation => DataState::Degraded {
                 reason: "propagation inspection is unsupported by this backend".into(),
             },
-            state::AppRoute::Propagation => self.propagation.state.clone(),
-            state::AppRoute::Content if !capabilities.content => DataState::Degraded {
+            state::AppRoute::Delivery => self.propagation.state.clone(),
+            state::AppRoute::Browse if !capabilities.content => DataState::Degraded {
                 reason: "content browsing is unsupported by this backend".into(),
             },
-            state::AppRoute::Content => self.content.state.clone(),
+            state::AppRoute::Browse => self.content.state.clone(),
             state::AppRoute::Lab if !capabilities.scenarios => DataState::Degraded {
                 reason: "scenario execution is unsupported by this backend".into(),
             },
             state::AppRoute::Lab => self.scenario.state.clone(),
-        }
-    }
-
-    pub fn command_summary_available(&self) -> bool {
-        self.runtime.connected
-            && matches!(
-                self.network.state,
-                DataState::Ready | DataState::Empty | DataState::Degraded { .. }
-            )
-    }
-
-    pub fn command_summary(&self) -> CommandSummary {
-        CommandSummary {
-            transport_active: self.network.status.transport_active,
-            interface_count: self.network.status.interface_count,
-            observed_peers: self.network.peers.len(),
-            route_count: self.network.paths.len(),
-            active_links: self.network.status.link_count,
-            link_records: self.network.links.len(),
-            propagation_enabled: self.propagation.enabled,
         }
     }
 
@@ -1993,12 +1962,12 @@ mod tests {
             administration: true,
         };
         for route in [
-            state::AppRoute::Command,
+            state::AppRoute::Overview,
             state::AppRoute::Network,
             state::AppRoute::Messages,
             state::AppRoute::Fleet,
-            state::AppRoute::Propagation,
-            state::AppRoute::Content,
+            state::AppRoute::Delivery,
+            state::AppRoute::Browse,
             state::AppRoute::Lab,
             state::AppRoute::System,
         ] {
@@ -2040,12 +2009,12 @@ mod tests {
     #[test]
     fn every_route_preserves_explicit_state_classes() {
         let routes = [
-            state::AppRoute::Command,
+            state::AppRoute::Overview,
             state::AppRoute::Network,
             state::AppRoute::Messages,
             state::AppRoute::Fleet,
-            state::AppRoute::Propagation,
-            state::AppRoute::Content,
+            state::AppRoute::Delivery,
+            state::AppRoute::Browse,
             state::AppRoute::Lab,
             state::AppRoute::System,
         ];
@@ -2096,43 +2065,6 @@ mod tests {
             stores.route_state(&state::AppRoute::Fleet, BackendCapabilities::default());
         assert!(matches!(route_state, DataState::Degraded { .. }));
         assert_eq!(stores.network.peers.len(), 1);
-    }
-
-    #[test]
-    fn command_summary_requires_a_connected_session_with_network_data() {
-        let mut stores = DomainStores::default();
-        stores.begin_session("Live", ConnectionGeneration(1));
-        assert!(!stores.command_summary_available());
-        stores.runtime.connected = true;
-        assert!(!stores.command_summary_available());
-        stores.network.state = DataState::Ready;
-        assert!(stores.command_summary_available());
-        stores.fail_session(ConnectionGeneration(1), "connection refused");
-        assert!(!stores.command_summary_available());
-        assert!(matches!(stores.identity.state, DataState::Error { .. }));
-    }
-
-    #[test]
-    fn command_summary_is_derived_from_authoritative_stores() {
-        let mut stores = stores();
-        stores.network.status.transport_active = true;
-        stores.network.status.interface_count = 2;
-        stores.network.status.link_count = 1;
-        stores.propagation.enabled = true;
-        stores.network.paths.push(state::PathEntry {
-            destination_hash: "peer".into(),
-            hops: 1,
-            next_hop: "peer".into(),
-            interface: "tcp".into(),
-            expires: None,
-            observation: Default::default(),
-        });
-        let summary = stores.command_summary();
-        assert!(summary.transport_active);
-        assert_eq!(summary.interface_count, 2);
-        assert_eq!(summary.route_count, 1);
-        assert_eq!(summary.active_links, 1);
-        assert!(summary.propagation_enabled);
     }
 
     #[test]
