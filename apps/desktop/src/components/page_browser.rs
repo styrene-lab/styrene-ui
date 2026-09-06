@@ -129,6 +129,16 @@ fn resolve_navigation(url: &str, current: Option<&PageAddress>) -> Option<PageAd
     current.and_then(|base| PageAddress::resolve(url, base).ok())
 }
 
+fn failure_summary(page: &PageView) -> String {
+    match page.wait_end {
+        Some(crate::state::BrowseWaitEnd::TimedOut) => "No response within 15 seconds. The node may need a route or more time. The daemon may still finish its request.".into(),
+        Some(crate::state::BrowseWaitEnd::Stopped) => "Stopped waiting locally. This does not cancel work already accepted by the daemon.".into(),
+        None => page.authoritative.as_ref().and_then(|p| p.failure.as_ref())
+            .map(|f| format!("{} failed. The page could not be retrieved.", stage_label(f.stage)))
+            .unwrap_or_else(|| "The daemon request failed before page-stage evidence was received.".into()),
+    }
+}
+
 // ── Component ─────────────────────────────────────────────────────────────
 
 #[component]
@@ -139,6 +149,7 @@ pub fn PageBrowser(
     unavailable_reason: Option<String>,
     on_navigate: EventHandler<PageNavigationRequest>,
     on_close: EventHandler<String>,
+    on_stop: EventHandler<()>,
     on_download: EventHandler<FileDownloadRequest>,
     on_refresh_download: EventHandler<String>,
     on_cancel_download: EventHandler<String>,
@@ -195,7 +206,7 @@ pub fn PageBrowser(
                 button {
                     class: "page-nav-btn",
                     aria_label: "Back",
-                    disabled: !can_back,
+                    disabled: !can_back || is_loading,
                     onclick: move |_| {
                         let mut request = PageNavigationRequest::default();
                         request.session_id = nonempty_session(&page_session.read());
@@ -207,7 +218,7 @@ pub fn PageBrowser(
                 button {
                     class: "page-nav-btn",
                     aria_label: "Forward",
-                    disabled: !can_forward,
+                    disabled: !can_forward || is_loading,
                     onclick: move |_| {
                         let mut request = PageNavigationRequest::default();
                         request.session_id = nonempty_session(&page_session.read());
@@ -296,8 +307,9 @@ pub fn PageBrowser(
                 }
             }
 
-            if let Some(ref page) = page {
-                div { class: "page-diagnostics",
+            if let Some(page) = page.as_ref().filter(|page| !page.loading && page.wait_end.is_none()) {
+                details { class: "page-diagnostics",
+                    summary { "Request details" }
                     div { class: "page-stage-list",
                         for stage in page.authoritative.iter().flat_map(|page| &page.stages) {
                             div {
@@ -344,12 +356,18 @@ pub fn PageBrowser(
             div { class: "page-content",
                 match page {
                     Some(ref pv) if pv.loading => rsx! {
-                        div { class: "page-loading", "Loading page..." }
+                        div { class: "page-loading", role: "status",
+                            h3 { "Waiting for a page response" }
+                            p { "{pv.host}:{pv.path}" }
+                            p { "This wait ends after {crate::browse::WAIT_SECONDS} seconds. The daemon has not reported live request stages." }
+                            p { "An announcement does not confirm that a page is reachable now." }
+                            button { class: "action-btn", onclick: move |_| on_stop.call(()), "Stop waiting" }
+                        }
                     },
                     Some(ref pv) if pv.error.is_some() => rsx! {
                         div { class: "page-error",
                             h3 { "Page Error" }
-                            p { "{pv.error.as_deref().unwrap_or(\"Unknown error\")}" }
+                            p { "{failure_summary(pv)}" }
                             p { class: "page-error-path", "{pv.host}:{pv.path}" }
                             div { class: "page-error-actions",
                                 if pv.retryable {
@@ -374,7 +392,7 @@ pub fn PageBrowser(
                                         "Retry"
                                     }
                                 }
-                                span { "Inspect the failed stage above and broker diagnostics in System." }
+                                span { "You can choose another node. Request details contain the reported stage evidence." }
                             }
                         }
                     },

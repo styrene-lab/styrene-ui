@@ -28,3 +28,5 @@ pub use system_page::SystemPage;
 pub mod interface_manager;
 
 pub mod workspaces;
+
+pub mod browse_directory;

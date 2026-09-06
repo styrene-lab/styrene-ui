@@ -3096,3 +3096,28 @@ body {
     .topbar { flex-wrap: wrap; }
 }
 .workspace-rail > div:nth-last-child(2) { margin-top: auto; }
+
+/* Discovery is evidence, not a green availability assertion. */
+.browse-directory { width: 290px; min-width: 240px; max-width: 35%; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--surface); }
+.browse-directory-heading { padding: 18px 16px 12px; border-bottom: 1px solid var(--border); }
+.browse-directory-heading h2 { font-size: 17px; }
+.browse-directory-heading p, .directory-reason { color: var(--text-muted); font-size: 12px; line-height: 1.5; margin: 8px 0; }
+.browse-directory-heading input { width: 100%; padding: 9px 10px; margin: 8px 0; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+.directory-count { font-size: 11px; color: var(--text-muted); }
+.directory-results { overflow-y: auto; min-height: 0; }
+.directory-reason { padding: 8px 16px; }
+.directory-host { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 12px 16px; text-align: left; color: var(--text); background: transparent; border: 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+.directory-host:hover { background: var(--surface-hover); }
+.directory-host.selected { background: var(--surface-raised); box-shadow: inset 3px 0 var(--accent); }
+.directory-host strong { font-size: 13px; font-weight: 550; white-space: normal; overflow-wrap: anywhere; }
+.directory-evidence { font-size: 11px; color: var(--text-muted); }
+.directory-host small { font-size: 10px; color: var(--text-muted); }
+.local-pages { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.local-pages summary { cursor: pointer; }
+.local-pages button, .directory-more { display: block; padding: 9px 0; border: 0; background: transparent; color: var(--accent); cursor: pointer; text-align: left; }
+.directory-more { padding: 16px; }
+.page-loading { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 32px; max-width: 660px; text-align: left; }
+.page-loading h3 { font-size: 21px; color: var(--text); }
+.page-loading p { font-size: 13px; color: var(--text-muted); overflow-wrap: anywhere; }
+.page-diagnostics summary { cursor: pointer; padding: 8px; color: var(--text-muted); font-size: 12px; }
+.page-nav-bar { flex-wrap: wrap; }

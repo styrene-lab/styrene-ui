@@ -167,6 +167,8 @@ pub struct FleetJob {
 
 #[derive(Clone, Debug, Default)]
 pub struct ContentStore {
+    pub visits: std::collections::BTreeMap<String, String>,
+    visit_order: VecDeque<String>,
     pub page: Option<state::PageView>,
     pub download: Option<styrene_ipc::types::FileDownloadInfo>,
     pub local_inventory: Vec<styrene_ipc::types::PageInfo>,
@@ -1012,6 +1014,22 @@ impl DomainStores {
         } else {
             DataState::Ready
         };
+        if !page.loading && !page.host.is_empty() {
+            let outcome = match page.wait_end {
+                Some(state::BrowseWaitEnd::TimedOut) => "Last wait timed out",
+                Some(state::BrowseWaitEnd::Stopped) => "Last wait stopped",
+                None if page.error.is_some() => "Last attempt failed",
+                None => "Page received this session",
+            };
+            self.content.visit_order.retain(|host| host != &page.host);
+            self.content.visit_order.push_back(page.host.clone());
+            while self.content.visit_order.len() > 128 {
+                if let Some(oldest) = self.content.visit_order.pop_front() {
+                    self.content.visits.remove(&oldest);
+                }
+            }
+            self.content.visits.insert(page.host.clone(), outcome.into());
+        }
         self.content.page = Some(page);
     }
 
@@ -1705,6 +1723,32 @@ mod tests {
         ));
         assert!(stores.runtime.connected);
         assert!(stores.activity.entries.iter().all(|entry| !entry.summary.contains("old")));
+    }
+
+    #[test]
+    fn browse_attempts_are_bounded_recent_and_session_scoped() {
+        let mut stores = stores();
+        let failed = |host: String| {
+            state::PageView::failed_at(
+                host,
+                "/page/index.mu".into(),
+                "browse-local-deadline".into(),
+                15000,
+            )
+        };
+        for i in 0..128 {
+            stores.set_page(ConnectionGeneration(2), failed(format!("host-{i}")));
+        }
+        stores.set_page(ConnectionGeneration(2), failed("host-0".into()));
+        stores.set_page(ConnectionGeneration(2), failed("new".into()));
+        assert_eq!(stores.content.visits.len(), 128);
+        assert!(stores.content.visits.contains_key("host-0"));
+        assert!(!stores.content.visits.contains_key("host-1"));
+        assert_eq!(stores.content.visits["new"], "Last wait timed out");
+        stores.begin_session("new", ConnectionGeneration(3));
+        stores.set_page(ConnectionGeneration(2), failed("stale".into()));
+        assert!(stores.content.visits.is_empty());
+        assert!(stores.content.page.is_none());
     }
 
     #[test]

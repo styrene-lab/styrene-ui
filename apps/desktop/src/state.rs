@@ -110,6 +110,12 @@ pub struct ActivityEntry {
     pub provenance: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowseWaitEnd {
+    TimedOut,
+    Stopped,
+}
+
 /// State for the page browser.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PageView {
@@ -119,6 +125,7 @@ pub struct PageView {
     pub loading: bool,
     pub error: Option<String>,
     pub elapsed_ms: Option<u64>,
+    pub wait_end: Option<BrowseWaitEnd>,
     pub retryable: bool,
 }
 
@@ -131,6 +138,7 @@ impl PageView {
             loading: true,
             error: None,
             elapsed_ms: None,
+            wait_end: None,
             retryable: false,
         }
     }
@@ -147,7 +155,16 @@ impl PageView {
         let error = page.failure.as_ref().map(|failure| failure.message.clone());
         let retryable = page.failure.as_ref().is_some_and(|failure| failure.retryable);
         let elapsed_ms = page.elapsed_ms;
-        Self { host, path, authoritative: Some(page), loading: false, error, elapsed_ms, retryable }
+        Self {
+            host,
+            path,
+            authoritative: Some(page),
+            loading: false,
+            error,
+            elapsed_ms,
+            wait_end: None,
+            retryable,
+        }
     }
 
     pub fn failed_at(host: String, path: String, message: String, elapsed_ms: u64) -> Self {
@@ -157,7 +174,8 @@ impl PageView {
         page.error = Some("page request failed before daemon evidence".into());
         page.elapsed_ms = Some(elapsed_ms);
         // An IPC failure has no daemon terminal observation from which to infer retryability.
-        page.retryable = false;
+        page.wait_end = (message == "browse-local-deadline").then_some(BrowseWaitEnd::TimedOut);
+        page.retryable = page.wait_end.is_some();
         page
     }
 }

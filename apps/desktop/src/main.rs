@@ -11,6 +11,7 @@ use dioxus::prelude::*;
 use futures_util::StreamExt;
 
 mod backend;
+mod browse;
 mod components;
 mod daemon_bridge;
 #[cfg(test)]
@@ -70,6 +71,7 @@ fn App() -> Element {
     let mut active_route = use_signal(|| {
         state::AppRoute::from_hint(&std::env::var("STYRENE_DX_ROUTE").unwrap_or_default())
     });
+    let mut browse_task: Signal<Option<dioxus::core::Task>> = use_signal(|| None);
     let mut activity_open = use_signal(|| false);
     let mut activity_export = use_signal(|| None::<String>);
     let scenario_backend = use_hook(|| {
@@ -122,6 +124,39 @@ fn App() -> Element {
                                         command = cmd_rx.recv() => match command { Some(command) => command, None => break },
                                         _ = refresh.tick() => daemon_bridge::DaemonCommand::RefreshInterfaces,
                                     };
+                                    if matches!(
+                                        &cmd,
+                                        daemon_bridge::DaemonCommand::BrowsePage { .. }
+                                            | daemon_bridge::DaemonCommand::NavigatePage(_)
+                                            | daemon_bridge::DaemonCommand::StopBrowse
+                                            | daemon_bridge::DaemonCommand::ClosePage { .. }
+                                    ) {
+                                        if let Some(capability) = cmd.required_capability()
+                                            && stores
+                                                .read()
+                                                .mutation_availability_at(
+                                                    opened.generation,
+                                                    capability,
+                                                )
+                                                .is_err()
+                                        {
+                                            continue;
+                                        }
+                                        if let Some(task) = browse_task.write().take() {
+                                            task.cancel();
+                                        }
+                                        let br = cmd_bridge.clone();
+                                        browse_task.set(Some(spawn(async move {
+                                            handle_ui_command(
+                                                cmd,
+                                                &br,
+                                                &mut stores,
+                                                opened.generation,
+                                            )
+                                            .await;
+                                        })));
+                                        continue;
+                                    }
                                     handle_ui_command(
                                         cmd,
                                         &cmd_bridge,
@@ -249,6 +284,9 @@ fn App() -> Element {
                                 }
                             };
                             command_task.cancel();
+                            if let Some(task) = browse_task.write().take() {
+                                task.cancel();
+                            }
                             cmd_tx.set(None);
                             session.set(None);
                             br.shutdown().await;
@@ -873,76 +911,16 @@ fn App() -> Element {
                     },
                     state::AppRoute::Browse => rsx! {
                         div { class: "content-layout",
-                        // Page host sidebar
-                        div { class: "sidebar page-host-sidebar",
-                            div { class: "sidebar-header", "Page Hosts" }
-                            if let Some(reason) = &page_unavailable {
-                                p { id: "page-host-controls-disabled", class: "control-disabled-reason", "Page host controls disabled: {reason}" }
-                            }
-                            button {
-                                class: "peer-item page-host-item",
-                                disabled: !capabilities.content,
-                                aria_describedby: (!capabilities.content).then_some("page-host-controls-disabled"),
-                                onclick: move |_| {
-                                    send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
-                                        address: state::PageAddress::local_index(),
-                                    });
-                                },
-                                span { class: "peer-icon", style: "color: var(--accent);", "●" }
-                                span { class: "peer-name", "Local Node" }
-                            }
-                            for entry in &view.content.local_inventory {
-                                {
-                                    let path = entry.path.clone();
-                                    let is_page = entry.kind == "page";
-                                    let active = entry.handler_active;
-                                    let detail = format!(
-                                        "{:?}{}{}",
-                                        entry.kind,
-                                        if entry.dynamic { " dynamic" } else { "" },
-                                        if entry.restricted { " restricted" } else { "" },
-                                    );
-                                    rsx! {
-                                        button {
-                                            class: "peer-item page-host-item",
-                                            disabled: !capabilities.content || !is_page || !active,
-                                            onclick: move |_| {
-                                                if let Ok(address) = state::PageAddress::parse(&path) {
-                                                    send_cmd(daemon_bridge::DaemonCommand::BrowsePage { address });
-                                                }
-                                            },
-                                            span { class: "peer-icon", if active { "●" } else { "○" } }
-                                            span { class: "peer-name", "{path}" }
-                                            small { "{detail}" }
-                                        }
-                                    }
-                                }
-                            }
-                            for peer in view.network.peers.iter().filter(|p| p.node_role == state::PeerRole::PageHost) {
-                                {
-                                    let hash = peer.hash.clone();
-                                    let name = peer.name.clone().unwrap_or_else(|| hash[..8.min(hash.len())].to_string());
-                                    rsx! {
-                                        button {
-                                            class: "peer-item page-host-item",
-                                            disabled: !capabilities.content,
-                                            aria_describedby: (!capabilities.content).then_some("page-host-controls-disabled"),
-                                            onclick: move |_| {
-                                                match state::PageAddress::remote_index(&hash) {
-                                                    Ok(address) => send_cmd(daemon_bridge::DaemonCommand::BrowsePage { address }),
-                                                    Err(error) => tracing::warn!(target: "dx::content", %error, %hash, "invalid page host"),
-                                                }
-                                            },
-                                            span { class: "peer-icon", style: "color: var(--green);", "●" }
-                                            span { class: "peer-name", "{name}" }
-                                            small { "native announce: " {peer.last_announce.map_or_else(|| "time unreported".into(), |value| value.to_string())} }
-                                        }
-                                    }
-                                }
-                            }
+                        components::browse_directory::BrowseDirectory {
+                            peers: view.network.peers.clone(), paths: view.network.paths.clone(),
+                            visits: view.content.visits.clone(), page: view.content.page.clone(),
+                            local_pages: view.content.local_inventory.clone(),
+                            available: capabilities.content, unavailable_reason: page_unavailable.clone(),
+                            on_open: move |address| send_cmd(daemon_bridge::DaemonCommand::BrowsePage { address }),
                         }
 
                         components::PageBrowser {
+                            on_stop: move |_| send_cmd(daemon_bridge::DaemonCommand::StopBrowse),
                             page: view.content.page.clone(),
                             download: view.content.download.clone(),
                             available: capabilities.content,
@@ -1272,7 +1250,7 @@ async fn handle_ui_command(
             stores
                 .write()
                 .set_page(generation, state::PageView::loading(host.clone(), path.clone()));
-            match bridge.browse_page(&host, &path).await {
+            match browse::bounded(bridge.browse_page(&host, &path)).await {
                 Ok(response) => {
                     stores
                         .write()
@@ -1296,16 +1274,44 @@ async fn handle_ui_command(
                 tracing::warn!(target: "dx::content", %error, "page navigation blocked");
                 return;
             }
+            let previous = stores.read().content.page.clone();
+            let address =
+                request.target.as_deref().and_then(|target| state::PageAddress::parse(target).ok());
+            let (host, path) = address
+                .as_ref()
+                .map(|a| {
+                    let (h, p) = a.parts();
+                    (h.to_string(), p.to_string())
+                })
+                .or_else(|| previous.as_ref().map(|p| (p.host.clone(), p.path.clone())))
+                .unwrap_or_else(|| (String::new(), "/page/index.mu".into()));
             let started = std::time::Instant::now();
-            match bridge.navigate_page(request).await {
+            let mut loading = state::PageView::loading(host.clone(), path.clone());
+            loading.authoritative = previous.and_then(|p| p.authoritative);
+            stores.write().set_page(generation, loading);
+            match browse::bounded(bridge.navigate_page(request)).await {
                 Ok(response) => {
-                    stores
-                        .write()
-                        .set_page(generation, state::PageView::from_daemon(response.page));
+                    stores.write().set_page(generation, state::PageView::from_daemon(response.page))
                 }
-                Err(error) => {
-                    tracing::warn!(target: "dx::content", %error, elapsed_ms = started.elapsed().as_millis(), "page navigation failed")
-                }
+                Err(error) => stores.write().set_page(
+                    generation,
+                    state::PageView::failed_at(
+                        host,
+                        path,
+                        error,
+                        u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    ),
+                ),
+            }
+        }
+        daemon_bridge::DaemonCommand::StopBrowse => {
+            let page = stores.read().content.page.clone();
+            if let Some(mut page) = page.filter(|p| p.loading) {
+                page.loading = false;
+                page.wait_end = Some(state::BrowseWaitEnd::Stopped);
+                page.error = Some("Local wait stopped".into());
+                page.retryable = true;
+                stores.write().set_page(generation, page);
             }
         }
         daemon_bridge::DaemonCommand::ClosePage { session_id } => {
@@ -1313,7 +1319,8 @@ async fn handle_ui_command(
                 tracing::warn!(target: "dx::content", %error, "page close blocked");
                 return;
             }
-            match bridge.close_page(&session_id).await {
+            stores.write().clear_page(generation);
+            match browse::bounded(bridge.close_page(&session_id)).await {
                 Ok(()) => {
                     stores.write().clear_page(generation);
                 }
@@ -1852,7 +1859,7 @@ mod accessibility_tests {
         let css = include_str!("assets/style.css");
         assert!(app.contains("class: \"content-layout\""));
         assert!(app.contains("class: \"messages-layout\""));
-        assert!(app.contains("class: \"peer-item page-host-item\""));
+        assert!(app.contains("BrowseDirectory {"));
         assert!(page.contains("class: \"page-nav-bar\""));
         assert!(css.contains(".page-nav-bar {"));
         assert!(!css.contains(".page-url-bar {"));

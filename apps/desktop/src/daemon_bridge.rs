@@ -123,6 +123,7 @@ pub enum DaemonCommand {
     BrowsePage {
         address: crate::state::PageAddress,
     },
+    StopBrowse,
     NavigatePage(styrene_ipc::types::PageNavigationRequest),
     ClosePage {
         session_id: String,
@@ -207,7 +208,8 @@ impl DaemonCommand {
             | Self::QueryFileDownload { .. }
             | Self::CancelFileDownload { .. }
             | Self::SaveFileDownload { .. } => Some("page.browse"),
-            Self::RefreshPathTable
+            Self::StopBrowse
+            | Self::RefreshPathTable
             | Self::RefreshInterfaces
             | Self::RefreshLinks
             | Self::RefreshOperations
