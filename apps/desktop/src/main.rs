@@ -64,6 +64,7 @@ fn App() -> Element {
         _ => "healthy".to_string(),
     });
     let mut profile_error = use_signal(|| None::<String>);
+    let mut connection_open = use_signal(|| false);
     let mut stores = use_signal(stores::DomainStores::default);
     let mut selected_peer = use_signal(|| None::<String>);
     let mut active_route = use_signal(|| {
@@ -385,6 +386,11 @@ fn App() -> Element {
         style { {include_str!("assets/style.css")} }
 
         div { class: "app",
+            onkeydown: move |event| {
+                if event.key() == Key::Escape {
+                    connection_open.set(false);
+                }
+            },
             // Top bar
             div { class: "topbar",
                 span { class: "brand", "Styrene Mesh" }
@@ -399,9 +405,27 @@ fn App() -> Element {
                         "{profile_label}: {view.runtime.connection_mode}"
                     }
                 }
-                details { class: "connection-menu",
-                    summary { "Connection" }
-                div { class: "profile-config", aria_label: "Runtime profile configuration",
+                div { class: "connection-menu",
+                    button {
+                        class: "connection-trigger",
+                        aria_expanded: "{connection_open}",
+                        aria_controls: "connection-panel",
+                        onclick: move |_| connection_open.toggle(),
+                        "Connection"
+                    }
+                if *connection_open.read() {
+                button {
+                    class: "connection-dismiss",
+                    aria_label: "Dismiss connection settings",
+                    tabindex: "-1",
+                    onclick: move |_| connection_open.set(false),
+                }
+                div { id: "connection-panel", class: "profile-config", aria_label: "Runtime profile configuration",
+                    button {
+                        aria_label: "Close connection settings",
+                        onclick: move |_| connection_open.set(false),
+                        "Close"
+                    }
                     select {
                         aria_label: "Runtime profile",
                         value: "{profile_kind}",
@@ -442,6 +466,7 @@ fn App() -> Element {
                             match profile {
                                 Ok(profile) => {
                                     profile_error.set(None);
+                                    connection_open.set(false);
                                     profile_session.send(profile);
                                 }
                                 Err(error) => profile_error.set(Some(error)),
@@ -449,6 +474,7 @@ fn App() -> Element {
                         },
                         "Activate"
                     }
+                }
                 }
                 }
                 if let Some(error) = profile_error.read().as_ref() {
