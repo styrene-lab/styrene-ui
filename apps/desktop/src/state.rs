@@ -64,6 +64,7 @@ pub enum AppRoute {
     Browse,
     Lab,
     System,
+    Identity,
 }
 
 impl AppRoute {
@@ -82,6 +83,7 @@ impl AppRoute {
             "fleet" => Self::Fleet,
             "lab" => Self::Lab,
             "system" => Self::System,
+            "identity" if cfg!(feature = "identity-extension") => Self::Identity,
             _ => Self::Overview,
         }
     }

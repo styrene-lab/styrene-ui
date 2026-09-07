@@ -16,6 +16,7 @@ mod components;
 mod daemon_bridge;
 #[cfg(test)]
 mod flow_simulation;
+mod identity_extension;
 mod safety;
 mod scenario;
 mod scenario_process;
@@ -376,6 +377,13 @@ fn App() -> Element {
         session.read().as_ref().map(|backend| backend.diagnostics()).unwrap_or_default();
     let route_state = view.route_state(&active_route.read(), capabilities);
     let navigation = components::workspaces::destinations(&view);
+    let navigation = identity_extension::use_host(
+        navigation,
+        active_route,
+        &view.runtime,
+        view.identity.current.as_ref(),
+        matches!(selected_profile.read().clone(), backend::RuntimeProfile::Fixture { .. }),
+    );
     let mut chat_input = use_signal(String::new);
     let mut chat_title = use_signal(String::new);
     let mut chat_method = use_signal(|| "direct".to_string());
@@ -544,6 +552,7 @@ fn App() -> Element {
                     onclick: move |_| activity_open.toggle(),
                     "Activity ({view.activity.entries.len()})"
                 }
+                identity_extension::Controls {}
             }
 
             div { class: "workspace-shell",
@@ -585,6 +594,11 @@ fn App() -> Element {
             // Body
             div { class: "body",
                 match *active_route.read() {
+                    state::AppRoute::Identity => rsx! { identity_extension::Page {
+                        generation:view.runtime.generation.0,server_generation:view.runtime.server_generation,
+                        connected:view.runtime.connected,fixture:matches!(selected_profile.read().clone(),backend::RuntimeProfile::Fixture {..}),
+                        transport_identity:view.identity.current.as_ref().map(|identity|identity.identity_hash.clone()),
+                    } },
                     state::AppRoute::Overview => rsx! {
                         components::workspaces::OverviewPage {
                             session_summary: navigation[0].summary.clone(),

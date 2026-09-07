@@ -8,6 +8,10 @@ repository.workspace = true
 description = "Styrene desktop operator console and protocol testing scaffold"
 publish = false
 
+[features]
+default = ["identity-extension"]
+identity-extension = ["dep:styrene-identity", "dep:styrene-identity-ui", "dep:tempfile"]
+
 [[bin]]
 name = "styrene-dx"
 path = "src/main.rs"
@@ -40,6 +44,9 @@ async-trait.workspace = true
 base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+styrene-identity = { git = "https://github.com/styrene-lab/styrene-identity.git", rev = "eaa5223ddafa28a5de88caa6e132bf6df1cc3eb1", default-features = false, optional = true }
+styrene-identity-ui = { git = "https://github.com/styrene-lab/styrene-identity.git", rev = "eaa5223ddafa28a5de88caa6e132bf6df1cc3eb1", optional = true }
+tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
 dioxus-ssr.workspace = true

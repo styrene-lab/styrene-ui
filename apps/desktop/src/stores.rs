@@ -1272,6 +1272,7 @@ impl DomainStores {
         capabilities: BackendCapabilities,
     ) -> DataState {
         match route {
+            state::AppRoute::Identity => DataState::Ready,
             state::AppRoute::Overview | state::AppRoute::System => self.runtime.state.clone(),
             state::AppRoute::Network => self.network.state.clone(),
             state::AppRoute::Messages if !capabilities.messaging => {
@@ -3272,7 +3273,14 @@ mod interface_feedback_tests {
         request.settings.host = "hub.invalid".into();
         request.settings.port = 4242;
         stores.begin_interface_mutation(generation, request.clone());
-        assert!(stores.network.interface_action_notice.as_ref().unwrap().contains("requested"));
+        assert!(
+            stores
+                .network
+                .interface_action_notice
+                .as_ref()
+                .expect("request notice")
+                .contains("requested")
+        );
         let mut entry = ManagedInterface::default();
         entry.settings = request.settings;
         entry.settings.id = "saved-hub".into();
@@ -3287,7 +3295,7 @@ mod interface_feedback_tests {
                 .network
                 .interface_action_notice
                 .as_ref()
-                .unwrap()
+                .expect("saved interface notice")
                 .starts_with("Saved Community hub")
         );
         let count = stores.activity.entries.len();
@@ -3295,11 +3303,23 @@ mod interface_feedback_tests {
         inventory.entries[0].rx_bytes = 1234;
         stores.set_interface_inventory(generation, Ok(inventory.clone()), false);
         assert_eq!(stores.activity.entries.len(), count + 1);
-        assert!(stores.activity.entries.last().unwrap().summary.contains("connected"));
+        assert!(
+            stores
+                .activity
+                .entries
+                .last()
+                .expect("connection activity")
+                .summary
+                .contains("connected")
+        );
         inventory.entries[0].rx_bytes += 321;
         stores.set_interface_inventory(generation, Ok(inventory), false);
         assert_eq!(stores.activity.entries.len(), count + 1);
-        assert_eq!(stores.network.interface_inventory.as_ref().unwrap().entries[0].rx_bytes, 1555);
+        assert_eq!(
+            stores.network.interface_inventory.as_ref().expect("interface inventory").entries[0]
+                .rx_bytes,
+            1555
+        );
         assert_eq!(stores.network.interface_result_serial, 1);
     }
 
@@ -3317,9 +3337,16 @@ mod interface_feedback_tests {
             true,
         );
         stores.set_interface_inventory(ConnectionGeneration(2), Ok(Default::default()), false);
-        assert!(stores.network.interface_action_notice.as_ref().unwrap().contains("failed"));
+        assert!(
+            stores
+                .network
+                .interface_action_notice
+                .as_ref()
+                .expect("failure notice")
+                .contains("failed")
+        );
         assert!(matches!(
-            stores.activity.entries.last().unwrap().severity,
+            stores.activity.entries.last().expect("failure activity").severity,
             state::ActivitySeverity::Error
         ));
     }

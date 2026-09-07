@@ -423,18 +423,21 @@ mod tests {
         let root = std::env::temp_dir().join(format!(
             "styrene-favorites-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
         ));
         let path = root.join("favorites.json");
-        assert_eq!(read_favorites(&path).unwrap(), Favorites::new());
+        assert_eq!(read_favorites(&path).expect("absent favorites"), Favorites::new());
         let favorites = BTreeMap::from([("ab".repeat(16), "Pi Browse Lab".into())]);
-        write_favorites(&path, &favorites).unwrap();
-        assert_eq!(read_favorites(&path).unwrap(), favorites);
-        std::fs::write(&path, b"invalid").unwrap();
+        write_favorites(&path, &favorites).expect("save favorites");
+        assert_eq!(read_favorites(&path).expect("read favorites"), favorites);
+        std::fs::write(&path, b"invalid").expect("write invalid fixture");
         assert!(read_favorites(&path).is_err());
-        std::fs::write(&path, vec![b' '; 65537]).unwrap();
+        std::fs::write(&path, vec![b' '; 65537]).expect("write oversized fixture");
         assert!(read_favorites(&path).is_err());
-        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(root).expect("remove fixture directory");
     }
     #[test]
     fn newest_sort_orders_known_times_before_unknown_and_breaks_ties_by_name() {

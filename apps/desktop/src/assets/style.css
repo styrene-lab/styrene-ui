@@ -1,4 +1,17 @@
 /* Desktop layout; visual roles come from assets/theme. */
+.identity-extension-page {
+    width: 100%; min-width: 0; overflow: auto; padding: 24px;
+    --identity-text: var(--text);
+    --identity-muted: var(--text-muted);
+    --identity-surface: var(--bg);
+    --identity-card: var(--surface);
+    --identity-border: var(--border);
+    --identity-accent: var(--text);
+}
+.identity-extension-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.identity-extension-controls label { display: flex; gap: 8px; align-items: center; min-height: 44px; }
+.identity-extension-controls input[type="checkbox"] { width: 20px; height: 20px; }
+.identity-extension-controls [role="status"] { color: var(--warning); max-width: 260px; }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 button:focus-visible,
