@@ -171,6 +171,8 @@ pub struct ContentStore {
     visit_order: VecDeque<String>,
     pub page: Option<state::PageView>,
     pub download: Option<styrene_ipc::types::FileDownloadInfo>,
+    pub download_action: Option<String>,
+    pub download_error: Option<String>,
     pub local_inventory: Vec<styrene_ipc::types::PageInfo>,
     pub state: DataState,
 }
@@ -1037,8 +1039,23 @@ impl DomainStores {
         if self.accepts(generation) {
             self.content.page = None;
             self.content.download = None;
+            self.content.download_action = None;
+            self.content.download_error = None;
             self.content.state = DataState::Empty;
         }
+    }
+
+    pub fn pending_download_id(&self) -> Option<String> {
+        self.content
+            .download
+            .as_ref()
+            .filter(|d| !d.state.is_terminal())
+            .map(|d| d.download_id.clone())
+    }
+
+    pub fn download_matches(&self, generation: ConnectionGeneration, id: &str) -> bool {
+        self.accepts(generation)
+            && self.content.download.as_ref().is_some_and(|d| d.download_id == id)
     }
 
     pub fn set_download(
@@ -1699,6 +1716,27 @@ fn link_info(event: styrene_ipc::types::LinkEvent) -> state::LinkInfo {
 mod tests {
     use super::*;
     use styrene_ipc::types::{DeviceInfo, ObservationMetadata};
+
+    #[test]
+    fn download_polling_stops_at_completion_and_commands_follow_current_session_and_id() {
+        use styrene_ipc::types::{FileDownloadInfo, FileDownloadState};
+        let mut stores = DomainStores::default();
+        stores.begin_session("Live", ConnectionGeneration(2));
+        let mut info = FileDownloadInfo::default();
+        info.download_id = "current".into();
+        info.state = FileDownloadState::Receiving;
+        stores.set_download(ConnectionGeneration(2), info.clone());
+        assert_eq!(stores.pending_download_id().as_deref(), Some("current"));
+        assert!(stores.download_matches(ConnectionGeneration(2), "current"));
+        assert!(!stores.download_matches(ConnectionGeneration(1), "current"));
+        assert!(!stores.download_matches(ConnectionGeneration(2), "replaced"));
+        info.state = FileDownloadState::Completed;
+        stores.set_download(ConnectionGeneration(2), info);
+        assert_eq!(stores.pending_download_id(), None);
+        stores.begin_session("Replacement", ConnectionGeneration(3));
+        assert_eq!(stores.pending_download_id(), None);
+        assert!(!stores.download_matches(ConnectionGeneration(2), "current"));
+    }
 
     fn stores() -> DomainStores {
         let mut stores = DomainStores::default();

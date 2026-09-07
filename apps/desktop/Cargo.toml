@@ -27,6 +27,9 @@ styrene-interop-runner.workspace = true
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
 
+# Native file dialogs (already pinned transitively by Dioxus)
+rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal"] }
+
 # Utilities
 log.workspace = true
 tracing.workspace = true

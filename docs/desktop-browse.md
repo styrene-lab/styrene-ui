@@ -56,3 +56,24 @@ are displayed; an unreadable existing list blocks edits to avoid overwriting it.
 I2P and Yggdrasil are explicitly unavailable source placeholders. Cached content
 is disabled until a provider exposes a cache inventory. No mock hosts are mixed
 into the live directory and no filtering action sends network probes.
+
+## Downloads
+
+The desktop observes active downloads automatically at one-second intervals;
+completed, cancelled, failed and saved transfers stop polling. A compact card
+shows progress (indeterminate when total size is unknown), Cancel while active,
+and Save when the completed bytes have passed verification. Completed means
+ready to save; Saved requires the daemon's acknowledgement.
+
+Save opens the native OS dialog with the filename suggested. Cancelling that
+dialog leaves the download available. The existing daemon save contract creates
+new files; an existing or unwritable destination produces a visible error and
+can be retried with another path. Paths are interpreted by the attached daemon;
+the supported desktop setup uses a daemon on the same machine. Remote-daemon
+file export is not implemented by selecting a local filename.
+
+Transfer details retains protocol counters, hashes and correlation information.
+Those counters are not represented as the downloaded file size. Poll, cancel,
+and save errors appear in the card rather than only in logs. Backend-session
+replacement clears operation state, and queued actions cannot target another
+currently displayed download.

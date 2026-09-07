@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 #[cfg(test)]
 use styrene_ipc::PageAddress;
 use styrene_ipc::types::{
-    FileDownloadInfo, FileDownloadRequest, FileDownloadState, PageBrowseStage, PageBrowseStageKind,
+    FileDownloadInfo, FileDownloadRequest, PageBrowseStage, PageBrowseStageKind,
     PageBrowseStageState, PageFormFieldKind, PageFormSubmission, PageNavigationAction,
     PageNavigationRequest,
 };
@@ -151,7 +151,8 @@ pub fn PageBrowser(
     on_close: EventHandler<String>,
     on_stop: EventHandler<()>,
     on_download: EventHandler<FileDownloadRequest>,
-    on_refresh_download: EventHandler<String>,
+    download_action: Option<String>,
+    download_error: Option<String>,
     on_cancel_download: EventHandler<String>,
     on_save_download: EventHandler<(String, String)>,
 ) -> Element {
@@ -161,7 +162,6 @@ pub fn PageBrowser(
     let mut page_mode = use_signal(PageMode::default);
     let mut field_values = use_signal(std::collections::BTreeMap::<String, Vec<String>>::new);
     let mut page_session = use_signal(String::new);
-    let mut save_path = use_signal(String::new);
 
     if let Some(ref pv) = page {
         let current_url =
@@ -506,52 +506,12 @@ pub fn PageBrowser(
                 }
             }
             if let Some(download) = download {
-                div { class: "page-download",
-                    strong { "Download: {download.native_path}" }
-                    p { "State: {download.state:?} | {download.received_bytes}/{download.total_bytes} bytes | progress={download.progress}" }
-                    p {
-                        "Correlation: {download.correlation_id} | Transfer: {download.transfer:?} | Resource: "
-                        {download.resource_hash.as_deref().unwrap_or("none")}
-                    }
-                    p { "SHA-256: " {download.sha256.as_deref().unwrap_or("pending")} }
-                    p { "Integrity: {download.integrity_verified}" }
-                    if let Some(error) = download.error.as_deref() {
-                        p { class: "page-error", "Failure: {error}" }
-                    }
-                    button {
-                        onclick: {
-                            let id = download.download_id.clone();
-                            move |_| on_refresh_download.call(id.clone())
-                        },
-                        "Refresh"
-                    }
-                    if !download.state.is_terminal() {
-                        button {
-                            onclick: {
-                                let id = download.download_id.clone();
-                                move |_| on_cancel_download.call(id.clone())
-                            },
-                            "Cancel"
-                        }
-                    }
-                    if download.state == FileDownloadState::Completed && download.integrity_verified {
-                        input {
-                            r#type: "text",
-                            aria_label: "Save destination",
-                            placeholder: "/path/to/save",
-                            value: "{save_path}",
-                            oninput: move |event| save_path.set(event.value()),
-                        }
-                        button {
-                            disabled: save_path.read().trim().is_empty(),
-                            onclick: {
-                                let id = download.download_id.clone();
-                                move |_| on_save_download.call((id.clone(), save_path.read().clone()))
-                            },
-                            "Save verified file"
-                        }
-                    }
+                super::download_card::DownloadCard {
+                    key: "{download.download_id}", download, action: download_action, error: download_error,
+                    on_cancel: on_cancel_download, on_save: on_save_download, available,
                 }
+            } else if let Some(error) = download_error {
+                p { class: "download-error", role: "alert", "{error}" }
             }
         }
     }

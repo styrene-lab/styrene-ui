@@ -119,8 +119,20 @@ fn App() -> Element {
                                 refresh.set_missed_tick_behavior(
                                     tokio::time::MissedTickBehavior::Skip,
                                 );
+                                let mut download_refresh =
+                                    tokio::time::interval(std::time::Duration::from_secs(1));
+                                download_refresh.set_missed_tick_behavior(
+                                    tokio::time::MissedTickBehavior::Skip,
+                                );
                                 loop {
                                     let cmd = tokio::select! {
+                                        _ = download_refresh.tick() => {
+                                            let pending = stores.read().pending_download_id();
+                                            match pending {
+                                                Some(download_id) => daemon_bridge::DaemonCommand::QueryFileDownload { download_id },
+                                                None => continue,
+                                            }
+                                        },
                                         command = cmd_rx.recv() => match command { Some(command) => command, None => break },
                                         _ = refresh.tick() => daemon_bridge::DaemonCommand::RefreshInterfaces,
                                     };
@@ -930,7 +942,8 @@ fn App() -> Element {
                             },
                             on_close: move |session_id| send_cmd(daemon_bridge::DaemonCommand::ClosePage { session_id }),
                             on_download: move |request| send_cmd(daemon_bridge::DaemonCommand::StartFileDownload(request)),
-                            on_refresh_download: move |download_id| send_cmd(daemon_bridge::DaemonCommand::QueryFileDownload { download_id }),
+                            download_action: view.content.download_action.clone(),
+                            download_error: view.content.download_error.clone(),
                             on_cancel_download: move |download_id| send_cmd(daemon_bridge::DaemonCommand::CancelFileDownload { download_id }),
                             on_save_download: move |(download_id, destination)| send_cmd(daemon_bridge::DaemonCommand::SaveFileDownload { download_id, destination }),
                         }
@@ -1332,41 +1345,98 @@ async fn handle_ui_command(
                 tracing::warn!(target: "dx::content", %error, "download start blocked");
                 return;
             }
+            stores.write().content.download_error = None;
             match bridge.start_file_download(request).await {
-                Ok(download) => stores.write().set_download(generation, download),
+                Ok(download) => {
+                    stores.write().set_download(generation, download);
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = None;
+                    }
+                }
                 Err(error) => {
-                    tracing::warn!(target: "dx::content", %error, "download start failed")
+                    tracing::warn!(target: "dx::content", %error, "download start failed");
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error =
+                            Some("Could not start the download. Try again.".into());
+                    }
                 }
             }
         }
         daemon_bridge::DaemonCommand::QueryFileDownload { download_id } => {
+            if !stores.read().download_matches(generation, &download_id) {
+                return;
+            }
             match bridge.file_download(&download_id).await {
-                Ok(download) => stores.write().set_download(generation, download),
+                Ok(download) => {
+                    stores.write().set_download(generation, download);
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = None;
+                    }
+                }
                 Err(error) => {
-                    tracing::warn!(target: "dx::content", %error, "download refresh failed")
+                    tracing::warn!(target: "dx::content", %error, "download refresh failed");
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = Some(
+                            "Progress updates are unavailable. Retrying automatically…".into(),
+                        );
+                    }
                 }
             }
         }
         daemon_bridge::DaemonCommand::CancelFileDownload { download_id } => {
+            if !stores.read().download_matches(generation, &download_id) {
+                return;
+            }
             if let Err(error) = stores.read().mutation_availability_at(generation, "page.browse") {
                 tracing::warn!(target: "dx::content", %error, "download cancellation blocked");
                 return;
             }
+            stores.write().content.download_action = Some("Cancelling…".into());
             match bridge.cancel_file_download(&download_id).await {
-                Ok(download) => stores.write().set_download(generation, download),
-                Err(error) => {
-                    tracing::warn!(target: "dx::content", %error, "download cancellation failed")
+                Ok(download) => {
+                    stores.write().set_download(generation, download);
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = None;
+                    }
                 }
+                Err(error) => {
+                    tracing::warn!(target: "dx::content", %error, "download cancellation failed");
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error =
+                            Some("Could not cancel the download. Try again.".into());
+                    }
+                }
+            }
+            if stores.read().runtime.generation == generation {
+                stores.write().content.download_action = None;
             }
         }
         daemon_bridge::DaemonCommand::SaveFileDownload { download_id, destination } => {
+            if !stores.read().download_matches(generation, &download_id) {
+                return;
+            }
             if let Err(error) = stores.read().mutation_availability_at(generation, "page.browse") {
                 tracing::warn!(target: "dx::content", %error, "download save blocked");
                 return;
             }
+            stores.write().content.download_action = Some("Saving…".into());
+            stores.write().content.download_error = None;
             match bridge.save_file_download(&download_id, &destination).await {
-                Ok(download) => stores.write().set_download(generation, download),
-                Err(error) => tracing::warn!(target: "dx::content", %error, "download save failed"),
+                Ok(download) => {
+                    stores.write().set_download(generation, download);
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = None;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(target: "dx::content", %error, "download save failed");
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = Some("Could not save the file. Choose a writable location and an unused filename.".into());
+                    }
+                }
+            }
+            if stores.read().runtime.generation == generation {
+                stores.write().content.download_action = None;
             }
         }
         daemon_bridge::DaemonCommand::RefreshPathTable => match bridge.path_table().await {
@@ -1840,8 +1910,12 @@ mod accessibility_tests {
         assert!(inspector.contains("aria_label: \"Search network nodes\""));
         assert!(renderer.contains("tabindex: \"0\""));
         assert!(renderer.contains("onkeydown:"));
-        for label in ["Back", "Forward", "Page address", "Save destination"] {
+        for label in ["Back", "Forward", "Page address"] {
             assert!(page.contains(&format!("aria_label: \"{label}\"")));
+        }
+        let download = include_str!("components/download_card.rs");
+        for label in ["Save downloaded file", "Cancel download", "Download progress"] {
+            assert!(download.contains(&format!("aria_label: \"{label}\"")));
         }
     }
 

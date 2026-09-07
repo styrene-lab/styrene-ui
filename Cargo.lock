@@ -4980,6 +4980,7 @@ dependencies = [
  "dioxus",
  "futures-util",
  "log",
+ "rfd",
  "rmpv",
  "serde",
  "serde_json",

@@ -30,3 +30,5 @@ pub mod interface_manager;
 pub mod workspaces;
 
 pub mod browse_directory;
+
+pub mod download_card;
