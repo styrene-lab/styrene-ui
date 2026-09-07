@@ -11,7 +11,7 @@ or the last attempt in this session. It retains at most 128 recent node outcomes
 Changing backend sessions clears these outcomes. Search does not probe remote hosts.
 
 Opening a page starts a separate UI task. Another selection replaces the local
-wait; **Stop waiting** ends it. A local deadline ends the wait after 15 seconds.
+wait; **Stop waiting** ends it. A local deadline ends the wait after 45 seconds.
 Neither action claims to cancel work already accepted by the daemon. Normal
 commands and interface refreshes are no longer held behind the UI page await.
 Provider and transport scheduling can still affect response time.
@@ -29,5 +29,9 @@ is permanently offline. It establishes that this attempt did not establish a lin
 
 Follow-up backend work should provide stage events and explicit cancellation before
 the UI offers stage-specific progress or remote cancellation. A longer, operator-
-selected wait for slow links needs its own policy; this first pass uses 15 seconds.
+selected wait for slow links needs its own policy; this first pass uses 45 seconds.
 No daemon protocol, identity lifecycle, or mobile implementation changed here.
+
+The local budget includes the default daemon operation (30 seconds) and IPC
+cleanup allowance (15 seconds). It must not discard the daemon result at the
+earlier 15-second observation cutoff. Stop waiting remains available immediately.

@@ -2,7 +2,8 @@
 use std::future::Future;
 use std::time::Duration;
 
-pub const WAIT_SECONDS: u64 = 15;
+// Allow the default 30-second daemon operation plus the IPC cleanup allowance.
+pub const WAIT_SECONDS: u64 = 45;
 
 pub async fn bounded<T>(read: impl Future<Output = Result<T, String>>) -> Result<T, String> {
     with_budget(read, Duration::from_secs(WAIT_SECONDS)).await
@@ -23,6 +24,18 @@ mod tests {
     async fn completed_read_and_provider_failure_are_preserved() {
         assert_eq!(bounded(async { Ok(42) }).await, Ok(42));
         assert_eq!(bounded(async { Err::<(), _>("denied".into()) }).await, Err("denied".into()));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn daemon_result_after_old_cutoff_is_preserved() {
+        assert_eq!(
+            bounded(async {
+                tokio::time::sleep(Duration::from_secs(25)).await;
+                Ok(42)
+            })
+            .await,
+            Ok(42)
+        );
     }
 
     #[tokio::test]

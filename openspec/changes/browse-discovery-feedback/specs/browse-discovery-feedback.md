@@ -20,7 +20,7 @@ And it does not show a green available indicator
 Browse and navigation reads SHALL NOT block the general UI command loop. A new
 selection SHALL replace the old local wait. Stop waiting SHALL finish the local
 loading state without claiming backend cancellation. Session changes SHALL discard
-old work and stale results. Local waits SHALL end after 15 seconds.
+old work and stale results. Local waits SHALL end after 45 seconds.
 
 #### Scenario: Unresponsive node
 Given a page request that never completes

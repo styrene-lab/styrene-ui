@@ -131,7 +131,7 @@ fn resolve_navigation(url: &str, current: Option<&PageAddress>) -> Option<PageAd
 
 fn failure_summary(page: &PageView) -> String {
     match page.wait_end {
-        Some(crate::state::BrowseWaitEnd::TimedOut) => "No response within 15 seconds. The node may need a route or more time. The daemon may still finish its request.".into(),
+        Some(crate::state::BrowseWaitEnd::TimedOut) => "No response before the local deadline. The node may need a route or more time. The daemon may still finish its request.".into(),
         Some(crate::state::BrowseWaitEnd::Stopped) => "Stopped waiting locally. This does not cancel work already accepted by the daemon.".into(),
         None => page.authoritative.as_ref().and_then(|p| p.failure.as_ref())
             .map(|f| format!("{} failed. The page could not be retrieved.", stage_label(f.stage)))

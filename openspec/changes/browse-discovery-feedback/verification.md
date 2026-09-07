@@ -23,3 +23,21 @@ verifies presentation, not those interactions. The daemon's final-stage latency 
 remote link establishment are not fixed or validated by this UI change. Linux,
 Android and Apple mobile builds were not run. Keep this change unarchived until
 native interaction acceptance is recorded.
+
+## NomadNet extraction follow-up — 2026-09-06
+
+Backend dependencies now pin `53e601003f2ced023301ccbbd320af022feb1e74`,
+including the extracted `styrene-nomadnet` coordinator. Mobile target-specific
+pins match the workspace pin to avoid mixing backend contracts.
+
+The local observation budget is 45 seconds: the default daemon operation has
+30 seconds and IPC has a 15-second cleanup allowance. The previous 15-second UI
+cutoff could discard an eventual success or the daemon's structured failure.
+A paused-clock regression preserves a result arriving at 25 seconds. Explicit
+Stop/replacement and pending-read drop behavior are retained.
+
+Validation: 153 desktop tests passed, 4 ignored; warning-denied desktop Clippy
+and formatting passed. This does not prove live remote responsiveness. Apple
+mobile, Android, and Linux runtime validation remain unexecuted for this pair.
+The unpublished backend commit was supplied to the local Cargo Git cache from
+the canonical development clone; remote handoff must transfer that exact commit.
