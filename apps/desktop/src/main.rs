@@ -770,41 +770,24 @@ fn App() -> Element {
                                             }
                                             // Chat input
                                             div { class: "chat-input-bar",
-                                                if let Some(reason) = &chat_send_reason {
-                                                    p { id: "chat-send-disabled-reason", class: "control-disabled-reason", "Chat controls disabled: {reason}" }
+                                                if let Some(reason) = chat_send_reason.as_ref().filter(|_| chat_unavailable.is_some() || !chat_input.read().trim().is_empty()) {
+                                                    p { id: "chat-send-disabled-reason", class: "control-disabled-reason", "{reason}" }
                                                 }
-                                                input {
-                                                    class: "chat-input",
-                                                    aria_label: "Message title",
-                                                    r#type: "text",
-                                                    placeholder: "Optional title",
-                                                    value: "{chat_title}",
-                                                    oninput: move |evt| chat_title.set(evt.value()),
-                                                }
-                                                select {
-                                                    aria_label: "Delivery method",
-                                                    value: "{chat_method}",
-                                                    onchange: move |evt| chat_method.set(evt.value()),
-                                                    option { value: "direct", "Direct" }
-                                                    option { value: "opportunistic", "Opportunistic" }
-                                                    option { value: "propagated", "Propagated" }
-                                                    option { value: "paper", "Paper" }
-                                                }
-                                                input {
-                                                    class: "chat-input",
+                                                textarea {
+                                                    class: "chat-input message-body",
+                                                    rows: "3",
                                                     aria_label: "Message content",
-                                                    disabled: chat_unavailable.is_some(),
                                                     title: chat_unavailable.as_deref().unwrap_or("Message peer"),
                                                     aria_describedby: chat_unavailable.as_ref().map(|_| "chat-send-disabled-reason"),
-                                                    r#type: "text",
-                                                    placeholder: "Type a message...",
+                                                    placeholder: "Write a message…",
                                                     value: "{chat_input}",
                                                     oninput: move |evt| chat_input.set(evt.value()),
-                                                    onkeypress: {
+                                                    onkeydown: {
                                                         let ph2 = ph.clone();
                                                         let send_disabled = chat_send_reason.is_some();
                                                         move |evt: KeyboardEvent| {
-                                                            if evt.key() == Key::Enter {
+                                                            if evt.key() == Key::Enter && (evt.modifiers().ctrl() || evt.modifiers().meta()) {
+                                                                evt.prevent_default();
                                                                 let content = chat_input.read().clone();
                                                                 if !send_disabled && !content.trim().is_empty() {
                                                                     send_cmd(daemon_bridge::DaemonCommand::SendChat {
@@ -819,41 +802,12 @@ fn App() -> Element {
                                                         }
                                                     },
                                                 }
-                                                button {
-                                                    class: "chat-send-btn",
-                                                    disabled: chat_send_reason.is_some(),
-                                                    title: chat_send_reason.as_deref().unwrap_or("Send message"),
-                                                    aria_describedby: chat_send_reason.as_ref().map(|_| "chat-send-disabled-reason"),
-                                                    onclick: {
-                                                        let ph3 = ph.clone();
-                                                        move |_| {
-                                                            let content = chat_input.read().clone();
-                                                            if !content.trim().is_empty() {
-                                                                send_cmd(daemon_bridge::DaemonCommand::SendChat {
-                                                                    peer_hash: ph3.clone(),
-                                                                    content,
-                                                                    title: (!chat_title.read().is_empty()).then(|| chat_title.read().clone()),
-                                                                    delivery_method: chat_method.read().clone(),
-                                                                    attachments: chat_attachments.read().clone(),
-                                                                });
-                                                            }
-                                                        }
-                                                    },
-                                                    "Send"
-                                                }
-                                                button {
-                                                    disabled: view.mutation_availability("messaging.manage").is_err(),
-                                                    onclick: {
-                                                        let peer = ph.clone();
-                                                        move |_| {
-                                                            send_cmd(daemon_bridge::DaemonCommand::DiscardDraft { peer_hash: peer.clone() });
-                                                            chat_input.set(String::new());
-                                                        }
-                                                    },
-                                                    "Discard Draft"
-                                                }
+                                                div { class: "composer-toolbar",
+                                                    label { class: "composer-attach", r#for: "chat-attachment-picker", title: "Attach files", "Attach files" }
                                                 input {
                                                     r#type: "file",
+                                                    id: "chat-attachment-picker",
+                                                    class: "composer-file-input",
                                                     aria_label: "Message attachments",
                                                     multiple: true,
                                                     onchange: move |event| {
@@ -882,10 +836,76 @@ fn App() -> Element {
                                                         });
                                                     },
                                                 }
-                                                for attachment in chat_attachments.read().iter() {
-                                                    span { class: "compose-note", "{attachment.name} ({attachment.bytes.len()} bytes)" }
+                                                    details { class: "composer-options",
+                                                        summary { "Message options" }
+                                                        div { class: "composer-options-panel",
+                                                input {
+                                                    class: "chat-input",
+                                                    aria_label: "Message title",
+                                                    r#type: "text",
+                                                    placeholder: "Optional title",
+                                                    value: "{chat_title}",
+                                                    oninput: move |evt| chat_title.set(evt.value()),
                                                 }
-                                                span { class: "compose-note", "Attachments are not retained in drafts." }
+                                                select {
+                                                    aria_label: "Delivery method",
+                                                    value: "{chat_method}",
+                                                    onchange: move |evt| chat_method.set(evt.value()),
+                                                    option { value: "direct", "Direct" }
+                                                    option { value: "opportunistic", "Opportunistic" }
+                                                    option { value: "propagated", "Propagated" }
+                                                    option { value: "paper", "Paper" }
+                                                }
+                                                button {
+                                                    disabled: view.mutation_availability("messaging.manage").is_err(),
+                                                    onclick: {
+                                                        let peer = ph.clone();
+                                                        move |_| {
+                                                            send_cmd(daemon_bridge::DaemonCommand::DiscardDraft { peer_hash: peer.clone() });
+                                                            chat_input.set(String::new());
+                                                            chat_title.set(String::new());
+                                                            chat_attachments.set(Vec::new());
+                                                        }
+                                                    },
+                                                    "Discard Draft"
+                                                }
+                                                        }
+                                                    }
+                                                    span { class: "composer-shortcut", "⌘ / Ctrl + Enter to send" }
+                                                button {
+                                                    class: "chat-send-btn",
+                                                    disabled: chat_send_reason.is_some(),
+                                                    title: chat_send_reason.as_deref().unwrap_or("Send message"),
+                                                    aria_describedby: chat_unavailable.as_ref().map(|_| "chat-send-disabled-reason"),
+                                                    onclick: {
+                                                        let ph3 = ph.clone();
+                                                        move |_| {
+                                                            let content = chat_input.read().clone();
+                                                            if !content.trim().is_empty() {
+                                                                send_cmd(daemon_bridge::DaemonCommand::SendChat {
+                                                                    peer_hash: ph3.clone(),
+                                                                    content,
+                                                                    title: (!chat_title.read().is_empty()).then(|| chat_title.read().clone()),
+                                                                    delivery_method: chat_method.read().clone(),
+                                                                    attachments: chat_attachments.read().clone(),
+                                                                });
+                                                            }
+                                                        }
+                                                    },
+                                                    "Send"
+                                                }
+                                                }
+                                                if !chat_attachments.read().is_empty() {
+                                                    div { class: "composer-attachments",
+                                                        for (index, attachment) in chat_attachments.read().iter().enumerate() {
+                                                            span { class: "composer-attachment",
+                                                                "{attachment.name}"
+                                                                button { aria_label: "Remove {attachment.name}", onclick: move |_| { let mut attachments = chat_attachments.write(); if index < attachments.len() { attachments.remove(index); } }, "×" }
+                                                            }
+                                                        }
+                                                    }
+                                                    span { class: "compose-note", "Files are attached to this message only; they are not saved with the draft." }
+                                                }
                                             }
                                         }
                                     }
