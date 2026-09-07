@@ -10,3 +10,11 @@ files, show removable file chips, and show the attachment persistence note only
 when attachments exist. Keep the native picker accessible to keyboard users.
 
 This is desktop presentation work; mobile composer work remains independent.
+
+## Message lifecycle controls
+
+Align compact, styled actions with the outgoing message. Delivered and other
+terminal nonretryable messages have no Retry/Cancel controls. Retry requires the
+daemon's reported eligibility and a failed, expired or recoverable queued state.
+Cancel is offered while queued or sending. The daemon remains authoritative and
+can reject an action if transport dispatch or another transition has raced it.

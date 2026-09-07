@@ -729,8 +729,9 @@ fn App() -> Element {
                                                     m.source == *peer_hash || m.destination == *peer_hash
                                                 ) {
                                                     components::MessageBubble { message: msg.clone() }
-                                                    if msg.is_outgoing {
+                                                    if msg.lifecycle_actions() != (false, false) {
                                                         div { class: "message-actions",
+                                                            if msg.lifecycle_actions().0 {
                                                             button {
                                                                 disabled: view.mutation_availability("messaging.lifecycle").is_err(),
                                                                 onclick: {
@@ -739,8 +740,10 @@ fn App() -> Element {
                                                                         message_id: message_id.clone(),
                                                                     })
                                                                 },
-                                                                "Retry"
+                                                                "Retry sending"
                                                             }
+                                                            }
+                                                            if msg.lifecycle_actions().1 {
                                                             button {
                                                                 disabled: view.mutation_availability("messaging.lifecycle").is_err(),
                                                                 onclick: {
@@ -749,7 +752,8 @@ fn App() -> Element {
                                                                         message_id: message_id.clone(),
                                                                     })
                                                                 },
-                                                                "Cancel"
+                                                                "Cancel sending"
+                                                            }
                                                             }
                                                         }
                                                     }

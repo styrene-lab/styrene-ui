@@ -414,6 +414,7 @@ pub struct ChatMessage {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MessageLifecycle {
+    pub retry_eligible: Option<bool>,
     pub state: styrene_ipc::types::MessageLifecycleState,
     pub terminal_detail: Option<String>,
     pub requested_method: Option<String>,
@@ -430,6 +431,20 @@ pub struct MessageLifecycle {
     pub propagation: Vec<styrene_ipc::types::MessagePropagationCorrelationInfo>,
 }
 
+impl ChatMessage {
+    /// Presentation eligibility. The daemon still authorizes and validates each command.
+    pub fn lifecycle_actions(&self) -> (bool, bool) {
+        use styrene_ipc::types::MessageLifecycleState as State;
+        if !self.is_outgoing {
+            return (false, false);
+        }
+        let retry = self.lifecycle.retry_eligible == Some(true)
+            && matches!(self.lifecycle.state, State::Failed | State::Expired | State::Queued);
+        let cancel = matches!(self.lifecycle.state, State::Queued | State::Sending);
+        (retry, cancel)
+    }
+}
+
 impl From<styrene_ipc::types::MessageInfo> for ChatMessage {
     fn from(message: styrene_ipc::types::MessageInfo) -> Self {
         Self {
@@ -441,6 +456,7 @@ impl From<styrene_ipc::types::MessageInfo> for ChatMessage {
             is_outgoing: message.is_outgoing,
             status: message.status,
             lifecycle: MessageLifecycle {
+                retry_eligible: message.retry_eligible,
                 state: message.lifecycle_state,
                 terminal_detail: message.terminal_detail,
                 requested_method: message.requested_delivery_method,
@@ -575,6 +591,24 @@ mod tests {
 
         let fallback = format!("{{{}𝗵𝗵𝗵", "a".repeat(22));
         assert_eq!(extract_json_name(&fallback), format!("{{{}𝗵...", "a".repeat(22)));
+    }
+
+    #[test]
+    fn message_actions_respect_direction_terminal_state_and_retry_eligibility() {
+        use styrene_ipc::types::MessageLifecycleState as State;
+        let mut info = styrene_ipc::types::MessageInfo::default();
+        info.is_outgoing = true;
+        info.lifecycle_state = State::Delivered;
+        info.retry_eligible = Some(true);
+        assert_eq!(ChatMessage::from(info.clone()).lifecycle_actions(), (false, false));
+        info.lifecycle_state = State::Failed;
+        assert_eq!(ChatMessage::from(info.clone()).lifecycle_actions(), (true, false));
+        info.retry_eligible = Some(false);
+        assert_eq!(ChatMessage::from(info.clone()).lifecycle_actions(), (false, false));
+        info.lifecycle_state = State::Sending;
+        assert_eq!(ChatMessage::from(info.clone()).lifecycle_actions(), (false, true));
+        info.is_outgoing = false;
+        assert_eq!(ChatMessage::from(info).lifecycle_actions(), (false, false));
     }
 
     #[test]
