@@ -408,6 +408,7 @@ pub struct ChatMessage {
     pub destination: String,
     pub content: String,
     pub timestamp: i64,
+    pub ingest_sequence: Option<u64>,
     pub is_outgoing: bool,
     /// Delivery status: "pending", "delivered", "read", "failed", or empty.
     pub status: String,
@@ -455,6 +456,7 @@ impl From<styrene_ipc::types::MessageInfo> for ChatMessage {
             destination: message.destination_hash,
             content: message.content,
             timestamp: message.timestamp,
+            ingest_sequence: message.ingest_sequence,
             is_outgoing: message.is_outgoing,
             status: message.status,
             lifecycle: MessageLifecycle {

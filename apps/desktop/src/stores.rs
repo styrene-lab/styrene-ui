@@ -863,7 +863,9 @@ impl DomainStores {
             return;
         }
         self.messages.loaded_peer_hashes.insert(peer_hash.to_string());
-        for incoming in messages {
+        // History pages arrive newest first. Preserve their chronological order
+        // for legacy daemons without persistent sequence metadata as well.
+        for incoming in messages.into_iter().rev() {
             let incoming_id = incoming.id.clone();
             if let Some(existing) =
                 self.messages.messages.iter_mut().find(|item| item.id == incoming.id)
@@ -905,12 +907,19 @@ impl DomainStores {
         self.messages.message_cursors.remove(peer_hash);
     }
 
-    pub fn push_outgoing(&mut self, generation: ConnectionGeneration, message: state::ChatMessage) {
+    pub fn push_outgoing(
+        &mut self,
+        generation: ConnectionGeneration,
+        mut message: state::ChatMessage,
+    ) {
         if self.accepts(generation) {
             self.mark_message_live(message.id.clone());
             if let Some(existing) =
                 self.messages.messages.iter_mut().find(|item| item.id == message.id)
             {
+                // A degraded send acknowledgement must not discard a key that
+                // an authoritative event or history query already supplied.
+                message.ingest_sequence = message.ingest_sequence.or(existing.ingest_sequence);
                 *existing = message;
             } else {
                 self.messages.messages.push(message);
@@ -1027,9 +1036,9 @@ impl DomainStores {
     fn sort_messages(&mut self) {
         let mut seen = HashSet::new();
         self.messages.messages.retain(|message| seen.insert(message.id.clone()));
-        self.messages
-            .messages
-            .sort_by(|left, right| (left.timestamp, &left.id).cmp(&(right.timestamp, &right.id)));
+        self.messages.messages.sort_by_key(|message| {
+            (message.timestamp, message.ingest_sequence.unwrap_or(u64::MAX))
+        });
     }
 
     pub fn set_page(&mut self, generation: ConnectionGeneration, mut page: state::PageView) {
@@ -2264,6 +2273,50 @@ mod tests {
         info.timestamp = timestamp;
         info.status = status.into();
         state::ChatMessage::from(info)
+    }
+
+    #[test]
+    fn same_second_reply_stays_after_send_through_events_pages_and_reload() {
+        let generation = ConnectionGeneration(2);
+        let mut stores = stores();
+        let mut sent = chat("d8-sent", 100, "sending");
+        sent.is_outgoing = true;
+        sent.ingest_sequence = Some(17);
+        let mut reply = styrene_ipc::types::MessageInfo::default();
+        reply.id = "c1-reply".into();
+        reply.source_hash = "peer".into();
+        reply.timestamp = 100;
+        reply.ingest_sequence = Some(18);
+        reply.projection_complete = true;
+        // Deliberately deliver the reply event before the send acknowledgement.
+        stores
+            .apply_daemon_event(generation, DaemonEvent::MessageReceived(Box::new(reply.clone())));
+        stores.push_outgoing(generation, sent.clone());
+        let assert_order = |stores: &DomainStores| {
+            assert_eq!(
+                stores.messages.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+                vec!["d8-sent", "c1-reply"]
+            );
+        };
+        assert_order(&stores);
+        stores.merge_peer_message_page(
+            generation,
+            "peer",
+            vec![reply.clone().into()],
+            Some("older".into()),
+        );
+        stores.merge_peer_message_page(generation, "peer", vec![sent.clone()], None);
+        assert_order(&stores);
+        sent.status = "delivered".into();
+        stores.push_outgoing(generation, sent.clone());
+        assert_order(&stores);
+        let mut degraded = sent.clone();
+        degraded.ingest_sequence = None;
+        stores.push_outgoing(generation, degraded);
+        assert_order(&stores);
+        stores.messages.messages.clear();
+        stores.merge_peer_message_page(generation, "peer", vec![reply.into(), sent], None);
+        assert_order(&stores);
     }
 
     #[test]
