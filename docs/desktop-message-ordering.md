@@ -41,15 +41,35 @@ Backend revision: `a04d2b572deda3aea4749fc1a9481ecff7397fec`.
 The focused storage restart/pagination regression and facade projection test
 passed, as did the IPC crate tests, 168 desktop tests (4 ignored), and
 warning-denied Clippy for the daemon, IPC types, IPC server, and desktop.
-The desktop tests ran against `c8cc8726`, before the additional manual socket
-serializer change in `a04d2b57`; the final desktop bundle uses `a04d2b57`.
+The desktop suite was rerun against the final `a04d2b57` backend pin: 168 passed,
+0 failed, 4 pre-existing ignored tests.
 
-The expanded storage suite and Unix-socket integration suite did not enter their
-test harnesses during this run. Process samples showed the test executables
-waiting at the macOS loader entry point. Those processes were terminated; the
-socket suite's one retry also stalled before test execution. Do not count these
-expanded suites as passing. Linux/Android and Apple mobile validation remain
-unexecuted for the additive dependency update.
+The expanded suites also passed:
+
+- Unix-socket integration: 47 passed, 0 failed, 0 ignored. These assertions cover
+  the ordering field in query responses and pushed message events.
+- Message storage: 84 passed, 0 failed, 1 initially ignored. The ignored
+  `new_database_file_is_private_under_permissive_child_umask` test was then run
+  separately with `--exact ... --ignored` and passed, including its child
+  process. Total: 85 storage tests passed.
+
+The initial executables stalled at the macOS loader entry point when launched
+from the backend's build-cache directory. Copying those same executables to
+`/tmp/styrene-order-validation/` allowed both suites to execute successfully.
+SHA-256 equality was verified before execution; the test code was not changed,
+re-signed, or bypassed. This establishes a successful isolated execution path,
+not the underlying macOS cause. Tests used their normal crate working
+directories. The storage run took 4.73 seconds and the socket run 0.22 seconds.
+
+Executable SHA-256:
+
+- Socket: `e8065d1b4a071a6ac9afae0b8b9026d60120a04929c87fdb46bdc6d3cd5f7b9d`
+- Storage: `f034a62e30e2260deab96b1e0017148a78f805ae56ba4a58e013156269b4a940`
+
+Full logs, exact commands, hashes, and source identity are retained in the
+coordination checkout at `lab/runs/message-ordering/completed-validation/`.
+Linux/Android and Apple mobile validation remain unexecuted for the additive
+dependency update.
 
 Final Mac builds passed: `macos-binaries-6_9fg5fp` and
 `macos-app-w8fg6lze`. Both use the canonical output paths. The local daemon and
