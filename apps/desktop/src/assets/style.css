@@ -3205,3 +3205,9 @@ body {
 @media (max-width: 850px) { .peer-filter-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); } }
 .network-peers-page .network-table td { padding-top: 8px; padding-bottom: 8px; }
 .network-peers-page .network-filter-bar .peer-filter-grid input { width: 100%; }
+
+.network-table tbody tr { cursor: pointer; }
+.network-peer-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 18px; }
+.network-peer-actions .network-mode { margin: 0; }
+.network-peer-metadata { margin: 14px 0; }
+.network-peer-metadata summary { color: var(--text-muted); cursor: pointer; font-size: 13px; }

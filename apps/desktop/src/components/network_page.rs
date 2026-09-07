@@ -363,7 +363,7 @@ pub fn NetworkPage(
         target.set(row.destination.clone());
         link_control_id.set(row.link_id.clone());
         request_link_id.set(row.link_id.clone());
-        actions_open.set(matches!(row.mode, NetworkMode::Routes | NetworkMode::Links));
+        actions_open.set(selection_has_actions(row.mode));
         selected.set(Some(row.key));
     };
     let local_only = !interfaces.is_empty()
@@ -652,6 +652,28 @@ pub fn NetworkPage(
                         if let Some(row) = selected_row.clone() {
                             h3 { "{row.name}" }
                             p { class: "network-detail-kind", "{row.kind}" }
+                            div { class: "network-peer-actions",
+                            if !row.destination.is_empty() {
+                                button {
+                                    class: "network-mode",
+                                    onclick: {
+                                        let destination = row.destination.clone();
+                                        move |_| on_select_peer.call(destination.clone())
+                                    },
+                                    "Message"
+                                }
+                            }
+                            if row.can_browse {
+                                button {
+                                    class: "network-mode",
+                                    onclick: {
+                                        let destination = row.destination.clone();
+                                        move |_| on_browse_page.call(destination.clone())
+                                    },
+                                    "Browse content"
+                                }
+                            }
+                            }
                             if let Some(target) = row.key.strip_prefix("entity:") {
                                 if let Some(inventory) = &interface_inventory {
                                     for entry in inventory.entries.iter().filter(|entry| entry.settings.kind == "tcp_client" && crate::state::remote_target_key(&entry.settings.host) == target) {
@@ -702,6 +724,8 @@ pub fn NetworkPage(
                                     }
                                 }
                             } else {
+                                details { class: "network-peer-metadata",
+                                    summary { "Identity and discovery details" }
                                 CopyIdentifier { value: row.key.split_once(':').map_or(row.key.as_str(), |(_, value)| value).to_string() }
                                 dl {
                                     for (label, value) in row.details.iter() {
@@ -709,25 +733,6 @@ pub fn NetworkPage(
                                         dd { "{value}" }
                                     }
                                 }
-                            }
-                            if !row.destination.is_empty() {
-                                button {
-                                    class: "network-mode",
-                                    onclick: {
-                                        let destination = row.destination.clone();
-                                        move |_| on_select_peer.call(destination.clone())
-                                    },
-                                    "Message"
-                                }
-                            }
-                            if row.can_browse {
-                                button {
-                                    class: "network-mode",
-                                    onclick: {
-                                        let destination = row.destination.clone();
-                                        move |_| on_browse_page.call(destination.clone())
-                                    },
-                                    "Browse content"
                                 }
                             }
                             details { class: "network-advanced",
@@ -1293,6 +1298,10 @@ pub fn NetworkPage(
     }
 }
 
+fn selection_has_actions(mode: NetworkMode) -> bool {
+    matches!(mode, NetworkMode::Discovery | NetworkMode::Routes | NetworkMode::Links)
+}
+
 fn network_confirmation(
     safety: &SafetyContext,
     label: impl Into<String>,
@@ -1572,7 +1581,7 @@ fn inventory_rows(
                 peer.announce_count, peer.status
             ),
             destination: peer.hash.clone(),
-            link_id: String::new(),
+            link_id: active_link.map_or_else(String::new, |link| link.link_id.clone()),
             can_browse: matches!(peer.node_role, PeerRole::PageHost | PeerRole::Hub),
         });
     }
@@ -1736,6 +1745,10 @@ fn InventoryTable(
                 for row in rows.into_iter().skip(start).take(page_size) {
                     tr {
                         key: "{row.key}",
+                        onclick: {
+                            let row = row.clone();
+                            move |_| on_select.call(row.clone())
+                        },
                         class:
                         if selected.as_deref() == Some(row.key.as_str()) {
                             "selected"
@@ -1747,8 +1760,9 @@ fn InventoryTable(
                                 class: "network-row-select",
                                 onclick: {
                                     let row = row.clone();
-                                    move |_| on_select.call(row.clone())
+                                    move |event| { event.stop_propagation(); on_select.call(row.clone()); }
                                 },
+                                aria_label: "Select {row.name} and show actions",
                                 "{row.name}"
                             }
                             if mode == NetworkMode::Discovery {
@@ -1895,6 +1909,48 @@ mod tests {
             last_announce,
             announce_count: 1,
         }
+    }
+
+    #[test]
+    fn selecting_a_peer_exposes_targeted_network_actions() {
+        assert!(selection_has_actions(NetworkMode::Discovery));
+        assert!(selection_has_actions(NetworkMode::Routes));
+        assert!(selection_has_actions(NetworkMode::Links));
+        assert!(!selection_has_actions(NetworkMode::Interfaces));
+    }
+
+    #[test]
+    fn peer_selection_targets_only_a_current_active_link() {
+        let value = peer(PeerRole::Rns, "online", Some(900));
+        let mut link = LinkInfo {
+            link_id: "active-link".into(),
+            peer_hash: value.hash.clone(),
+            status: "active".into(),
+            activity: styrene_ipc::types::LinkActivity::Active,
+            rtt_ms: None,
+            timestamp: 900,
+            observation: Default::default(),
+        };
+        let rows = inventory_rows(
+            std::slice::from_ref(&value),
+            &[],
+            std::slice::from_ref(&link),
+            &[],
+            1000,
+        );
+        assert_eq!(
+            rows.iter().find(|row| row.mode == NetworkMode::Discovery).expect("peer row").link_id,
+            "active-link"
+        );
+        link.observation.stale = true;
+        let rows = inventory_rows(&[value], &[], &[link], &[], 1000);
+        assert!(
+            rows.iter()
+                .find(|row| row.mode == NetworkMode::Discovery)
+                .expect("peer row")
+                .link_id
+                .is_empty()
+        );
     }
 
     #[test]

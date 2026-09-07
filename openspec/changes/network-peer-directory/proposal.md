@@ -15,3 +15,12 @@ observations, not a new liveness protocol.
 
 Backend contracts and mobile source stay unchanged. Shared navigation and filter
 semantics can be adopted by mobile independently; this change validates macOS only.
+
+## Peer interaction correction
+
+Clicking anywhere in a table row selects it; the peer-name button remains the
+keyboard entry point. Selection opens contextual operations for peers as well
+as routes and links. Message and Browse precede collapsed discovery metadata.
+Path requests and link opens target the selected destination. Probe and close
+use a known, non-stale active link when one is present. Authorization and
+confirmation remain enforced by the existing operation controls.
