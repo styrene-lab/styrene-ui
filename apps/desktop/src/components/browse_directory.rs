@@ -185,7 +185,7 @@ pub fn BrowseDirectory(
     let mut limit = use_signal(|| 20usize);
     let mut collection = use_signal(|| "all".to_string());
     let mut age = use_signal(|| 0i64);
-    let mut newest = use_signal(|| false);
+    let mut newest = use_signal(|| true);
     let loaded = use_hook(|| {
         favorites_path()
             .ok_or_else(|| "Favorites storage is unavailable.".to_string())
@@ -223,8 +223,8 @@ pub fn BrowseDirectory(
     rsx! {
         aside { class: "browse-directory", aria_label: "Browse directory",
             header { class: "browse-directory-heading",
-                h2 { "Browse sources" }
-                p { "Announcements identify page hosts, not live availability." }
+                h2 { "Directory" }
+                p { "Announced hosts · availability unverified" }
                 input { r#type: "search", aria_label: "Find a page host", placeholder: "Find by name or address…",
                     value: "{query}", oninput: move |event| { query.set(event.value()); limit.set(20); } }
                 div { class: "directory-collections", role: "group", aria_label: "Host collection",
@@ -234,10 +234,12 @@ pub fn BrowseDirectory(
                 }
                 details { class: "directory-filters",
                     summary { "Filters & sorting" }
-                    label { "Source"
-                        select { disabled: true, aria_label: "Browse source", option { "NomadNet" } }
+                    div { class: "directory-sources", role: "group", aria_label: "Browse sources",
+                        span { class: "directory-source-active", "NomadNet" }
+                        button { disabled: true, title: "I2P browsing is planned", "I2P · later" }
+                        button { disabled: true, title: "Yggdrasil browsing is planned", "Yggdrasil · later" }
                     }
-                    div { class: "directory-future", button { disabled: true, "I2P · Coming later" } button { disabled: true, "Yggdrasil · Coming later" } }
+                    div { class: "directory-filter-grid",
                     label { "Last announced"
                         select { value: "{age}", onchange: move |event| { age.set(event.value().parse().unwrap_or(0)); limit.set(20); },
                             option { value: "0", "Any time" } option { value: "3600", "Past hour" } option { value: "86400", "Past day" } option { value: "604800", "Past week" }
@@ -245,16 +247,18 @@ pub fn BrowseDirectory(
                     }
                     label { "Sort by"
                         select { value: if newest() { "newest" } else { "name" }, onchange: move |event| { newest.set(event.value() == "newest"); limit.set(20); },
-                            option { value: "name", "Name A–Z" } option { value: "newest", "Newest announcement" }
+                            option { value: "newest", "Newest first" } option { value: "name", "Name A–Z" }
                         }
                     }
-                    label { class: "directory-cache", input { r#type: "checkbox", disabled: true } "Cached content" }
-                    small { "Cache inventory is not available yet. A past load does not guarantee offline access." }
+                    }
+                    label { class: "directory-cache", title: "The provider does not expose a cache inventory. Past loads do not guarantee offline access.",
+                        input { r#type: "checkbox", disabled: true } "Cached" span { "Inventory unavailable" }
+                    }
                 }
                 div { class: "directory-result-summary",
                     span { class: "directory-count", "Showing {hosts.len().min(limit())} of {hosts.len()} matches" }
-                    if !query().is_empty() || collection() != "all" || age() != 0 || newest() {
-                        button { onclick: move |_| { query.set(String::new()); collection.set("all".into()); age.set(0); newest.set(false); limit.set(20); }, "Reset" }
+                    if !query().is_empty() || collection() != "all" || age() != 0 || !newest() {
+                        button { onclick: move |_| { query.set(String::new()); collection.set("all".into()); age.set(0); newest.set(true); limit.set(20); }, "Reset" }
                     }
                 }
                 if age() != 0 { small { "Announced within {age() / 3600}h" } }
@@ -431,5 +435,24 @@ mod tests {
         std::fs::write(&path, vec![b' '; 65537]).unwrap();
         assert!(read_favorites(&path).is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn newest_sort_orders_known_times_before_unknown_and_breaks_ties_by_name() {
+        let mut recent = host("Zulu", "z");
+        recent.last_announce = Some(900);
+        let mut tie = host("Beta", "b");
+        tie.last_announce = Some(900);
+        let mut unknown = host("Aardvark", "u");
+        unknown.last_announce = None;
+        let ordered = filter_rows(
+            rows(&[host("Alpha", "a"), recent, unknown, tie], &[], &BTreeMap::new(), "", 1000),
+            &Favorites::new(),
+            &BTreeMap::new(),
+            DirectoryFilter { query: "", collection: "all", age: 0, newest: true, now: 1000 },
+        );
+        assert_eq!(
+            ordered.iter().map(|r| r.hash.as_str()).collect::<Vec<_>>(),
+            vec!["b", "z", "a", "u"]
+        );
     }
 }

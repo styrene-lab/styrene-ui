@@ -41,9 +41,9 @@ earlier 15-second observation cutoff. Stop waiting remains available immediately
 Use All hosts, Favorites, or Attempted to choose a collection. Attempted means an
 attempt recorded in the current backend session, including failures. Search
 matches names and destination addresses. Filters & sorting offers announce age
-(past hour/day/week) and name/newest ordering. Missing or future timestamps do
+(past hour/day/week) and newest/name ordering (newest announcement is the default). Missing or future timestamps do
 not qualify for an age window. Reset clears the query, collection, age and sort;
-it does not remove favorites. Results remain limited to 20 until Show more.
+it restores newest-first ordering and does not remove favorites. Results remain limited to 20 until Show more.
 
 Star a host to save its address/name locally. Favorites persist in
 `$XDG_CONFIG_HOME/styrene-ui/browse-favorites.json`, falling back to

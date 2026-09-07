@@ -2,7 +2,8 @@
 
 ### Requirement: Directory discovery controls
 The directory SHALL combine name/address search, collection and announce-age
-filters, stable name/newest sorting, result counts and reset. Unknown/future
+filters, stable name/newest sorting, result counts and reset. Newest announcement
+SHALL be the initial and reset ordering. Unknown/future
 announce times SHALL be excluded from bounded age filters. No filter SHALL probe.
 
 #### Scenario: Narrow recent hosts
