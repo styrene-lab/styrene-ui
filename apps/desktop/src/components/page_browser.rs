@@ -490,7 +490,7 @@ pub fn PageBrowser(
                     _ => rsx! {
                         div { class: "page-empty",
                             h3 { "Page Browser" }
-                            p { "Enter a page address above or click a Page Host node in the Network view." }
+                            p { "Choose a host from the directory or enter a page address above." }
                             button {
                                 class: "action-btn primary",
                                 style: "margin-top: 12px;",

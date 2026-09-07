@@ -273,7 +273,11 @@ pub fn BrowseDirectory(
                 }
             }
             div { class: "directory-results",
-                if hosts.is_empty() { p { class: "directory-reason", "No matching page hosts. Try another search or enter a page address." } }
+                if hosts.is_empty() { p { class: "directory-reason",
+                    if collection() == "favorites" && favorites.read().is_empty() { "No favorites yet. Star a host in All hosts to keep it here." }
+                    else if collection() == "attempted" && visits.is_empty() { "No attempts in this session yet. Open a host from All hosts." }
+                    else { "No matching page hosts. Reset filters, try another search or enter a page address." }
+                } }
                 for host in hosts.iter().take(*limit.read()) {
                     {
                         let hash = host.hash.clone();
