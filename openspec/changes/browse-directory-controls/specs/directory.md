@@ -28,4 +28,4 @@ explanation. They SHALL NOT create fake live hosts or imply offline access.
 #### Scenario: Inspect planned sources
 Given the current NomadNet-only provider
 When the operator opens directory filters
-Then I2P and Yggdrasil show Coming later and cached content shows unavailable.
+Then I2P and Yggdrasil are marked as planned and cached content shows unavailable.
