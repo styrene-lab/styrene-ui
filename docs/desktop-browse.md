@@ -35,3 +35,24 @@ No daemon protocol, identity lifecycle, or mobile implementation changed here.
 The local budget includes the default daemon operation (30 seconds) and IPC
 cleanup allowance (15 seconds). It must not discard the daemon result at the
 earlier 15-second observation cutoff. Stop waiting remains available immediately.
+
+## Directory controls
+
+Use All hosts, Favorites, or Attempted to choose a collection. Attempted means an
+attempt recorded in the current backend session, including failures. Search
+matches names and destination addresses. Filters & sorting offers announce age
+(past hour/day/week) and name/newest ordering. Missing or future timestamps do
+not qualify for an age window. Reset clears the query, collection, age and sort;
+it does not remove favorites. Results remain limited to 20 until Show more.
+
+Star a host to save its address/name locally. Favorites persist in
+`$XDG_CONFIG_HOME/styrene-ui/browse-favorites.json`, falling back to
+`~/.config/styrene-ui/browse-favorites.json`. The list is shared by desktop backend
+sessions on this OS account, contains no identity material, and is capped at 256
+entries. A saved host absent from discovery remains visible with unknown announce
+time. Saving it does not establish a route or offline availability. Storage errors
+are displayed; an unreadable existing list blocks edits to avoid overwriting it.
+
+I2P and Yggdrasil are explicitly unavailable source placeholders. Cached content
+is disabled until a provider exposes a cache inventory. No mock hosts are mixed
+into the live directory and no filtering action sends network probes.
