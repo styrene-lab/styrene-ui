@@ -27,3 +27,11 @@ Shared changes must be checked against both palettes and both shell builds.
 The contrast test supports opaque hex and numeric OKLCH colors, checks sRGB fallback contrast, and verifies conversion against reference colors. A second gate compares every exported token with the published snapshot.
 
 `fonts.css` bundles the selected fonts without network requests. See `fonts.md` for provenance and licenses. The shared adapter applies the exported letter spacing to both shells.
+
+## Pending published refresh
+
+On 2026-09-07 Wilson supplied `#68b145` for the dark primary/selected
+background. The registry endpoint still returned its previous snapshot after
+a cache-busting request. `tokens.css` applies that exact value to dark `primary`
+and `sidebar-primary`; the retrieved export remains intact. Remove this
+explicit override when the published snapshot carries the update.

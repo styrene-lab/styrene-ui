@@ -48,6 +48,9 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
+  /* Operator update 2026-09-07: registry snapshot has not refreshed yet. */
+  --primary: #68b145;
+  --sidebar-primary: #68b145;
   --action-ink: var(--primary);
   --signal: #8fdc93;
   --signal-soft: #15301a;
@@ -61,6 +64,9 @@
   }
 }
 .dark {
+  /* Operator update 2026-09-07: registry snapshot has not refreshed yet. */
+  --primary: #68b145;
+  --sidebar-primary: #68b145;
   --action-ink: var(--primary);
   --signal: #8fdc93;
   --signal-soft: #15301a;
