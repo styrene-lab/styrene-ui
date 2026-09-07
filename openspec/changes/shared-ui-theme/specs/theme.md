@@ -19,3 +19,12 @@ Given the shared Field Kit preset
 When its foreground and surface pairs are validated
 Then normal text pairs meet a contrast ratio of at least 4.5
 And status roles do not derive from chart colors
+
+### Requirement: Published theme values remain canonical
+The shared preset preserves both published palettes and common variables. Font selection works offline. Application contrast adjustments are separate semantic aliases.
+
+#### Scenario: Published Field Kit theme
+Given the registry snapshot for cmtr8h1vu000204i6gaao9ld2
+When the desktop or mobile shell renders
+Then its preset contains every published common and appearance-specific value
+And selected font data is available without network requests

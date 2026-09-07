@@ -1049,7 +1049,7 @@ pub fn MobileShell(
 
     rsx! {
         document::Title { "Styrene {active_destination.label()}" }
-        style { { concat!(include_str!("../../../assets/theme/runtime.css"), include_str!("../../../assets/theme/tokens.css")) } }
+        style { { concat!(include_str!("../../../assets/theme/fonts.css"), include_str!("../../../assets/theme/runtime.css"), include_str!("../../../assets/theme/tokens.css")) } }
             document::Stylesheet { href: asset!("/assets/mobile.css") }
         main {
             class: "mobile-shell",

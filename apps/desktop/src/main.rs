@@ -427,7 +427,7 @@ fn App() -> Element {
     };
 
     rsx! {
-        style { {concat!(include_str!("../../../assets/theme/runtime.css"), include_str!("../../../assets/theme/tokens.css"), include_str!("assets/style.css"))} }
+        style { {concat!(include_str!("../../../assets/theme/fonts.css"), include_str!("../../../assets/theme/runtime.css"), include_str!("../../../assets/theme/tokens.css"), include_str!("assets/style.css"))} }
 
         div { class: "app",
             onkeydown: move |event| {

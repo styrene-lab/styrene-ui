@@ -37,3 +37,25 @@ clone. The saved Browse route was restored despite the messages launch hint.
 An initial light desktop capture was obscured by another application and discarded.
 The replacement captures only the Styrene window. No iOS runtime screenshot or
 Android runtime evidence is claimed from a successful simulator package build.
+
+## Published theme adoption — 2026-09-07
+
+Source: https://tweakcn.com/themes/cmtr8h1vu000204i6gaao9ld2
+Registry endpoint: https://tweakcn.com/r/themes/cmtr8h1vu000204i6gaao9ld2
+`assets/theme/published.json` retains the retrieved export. Every common and
+mode-specific token is checked against `preset.css`; fonts are embedded with
+licenses and SHA-256 provenance. OKLCH contrast conversion passes black, white,
+and sRGB primary reference vectors. Published primary colors remain intact.
+
+- Shared mobile presentation: 97 tests passed, including 3 theme tests.
+- Desktop: 165 passed; 4 integration tests remain intentionally ignored.
+- Warning-denied Clippy passed after naming color-conversion test variables.
+- Native Mac build: `macos-app-jpdfjbxz`, passed.
+- iOS simulator package: `apple-mobile-l0620nik`, passed.
+- Desktop capture: window 3213, Overview, Live session ready; green primary
+  selection and Electrolize rendered in the existing desktop composition.
+- Source state, artifact and capture hashes, process identity and logs: outer
+  `lab/runs/published-ui-theme/`. The build includes preserved mobile WIP.
+- Android/Linux, physical Apple runtime and mobile runtime visuals were not
+  executed. Dark desktop rendering was inspected; both palettes passed the
+  automated contrast gate.

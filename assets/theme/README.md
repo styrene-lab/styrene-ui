@@ -1,6 +1,7 @@
 # Shared Field Kit theme
 
-`preset.css` is the portable tweakcn starting preset. Both light (`:root`) and
+`preset.css` preserves the published [Styrene Field Kit](https://tweakcn.com/themes/cmtr8h1vu000204i6gaao9ld2) theme, retrieved on 2026-09-07.
+`published.json` retains the registry export from `https://tweakcn.com/r/themes/cmtr8h1vu000204i6gaao9ld2`. Both light (`:root`) and
 dark (`.dark`) must be retained when replacing it with a reviewed export.
 `tokens.css` owns Styrene aliases and operational status roles. Chart colors
 are decorative and do not redefine success, warning, failure, or unknown.
@@ -19,8 +20,10 @@ Desktop keeps its navigation rail, panes, and table density. Mobile keeps its
 navigation, safe areas, reflow, and platform touch targets. No runtime theme
 import or editor is included.
 
-Orange uses `primary` and its paired foreground. `accent` is a quiet selected
+Actions use `primary` and its paired foreground: orange in light mode and green in dark mode.
+Small light-mode action text uses the contrast-tested `action-ink` adapter; the canonical primary is unchanged. `accent` is a quiet selected
 surface. Shape uses `radius`; typography uses `font-sans` and `font-mono`.
 Shared changes must be checked against both palettes and both shell builds.
-The contrast test currently covers the shipped hex palette; extend the color
-parser when adopting an OKLCH export, rather than skipping the contrast gate.
+The contrast test supports opaque hex and numeric OKLCH colors, checks sRGB fallback contrast, and verifies conversion against reference colors. A second gate compares every exported token with the published snapshot.
+
+`fonts.css` bundles the selected fonts without network requests. See `fonts.md` for provenance and licenses. The shared adapter applies the exported letter spacing to both shells.

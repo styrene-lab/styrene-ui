@@ -1863,7 +1863,7 @@ label {
 
 .contact-toggle[aria-pressed="true"] {
   border-color: var(--primary);
-  color: var(--primary);
+  color: var(--action-ink);
 }
 
 .contact-toggle:disabled {

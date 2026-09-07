@@ -1,6 +1,8 @@
 /* Styrene semantic adapter. Layout and hit targets belong to each shell. */
 :root {
   color-scheme: light dark;
+  /* Small action text needs 4.5:1 on the light canvas; preserve exported primary. */
+  --action-ink: #ac3c18;
   --canvas: var(--background);
   --surface: var(--card);
   --surface-raised: var(--popover);
@@ -46,6 +48,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
+  --action-ink: var(--primary);
   --signal: #8fdc93;
   --signal-soft: #15301a;
   --warning: #f2cf7a;
@@ -58,6 +61,7 @@
   }
 }
 .dark {
+  --action-ink: var(--primary);
   --signal: #8fdc93;
   --signal-soft: #15301a;
   --warning: #f2cf7a;
@@ -68,3 +72,5 @@
   --danger-line: #a85a50;
   --texture-ink: rgb(143 220 147 / 4%);
 }
+
+body { letter-spacing: var(--tracking-normal, 0em); }
