@@ -21,3 +21,13 @@ Activity retains last reported observations and existing event reconciliation;
 this pass does not change daemon liveness or native-request terminal-state behavior.
 
 Mobile source is unchanged. No iOS, Android or Linux runtime evidence is claimed.
+
+## Peer action correction
+
+`de2ee94`: 165 desktop tests passed, four existing tests ignored; formatting and
+Clippy passed. Tests cover enabling actions for peer selection and excluding
+stale active links from selection targets. Mac package build passed with unchanged
+sources (`lab/runs/macos-app-_dothbmp/result.json`). Replaced the prior app and
+launched Network in Live mode. Process and binary evidence:
+`lab/runs/network-peer-actions/runtime.json`. Automated click verification remains
+unavailable under the existing macOS Accessibility restriction.
