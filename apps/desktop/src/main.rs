@@ -719,15 +719,23 @@ fn App() -> Element {
                                         .unwrap_or_else(|| peer_hash[..8].to_string());
                                     let ph = peer_hash.clone();
                                     rsx! {
-                                        div { class: "peer-detail",
+                                        div { class: "peer-detail", key: "{peer_hash}",
                                             div { class: "chat-header",
                                                 h2 { "{peer_name}" }
                                                 p { class: "peer-hash", "{peer_hash}" }
                                             }
-                                            div { class: "chat-area",
+                                            button { class: "chat-jump-latest", hidden: true, r#type: "button", "Jump to latest messages ↓" }
+                                            div { class: "chat-area", id: "chat-viewport",
+                                                onmounted: move |_| {
+                                                    spawn(async move {
+                                                        let _ = document::eval(include_str!("assets/thread_viewport.js")).join::<()>().await;
+                                                    });
+                                                },
+                                                div { class: "message-stream",
                                                 for msg in view.messages.messages.iter().filter(|m|
                                                     m.source == *peer_hash || m.destination == *peer_hash
                                                 ) {
+                                                    div { class: "message-entry", key: "{msg.id}",
                                                     components::MessageBubble { message: msg.clone() }
                                                     if msg.lifecycle_actions() != (false, false) {
                                                         div { class: "message-actions",
@@ -758,6 +766,7 @@ fn App() -> Element {
                                                         }
                                                     }
                                                 }
+                                                }
                                                 if let Some(cursor) = view.messages.message_cursors.get(peer_hash) {
                                                     button {
                                                         class: "load-older",
@@ -771,6 +780,7 @@ fn App() -> Element {
                                                         "Load Older"
                                                     }
                                                 }
+                                            }
                                             }
                                             // Chat input
                                             div { class: "chat-input-bar",

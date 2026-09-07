@@ -4978,6 +4978,7 @@ dependencies = [
  "async-trait",
  "base64",
  "dioxus",
+ "dioxus-ssr",
  "futures-util",
  "log",
  "rfd",

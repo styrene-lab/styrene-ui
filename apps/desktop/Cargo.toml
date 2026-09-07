@@ -42,6 +42,7 @@ serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+dioxus-ssr.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 
 [lints.rust]
