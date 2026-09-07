@@ -4,11 +4,13 @@ mod lab_page;
 mod mesh_status;
 mod message_lifecycle;
 mod network_graph;
+mod network_identity;
 mod network_inspector;
 mod network_interaction;
 mod network_layout;
 mod network_model;
 mod network_page;
+mod network_projection;
 mod network_renderer;
 mod page_browser;
 mod propagation_page;
@@ -22,3 +24,11 @@ pub use network_page::NetworkPage;
 pub use page_browser::PageBrowser;
 pub use propagation_page::PropagationPage;
 pub use system_page::SystemPage;
+
+pub mod interface_manager;
+
+pub mod workspaces;
+
+pub mod browse_directory;
+
+pub mod download_card;

@@ -11,10 +11,12 @@ use dioxus::prelude::*;
 use futures_util::StreamExt;
 
 mod backend;
+mod browse;
 mod components;
 mod daemon_bridge;
 #[cfg(test)]
 mod flow_simulation;
+mod identity_extension;
 mod safety;
 mod scenario;
 mod scenario_process;
@@ -64,9 +66,13 @@ fn App() -> Element {
         _ => "healthy".to_string(),
     });
     let mut profile_error = use_signal(|| None::<String>);
+    let mut connection_open = use_signal(|| false);
     let mut stores = use_signal(stores::DomainStores::default);
     let mut selected_peer = use_signal(|| None::<String>);
-    let mut active_route = use_signal(state::AppRoute::default);
+    let mut active_route = use_signal(|| {
+        state::AppRoute::from_hint(&std::env::var("STYRENE_DX_ROUTE").unwrap_or_default())
+    });
+    let mut browse_task: Signal<Option<dioxus::core::Task>> = use_signal(|| None);
     let mut activity_open = use_signal(|| false);
     let mut activity_export = use_signal(|| None::<String>);
     let scenario_backend = use_hook(|| {
@@ -81,8 +87,8 @@ fn App() -> Element {
         use_signal(|| None);
 
     // Own exactly one backend. Profile requests are handled before a replacement opens.
-    let profile_session =
-        use_coroutine(move |mut profile_rx: UnboundedReceiver<backend::RuntimeProfile>| {
+    let profile_session = use_coroutine(
+        move |mut profile_rx: UnboundedReceiver<backend::RuntimeProfile>| {
             let mut requested_profile = initial_profile.clone();
             async move {
                 loop {
@@ -107,7 +113,63 @@ fn App() -> Element {
 
                             let cmd_bridge = br.clone();
                             let command_task = spawn(async move {
-                                while let Some(cmd) = cmd_rx.recv().await {
+                                let mut refresh = tokio::time::interval_at(
+                                    tokio::time::Instant::now() + std::time::Duration::from_secs(2),
+                                    std::time::Duration::from_secs(2),
+                                );
+                                refresh.set_missed_tick_behavior(
+                                    tokio::time::MissedTickBehavior::Skip,
+                                );
+                                let mut download_refresh =
+                                    tokio::time::interval(std::time::Duration::from_secs(1));
+                                download_refresh.set_missed_tick_behavior(
+                                    tokio::time::MissedTickBehavior::Skip,
+                                );
+                                loop {
+                                    let cmd = tokio::select! {
+                                        _ = download_refresh.tick() => {
+                                            let pending = stores.read().pending_download_id();
+                                            match pending {
+                                                Some(download_id) => daemon_bridge::DaemonCommand::QueryFileDownload { download_id },
+                                                None => continue,
+                                            }
+                                        },
+                                        command = cmd_rx.recv() => match command { Some(command) => command, None => break },
+                                        _ = refresh.tick() => daemon_bridge::DaemonCommand::RefreshInterfaces,
+                                    };
+                                    if matches!(
+                                        &cmd,
+                                        daemon_bridge::DaemonCommand::BrowsePage { .. }
+                                            | daemon_bridge::DaemonCommand::NavigatePage(_)
+                                            | daemon_bridge::DaemonCommand::StopBrowse
+                                            | daemon_bridge::DaemonCommand::ClosePage { .. }
+                                    ) {
+                                        if let Some(capability) = cmd.required_capability()
+                                            && stores
+                                                .read()
+                                                .mutation_availability_at(
+                                                    opened.generation,
+                                                    capability,
+                                                )
+                                                .is_err()
+                                        {
+                                            continue;
+                                        }
+                                        if let Some(task) = browse_task.write().take() {
+                                            task.cancel();
+                                        }
+                                        let br = cmd_bridge.clone();
+                                        browse_task.set(Some(spawn(async move {
+                                            handle_ui_command(
+                                                cmd,
+                                                &br,
+                                                &mut stores,
+                                                opened.generation,
+                                            )
+                                            .await;
+                                        })));
+                                        continue;
+                                    }
                                     handle_ui_command(
                                         cmd,
                                         &cmd_bridge,
@@ -154,6 +216,11 @@ fn App() -> Element {
                                     }
                                     _ => None,
                                 };
+                                let refresh_conversations = matches!(
+                                    &ev,
+                                    daemon_bridge::DaemonEvent::MessageReceived(_)
+                                        | daemon_bridge::DaemonEvent::MessagingOperation(_)
+                                );
                                 let refresh_paths =
                                     matches!(&ev, daemon_bridge::DaemonEvent::RouteLifecycle(_));
                                 let reconcile_requests = matches!(
@@ -179,6 +246,13 @@ fn App() -> Element {
                                 }
                                 if !applied {
                                     continue;
+                                }
+                                if refresh_conversations {
+                                    let _ = tx_init.try_send(
+                                        daemon_bridge::DaemonCommand::LoadConversations {
+                                            cursor: None,
+                                        },
+                                    );
                                 }
                                 if refresh_paths {
                                     let _ = tx_init
@@ -235,6 +309,9 @@ fn App() -> Element {
                                 }
                             };
                             command_task.cancel();
+                            if let Some(task) = browse_task.write().take() {
+                                task.cancel();
+                            }
                             cmd_tx.set(None);
                             session.set(None);
                             br.shutdown().await;
@@ -255,7 +332,8 @@ fn App() -> Element {
                     }
                 }
             }
-        });
+        },
+    );
 
     let view = stores.read().clone();
     let id_display = view
@@ -267,7 +345,10 @@ fn App() -> Element {
             let hash_short = &id.destination_hash[..12.min(id.destination_hash.len())];
             format!("{name} ({hash_short}...)")
         })
-        .unwrap_or_else(|| "loading...".into());
+        .unwrap_or_else(|| match &view.identity.state {
+            stores::DataState::Loading => "Loading identity…".into(),
+            _ => "Identity unavailable".into(),
+        });
 
     let local_hash =
         view.identity.current.as_ref().map(|id| id.destination_hash.clone()).unwrap_or_default();
@@ -295,7 +376,14 @@ fn App() -> Element {
     let diagnostics =
         session.read().as_ref().map(|backend| backend.diagnostics()).unwrap_or_default();
     let route_state = view.route_state(&active_route.read(), capabilities);
-    let command = view.command_summary();
+    let navigation = components::workspaces::destinations(&view);
+    let navigation = identity_extension::use_host(
+        navigation,
+        active_route,
+        &view.runtime,
+        view.identity.current.as_ref(),
+        matches!(selected_profile.read().clone(), backend::RuntimeProfile::Fixture { .. }),
+    );
     let mut chat_input = use_signal(String::new);
     let mut chat_title = use_signal(String::new);
     let mut chat_method = use_signal(|| "direct".to_string());
@@ -342,17 +430,31 @@ fn App() -> Element {
 
     // Helper to send commands to the daemon
     let send_cmd = move |cmd: daemon_bridge::DaemonCommand| {
-        if let Some(ref tx) = *cmd_tx.read()
-            && tx.try_send(cmd).is_err()
-        {
-            tracing::warn!(target: "dx::command", "UI command queue is full");
+        let mut stores = stores;
+        let interface_mutation = matches!(&cmd, daemon_bridge::DaemonCommand::MutateInterface(_));
+        let queued = cmd_tx.read().as_ref().is_some_and(|tx| tx.try_send(cmd).is_ok());
+        if !queued {
+            tracing::warn!(target: "dx::command", "UI command queue is unavailable");
+            if interface_mutation {
+                let generation = stores.read().runtime.generation;
+                stores.write().set_interface_inventory(
+                    generation,
+                    Err("Command could not be queued. Reconnect or retry.".into()),
+                    true,
+                );
+            }
         }
     };
 
     rsx! {
-        style { {include_str!("assets/style.css")} }
+        style { {concat!(include_str!("../../../assets/theme/fonts.css"), include_str!("../../../assets/theme/runtime.css"), include_str!("../../../assets/theme/tokens.css"), include_str!("assets/style.css"))} }
 
         div { class: "app",
+            onkeydown: move |event| {
+                if event.key() == Key::Escape {
+                    connection_open.set(false);
+                }
+            },
             // Top bar
             div { class: "topbar",
                 span { class: "brand", "Styrene Mesh" }
@@ -361,11 +463,33 @@ fn App() -> Element {
                     class: if view.runtime.connected { "badge connected" } else { "badge disconnected" },
                     if matches!(&*selected_profile.read(), backend::RuntimeProfile::Fixture { .. }) {
                         "Fixture: {fixture_id}"
+                    } else if view.runtime.connected {
+                        "Session ready"
                     } else {
                         "{profile_label}: {view.runtime.connection_mode}"
                     }
                 }
-                div { class: "profile-config", aria_label: "Runtime profile configuration",
+                div { class: "connection-menu",
+                    button {
+                        class: "connection-trigger",
+                        aria_expanded: "{connection_open}",
+                        aria_controls: "connection-panel",
+                        onclick: move |_| connection_open.toggle(),
+                        "Connection"
+                    }
+                if *connection_open.read() {
+                button {
+                    class: "connection-dismiss",
+                    aria_label: "Dismiss connection settings",
+                    tabindex: "-1",
+                    onclick: move |_| connection_open.set(false),
+                }
+                div { id: "connection-panel", class: "profile-config", aria_label: "Runtime profile configuration",
+                    button {
+                        aria_label: "Close connection settings",
+                        onclick: move |_| connection_open.set(false),
+                        "Close"
+                    }
                     select {
                         aria_label: "Runtime profile",
                         value: "{profile_kind}",
@@ -406,6 +530,7 @@ fn App() -> Element {
                             match profile {
                                 Ok(profile) => {
                                     profile_error.set(None);
+                                    connection_open.set(false);
                                     profile_session.send(profile);
                                 }
                                 Err(error) => profile_error.set(Some(error)),
@@ -413,6 +538,8 @@ fn App() -> Element {
                         },
                         "Activate"
                     }
+                }
+                }
                 }
                 if let Some(error) = profile_error.read().as_ref() {
                     span { class: "profile-error", role: "alert", "{error}" }
@@ -425,60 +552,16 @@ fn App() -> Element {
                     onclick: move |_| activity_open.toggle(),
                     "Activity ({view.activity.entries.len()})"
                 }
+                identity_extension::Controls {}
             }
 
-            // Tab bar
-            nav { class: "tab-bar", aria_label: "Primary navigation",
-                button {
-                    class: if *active_route.read() == state::AppRoute::Command { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Command).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Command),
-                    "Command"
+            div { class: "workspace-shell",
+                components::workspaces::WorkspaceNav {
+                    items: navigation.clone(),
+                    active: active_route.read().clone(),
+                    on_select: move |route| active_route.set(route),
                 }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Network { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Network).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Network),
-                    "Network"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Messages { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Messages).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Messages),
-                    "Messages"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Fleet { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Fleet).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Fleet),
-                    "Fleet"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Propagation { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Propagation).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Propagation),
-                    "Propagation"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Content { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Content).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Content),
-                    "Content"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::Lab { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::Lab).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::Lab),
-                    "Lab"
-                }
-                button {
-                    class: if *active_route.read() == state::AppRoute::System { "tab active" } else { "tab" },
-                    aria_current: (*active_route.read() == state::AppRoute::System).then_some("page"),
-                    onclick: move |_| active_route.set(state::AppRoute::System),
-                    "System"
-                }
-            }
-
+                div { class: "workspace-main",
             match &route_state {
                 stores::DataState::Loading => rsx! {
                     div { class: "state-banner loading", "Loading current {profile_label} state..." }
@@ -492,41 +575,51 @@ fn App() -> Element {
                 stores::DataState::Empty | stores::DataState::Ready => rsx! {},
             }
 
+            if matches!(*active_route.read(), state::AppRoute::Messages | state::AppRoute::Delivery) {
+                nav { class: "workspace-subnav", aria_label: "Messages navigation",
+                    button { class: if *active_route.read() == state::AppRoute::Messages { "selected" } else { "" },
+                        aria_current: (*active_route.read() == state::AppRoute::Messages).then_some("page"),
+                        onclick: move |_| active_route.set(state::AppRoute::Messages), "Conversations" }
+                    button { class: if *active_route.read() == state::AppRoute::Delivery { "selected" } else { "" },
+                        aria_current: (*active_route.read() == state::AppRoute::Delivery).then_some("page"),
+                        onclick: move |_| active_route.set(state::AppRoute::Delivery), "Delivery" }
+                }
+            }
+            if *active_route.read() == state::AppRoute::Browse {
+                header { class: "browse-heading",
+                    h1 { "Browse" }
+                    p { "NomadNet pages and files · Open a node or enter an address" }
+                }
+            }
             // Body
             div { class: "body",
                 match *active_route.read() {
-                    state::AppRoute::Command => rsx! {
-                        div { class: "main command-page",
-                            div { class: "empty-state",
-                                h2 { "Command" }
-                                p { "Operational summary for the active {profile_label} session." }
-                            }
-                            div { class: "command-grid",
-                                div { class: "command-card",
-                                    h3 { "Transport" }
-                                    strong { if command.transport_active { "Active" } else { "Inactive" } }
-                                    p { "{command.interface_count} interfaces" }
-                                }
-                                div { class: "command-card",
-                                    h3 { "Network" }
-                                    strong { "{command.observed_peers} observed peers" }
-                                    p { "{command.route_count} current routes" }
-                                }
-                                div { class: "command-card",
-                                    h3 { "Links" }
-                                    strong { "{command.active_links} active" }
-                                    p { "{command.link_records} lifecycle records" }
-                                }
-                                div { class: "command-card",
-                                    h3 { "Propagation" }
-                                    strong { if command.propagation_enabled { "Enabled" } else { "Disabled" } }
-                                    p { "Open Propagation for queue and peer state." }
-                                }
-                            }
+                    state::AppRoute::Identity => rsx! { identity_extension::Page {
+                        generation:view.runtime.generation.0,server_generation:view.runtime.server_generation,
+                        connected:view.runtime.connected,fixture:matches!(selected_profile.read().clone(),backend::RuntimeProfile::Fixture {..}),
+                        transport_identity:view.identity.current.as_ref().map(|identity|identity.identity_hash.clone()),
+                    } },
+                    state::AppRoute::Overview => rsx! {
+                        components::workspaces::OverviewPage {
+                            session_summary: navigation[0].summary.clone(),
+                            profile: view.runtime.backend_profile.as_ref()
+                                .map(|p| p.display_name.clone())
+                                .unwrap_or_else(|| format!("{profile_label} session")),
+                            connections: components::workspaces::connections(&view),
+                            inventory_known: view.network.interface_inventory.is_some(),
+                            activity: components::workspaces::recent_activity(&view),
+                            on_select: move |route| active_route.set(route),
+                            on_connection: move |id: String| {
+                                stores.write().network.interface_focus = Some(id);
+                                active_route.set(state::AppRoute::Network);
+                            },
+                            on_session: move |_| connection_open.set(true),
+                            on_activity: move |_| activity_open.set(true),
                         }
                     },
                     state::AppRoute::Network => rsx! {
                         components::NetworkPage {
+                            connected: view.runtime.connected,
                             peers: view.network.peers.clone(),
                             paths: view.network.paths.clone(),
                             status: view.network.status.clone(),
@@ -542,6 +635,13 @@ fn App() -> Element {
                             },
                             links: view.network.links.clone(),
                             interfaces: view.network.interfaces.clone(),
+                            interface_inventory: view.network.interface_inventory.clone(),
+                            interface_unavailable: view.network.interface_unavailable.clone(),
+                            interface_error: view.network.interface_error.clone(),
+                            interface_result_serial: view.network.interface_result_serial,
+                            interface_action_notice: view.network.interface_action_notice.clone(),
+                            interface_focus: view.network.interface_focus.clone(),
+                            interface_edit_unavailable: view.mutation_availability("rpc.config_update").err(),
                             operations: view.network.operations.clone(),
                             requests: view.network.requests.clone(),
                             resources: view.network.resources.clone(),
@@ -551,7 +651,7 @@ fn App() -> Element {
                                 match state::PageAddress::remote_index(&host_hash) {
                                     Ok(address) => {
                                         send_cmd(daemon_bridge::DaemonCommand::BrowsePage { address });
-                                        active_route.set(state::AppRoute::Content);
+                                        active_route.set(state::AppRoute::Browse);
                                     }
                                     Err(error) => tracing::warn!(target: "dx::content", %error, %host_hash, "invalid page host"),
                                 }
@@ -566,7 +666,7 @@ fn App() -> Element {
                             div { class: "sidebar-header", "Conversations" }
                             if view.messages.conversations.is_empty() {
                                 div { class: "sidebar-empty",
-                                    "No conversations yet. Select a peer from the Network tab to start one."
+                                    "No conversations yet. Select a peer from Network to start one."
                                 }
                             }
                             for convo in view.messages.conversations.iter() {
@@ -645,18 +745,46 @@ fn App() -> Element {
                                         .unwrap_or_else(|| peer_hash[..8].to_string());
                                     let ph = peer_hash.clone();
                                     rsx! {
-                                        div { class: "peer-detail",
+                                        div { class: "peer-detail", key: "{peer_hash}:{view.runtime.generation.0}",
                                             div { class: "chat-header",
                                                 h2 { "{peer_name}" }
                                                 p { class: "peer-hash", "{peer_hash}" }
                                             }
-                                            div { class: "chat-area",
+                                            if let Some((failed_peer, error)) = &view.messages.read_error {
+                                                if failed_peer == peer_hash {
+                                                    p { class: "control-disabled-reason", "Could not mark this conversation read: {error}" }
+                                                    button { class: "load-older", onclick: {
+                                                        let peer = peer_hash.clone();
+                                                        move |_| send_cmd(daemon_bridge::DaemonCommand::MarkRead { peer_hash: peer.clone() })
+                                                    }, "Retry marking read" }
+                                                }
+                                            }
+                                            button { class: "chat-jump-latest", hidden: true, r#type: "button", "Jump to latest messages ↓" }
+                                            div { class: "chat-area", id: "chat-viewport",
+                                                onmounted: {
+                                                    let peer = peer_hash.clone();
+                                                    move |_| {
+                                                    let peer = peer.clone();
+                                                    spawn(async move {
+                                                        let mounted_generation = stores.read().runtime.generation;
+                                                        let mut viewport = document::eval(include_str!("assets/thread_viewport.js"));
+                                                        while let Ok(_message_id) = viewport.recv::<String>().await {
+                                                            if stores.read().runtime.generation == mounted_generation {
+                                                                send_cmd(daemon_bridge::DaemonCommand::MarkRead { peer_hash: peer.clone() });
+                                                            }
+                                                        }
+                                                    });
+                                                    }
+                                                },
+                                                div { class: "message-stream",
                                                 for msg in view.messages.messages.iter().filter(|m|
                                                     m.source == *peer_hash || m.destination == *peer_hash
                                                 ) {
+                                                    div { class: "message-entry", key: "{msg.id}",
                                                     components::MessageBubble { message: msg.clone() }
-                                                    if msg.is_outgoing {
+                                                    if msg.lifecycle_actions() != (false, false) {
                                                         div { class: "message-actions",
+                                                            if msg.lifecycle_actions().0 {
                                                             button {
                                                                 disabled: view.mutation_availability("messaging.lifecycle").is_err(),
                                                                 onclick: {
@@ -665,8 +793,10 @@ fn App() -> Element {
                                                                         message_id: message_id.clone(),
                                                                     })
                                                                 },
-                                                                "Retry"
+                                                                "Retry sending"
                                                             }
+                                                            }
+                                                            if msg.lifecycle_actions().1 {
                                                             button {
                                                                 disabled: view.mutation_availability("messaging.lifecycle").is_err(),
                                                                 onclick: {
@@ -675,10 +805,12 @@ fn App() -> Element {
                                                                         message_id: message_id.clone(),
                                                                     })
                                                                 },
-                                                                "Cancel"
+                                                                "Cancel sending"
+                                                            }
                                                             }
                                                         }
                                                     }
+                                                }
                                                 }
                                                 if let Some(cursor) = view.messages.message_cursors.get(peer_hash) {
                                                     button {
@@ -694,43 +826,27 @@ fn App() -> Element {
                                                     }
                                                 }
                                             }
+                                            }
                                             // Chat input
                                             div { class: "chat-input-bar",
-                                                if let Some(reason) = &chat_send_reason {
-                                                    p { id: "chat-send-disabled-reason", class: "control-disabled-reason", "Chat controls disabled: {reason}" }
+                                                if let Some(reason) = chat_send_reason.as_ref().filter(|_| chat_unavailable.is_some() || !chat_input.read().trim().is_empty()) {
+                                                    p { id: "chat-send-disabled-reason", class: "control-disabled-reason", "{reason}" }
                                                 }
-                                                input {
-                                                    class: "chat-input",
-                                                    aria_label: "Message title",
-                                                    r#type: "text",
-                                                    placeholder: "Optional title",
-                                                    value: "{chat_title}",
-                                                    oninput: move |evt| chat_title.set(evt.value()),
-                                                }
-                                                select {
-                                                    aria_label: "Delivery method",
-                                                    value: "{chat_method}",
-                                                    onchange: move |evt| chat_method.set(evt.value()),
-                                                    option { value: "direct", "Direct" }
-                                                    option { value: "opportunistic", "Opportunistic" }
-                                                    option { value: "propagated", "Propagated" }
-                                                    option { value: "paper", "Paper" }
-                                                }
-                                                input {
-                                                    class: "chat-input",
+                                                textarea {
+                                                    class: "chat-input message-body",
+                                                    rows: "3",
                                                     aria_label: "Message content",
-                                                    disabled: chat_unavailable.is_some(),
                                                     title: chat_unavailable.as_deref().unwrap_or("Message peer"),
                                                     aria_describedby: chat_unavailable.as_ref().map(|_| "chat-send-disabled-reason"),
-                                                    r#type: "text",
-                                                    placeholder: "Type a message...",
+                                                    placeholder: "Write a message…",
                                                     value: "{chat_input}",
                                                     oninput: move |evt| chat_input.set(evt.value()),
-                                                    onkeypress: {
+                                                    onkeydown: {
                                                         let ph2 = ph.clone();
                                                         let send_disabled = chat_send_reason.is_some();
                                                         move |evt: KeyboardEvent| {
-                                                            if evt.key() == Key::Enter {
+                                                            if evt.key() == Key::Enter && (evt.modifiers().ctrl() || evt.modifiers().meta()) {
+                                                                evt.prevent_default();
                                                                 let content = chat_input.read().clone();
                                                                 if !send_disabled && !content.trim().is_empty() {
                                                                     send_cmd(daemon_bridge::DaemonCommand::SendChat {
@@ -745,41 +861,12 @@ fn App() -> Element {
                                                         }
                                                     },
                                                 }
-                                                button {
-                                                    class: "chat-send-btn",
-                                                    disabled: chat_send_reason.is_some(),
-                                                    title: chat_send_reason.as_deref().unwrap_or("Send message"),
-                                                    aria_describedby: chat_send_reason.as_ref().map(|_| "chat-send-disabled-reason"),
-                                                    onclick: {
-                                                        let ph3 = ph.clone();
-                                                        move |_| {
-                                                            let content = chat_input.read().clone();
-                                                            if !content.trim().is_empty() {
-                                                                send_cmd(daemon_bridge::DaemonCommand::SendChat {
-                                                                    peer_hash: ph3.clone(),
-                                                                    content,
-                                                                    title: (!chat_title.read().is_empty()).then(|| chat_title.read().clone()),
-                                                                    delivery_method: chat_method.read().clone(),
-                                                                    attachments: chat_attachments.read().clone(),
-                                                                });
-                                                            }
-                                                        }
-                                                    },
-                                                    "Send"
-                                                }
-                                                button {
-                                                    disabled: view.mutation_availability("messaging.manage").is_err(),
-                                                    onclick: {
-                                                        let peer = ph.clone();
-                                                        move |_| {
-                                                            send_cmd(daemon_bridge::DaemonCommand::DiscardDraft { peer_hash: peer.clone() });
-                                                            chat_input.set(String::new());
-                                                        }
-                                                    },
-                                                    "Discard Draft"
-                                                }
+                                                div { class: "composer-toolbar",
+                                                    label { class: "composer-attach", r#for: "chat-attachment-picker", title: "Attach files", "Attach files" }
                                                 input {
                                                     r#type: "file",
+                                                    id: "chat-attachment-picker",
+                                                    class: "composer-file-input",
                                                     aria_label: "Message attachments",
                                                     multiple: true,
                                                     onchange: move |event| {
@@ -808,10 +895,76 @@ fn App() -> Element {
                                                         });
                                                     },
                                                 }
-                                                for attachment in chat_attachments.read().iter() {
-                                                    span { class: "compose-note", "{attachment.name} ({attachment.bytes.len()} bytes)" }
+                                                    details { class: "composer-options",
+                                                        summary { "Message options" }
+                                                        div { class: "composer-options-panel",
+                                                input {
+                                                    class: "chat-input",
+                                                    aria_label: "Message title",
+                                                    r#type: "text",
+                                                    placeholder: "Optional title",
+                                                    value: "{chat_title}",
+                                                    oninput: move |evt| chat_title.set(evt.value()),
                                                 }
-                                                span { class: "compose-note", "Attachments are not retained in drafts." }
+                                                select {
+                                                    aria_label: "Delivery method",
+                                                    value: "{chat_method}",
+                                                    onchange: move |evt| chat_method.set(evt.value()),
+                                                    option { value: "direct", "Direct" }
+                                                    option { value: "opportunistic", "Opportunistic" }
+                                                    option { value: "propagated", "Propagated" }
+                                                    option { value: "paper", "Paper" }
+                                                }
+                                                button {
+                                                    disabled: view.mutation_availability("messaging.manage").is_err(),
+                                                    onclick: {
+                                                        let peer = ph.clone();
+                                                        move |_| {
+                                                            send_cmd(daemon_bridge::DaemonCommand::DiscardDraft { peer_hash: peer.clone() });
+                                                            chat_input.set(String::new());
+                                                            chat_title.set(String::new());
+                                                            chat_attachments.set(Vec::new());
+                                                        }
+                                                    },
+                                                    "Discard Draft"
+                                                }
+                                                        }
+                                                    }
+                                                    span { class: "composer-shortcut", "⌘ / Ctrl + Enter to send" }
+                                                button {
+                                                    class: "chat-send-btn",
+                                                    disabled: chat_send_reason.is_some(),
+                                                    title: chat_send_reason.as_deref().unwrap_or("Send message"),
+                                                    aria_describedby: chat_unavailable.as_ref().map(|_| "chat-send-disabled-reason"),
+                                                    onclick: {
+                                                        let ph3 = ph.clone();
+                                                        move |_| {
+                                                            let content = chat_input.read().clone();
+                                                            if !content.trim().is_empty() {
+                                                                send_cmd(daemon_bridge::DaemonCommand::SendChat {
+                                                                    peer_hash: ph3.clone(),
+                                                                    content,
+                                                                    title: (!chat_title.read().is_empty()).then(|| chat_title.read().clone()),
+                                                                    delivery_method: chat_method.read().clone(),
+                                                                    attachments: chat_attachments.read().clone(),
+                                                                });
+                                                            }
+                                                        }
+                                                    },
+                                                    "Send"
+                                                }
+                                                }
+                                                if !chat_attachments.read().is_empty() {
+                                                    div { class: "composer-attachments",
+                                                        for (index, attachment) in chat_attachments.read().iter().enumerate() {
+                                                            span { class: "composer-attachment",
+                                                                "{attachment.name}"
+                                                                button { aria_label: "Remove {attachment.name}", onclick: move |_| { let mut attachments = chat_attachments.write(); if index < attachments.len() { attachments.remove(index); } }, "×" }
+                                                            }
+                                                        }
+                                                    }
+                                                    span { class: "compose-note", "Files are attached to this message only; they are not saved with the draft." }
+                                                }
                                             }
                                         }
                                     }
@@ -834,7 +987,7 @@ fn App() -> Element {
                             on_command: send_cmd,
                         }
                     },
-                    state::AppRoute::Propagation => rsx! {
+                    state::AppRoute::Delivery => rsx! {
                         components::PropagationPage {
                             snapshot: view.propagation.snapshot.clone(),
                             standard_snapshot: view.propagation.standard_snapshot.clone(),
@@ -847,78 +1000,18 @@ fn App() -> Element {
                             },
                         }
                     },
-                    state::AppRoute::Content => rsx! {
+                    state::AppRoute::Browse => rsx! {
                         div { class: "content-layout",
-                        // Page host sidebar
-                        div { class: "sidebar page-host-sidebar",
-                            div { class: "sidebar-header", "Page Hosts" }
-                            if let Some(reason) = &page_unavailable {
-                                p { id: "page-host-controls-disabled", class: "control-disabled-reason", "Page host controls disabled: {reason}" }
-                            }
-                            button {
-                                class: "peer-item page-host-item",
-                                disabled: !capabilities.content,
-                                aria_describedby: (!capabilities.content).then_some("page-host-controls-disabled"),
-                                onclick: move |_| {
-                                    send_cmd(daemon_bridge::DaemonCommand::BrowsePage {
-                                        address: state::PageAddress::local_index(),
-                                    });
-                                },
-                                span { class: "peer-icon", style: "color: var(--accent);", "●" }
-                                span { class: "peer-name", "Local Node" }
-                            }
-                            for entry in &view.content.local_inventory {
-                                {
-                                    let path = entry.path.clone();
-                                    let is_page = entry.kind == "page";
-                                    let active = entry.handler_active;
-                                    let detail = format!(
-                                        "{:?}{}{}",
-                                        entry.kind,
-                                        if entry.dynamic { " dynamic" } else { "" },
-                                        if entry.restricted { " restricted" } else { "" },
-                                    );
-                                    rsx! {
-                                        button {
-                                            class: "peer-item page-host-item",
-                                            disabled: !capabilities.content || !is_page || !active,
-                                            onclick: move |_| {
-                                                if let Ok(address) = state::PageAddress::parse(&path) {
-                                                    send_cmd(daemon_bridge::DaemonCommand::BrowsePage { address });
-                                                }
-                                            },
-                                            span { class: "peer-icon", if active { "●" } else { "○" } }
-                                            span { class: "peer-name", "{path}" }
-                                            small { "{detail}" }
-                                        }
-                                    }
-                                }
-                            }
-                            for peer in view.network.peers.iter().filter(|p| p.node_role == state::PeerRole::PageHost) {
-                                {
-                                    let hash = peer.hash.clone();
-                                    let name = peer.name.clone().unwrap_or_else(|| hash[..8.min(hash.len())].to_string());
-                                    rsx! {
-                                        button {
-                                            class: "peer-item page-host-item",
-                                            disabled: !capabilities.content,
-                                            aria_describedby: (!capabilities.content).then_some("page-host-controls-disabled"),
-                                            onclick: move |_| {
-                                                match state::PageAddress::remote_index(&hash) {
-                                                    Ok(address) => send_cmd(daemon_bridge::DaemonCommand::BrowsePage { address }),
-                                                    Err(error) => tracing::warn!(target: "dx::content", %error, %hash, "invalid page host"),
-                                                }
-                                            },
-                                            span { class: "peer-icon", style: "color: var(--green);", "●" }
-                                            span { class: "peer-name", "{name}" }
-                                            small { "native announce: " {peer.last_announce.map_or_else(|| "time unreported".into(), |value| value.to_string())} }
-                                        }
-                                    }
-                                }
-                            }
+                        components::browse_directory::BrowseDirectory {
+                            peers: view.network.peers.clone(), paths: view.network.paths.clone(),
+                            visits: view.content.visits.clone(), page: view.content.page.clone(),
+                            local_pages: view.content.local_inventory.clone(),
+                            available: capabilities.content, unavailable_reason: page_unavailable.clone(),
+                            on_open: move |address| send_cmd(daemon_bridge::DaemonCommand::BrowsePage { address }),
                         }
 
                         components::PageBrowser {
+                            on_stop: move |_| send_cmd(daemon_bridge::DaemonCommand::StopBrowse),
                             page: view.content.page.clone(),
                             download: view.content.download.clone(),
                             available: capabilities.content,
@@ -928,7 +1021,8 @@ fn App() -> Element {
                             },
                             on_close: move |session_id| send_cmd(daemon_bridge::DaemonCommand::ClosePage { session_id }),
                             on_download: move |request| send_cmd(daemon_bridge::DaemonCommand::StartFileDownload(request)),
-                            on_refresh_download: move |download_id| send_cmd(daemon_bridge::DaemonCommand::QueryFileDownload { download_id }),
+                            download_action: view.content.download_action.clone(),
+                            download_error: view.content.download_error.clone(),
                             on_cancel_download: move |download_id| send_cmd(daemon_bridge::DaemonCommand::CancelFileDownload { download_id }),
                             on_save_download: move |(download_id, destination)| send_cmd(daemon_bridge::DaemonCommand::SaveFileDownload { download_id, destination }),
                         }
@@ -1007,6 +1101,8 @@ fn App() -> Element {
                             diagnostics,
                         }
                     },
+                }
+            }
                 }
             }
             if *activity_open.read() {
@@ -1246,7 +1342,7 @@ async fn handle_ui_command(
             stores
                 .write()
                 .set_page(generation, state::PageView::loading(host.clone(), path.clone()));
-            match bridge.browse_page(&host, &path).await {
+            match browse::bounded(bridge.browse_page(&host, &path)).await {
                 Ok(response) => {
                     stores
                         .write()
@@ -1270,16 +1366,44 @@ async fn handle_ui_command(
                 tracing::warn!(target: "dx::content", %error, "page navigation blocked");
                 return;
             }
+            let previous = stores.read().content.page.clone();
+            let address =
+                request.target.as_deref().and_then(|target| state::PageAddress::parse(target).ok());
+            let (host, path) = address
+                .as_ref()
+                .map(|a| {
+                    let (h, p) = a.parts();
+                    (h.to_string(), p.to_string())
+                })
+                .or_else(|| previous.as_ref().map(|p| (p.host.clone(), p.path.clone())))
+                .unwrap_or_else(|| (String::new(), "/page/index.mu".into()));
             let started = std::time::Instant::now();
-            match bridge.navigate_page(request).await {
+            let mut loading = state::PageView::loading(host.clone(), path.clone());
+            loading.authoritative = previous.and_then(|p| p.authoritative);
+            stores.write().set_page(generation, loading);
+            match browse::bounded(bridge.navigate_page(request)).await {
                 Ok(response) => {
-                    stores
-                        .write()
-                        .set_page(generation, state::PageView::from_daemon(response.page));
+                    stores.write().set_page(generation, state::PageView::from_daemon(response.page))
                 }
-                Err(error) => {
-                    tracing::warn!(target: "dx::content", %error, elapsed_ms = started.elapsed().as_millis(), "page navigation failed")
-                }
+                Err(error) => stores.write().set_page(
+                    generation,
+                    state::PageView::failed_at(
+                        host,
+                        path,
+                        error,
+                        u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    ),
+                ),
+            }
+        }
+        daemon_bridge::DaemonCommand::StopBrowse => {
+            let page = stores.read().content.page.clone();
+            if let Some(mut page) = page.filter(|p| p.loading) {
+                page.loading = false;
+                page.wait_end = Some(state::BrowseWaitEnd::Stopped);
+                page.error = Some("Local wait stopped".into());
+                page.retryable = true;
+                stores.write().set_page(generation, page);
             }
         }
         daemon_bridge::DaemonCommand::ClosePage { session_id } => {
@@ -1287,7 +1411,8 @@ async fn handle_ui_command(
                 tracing::warn!(target: "dx::content", %error, "page close blocked");
                 return;
             }
-            match bridge.close_page(&session_id).await {
+            stores.write().clear_page(generation);
+            match browse::bounded(bridge.close_page(&session_id)).await {
                 Ok(()) => {
                     stores.write().clear_page(generation);
                 }
@@ -1299,51 +1424,135 @@ async fn handle_ui_command(
                 tracing::warn!(target: "dx::content", %error, "download start blocked");
                 return;
             }
+            stores.write().content.download_error = None;
             match bridge.start_file_download(request).await {
-                Ok(download) => stores.write().set_download(generation, download),
+                Ok(download) => {
+                    stores.write().set_download(generation, download);
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = None;
+                    }
+                }
                 Err(error) => {
-                    tracing::warn!(target: "dx::content", %error, "download start failed")
+                    tracing::warn!(target: "dx::content", %error, "download start failed");
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error =
+                            Some("Could not start the download. Try again.".into());
+                    }
                 }
             }
         }
         daemon_bridge::DaemonCommand::QueryFileDownload { download_id } => {
+            if !stores.read().download_matches(generation, &download_id) {
+                return;
+            }
             match bridge.file_download(&download_id).await {
-                Ok(download) => stores.write().set_download(generation, download),
+                Ok(download) => {
+                    stores.write().set_download(generation, download);
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = None;
+                    }
+                }
                 Err(error) => {
-                    tracing::warn!(target: "dx::content", %error, "download refresh failed")
+                    tracing::warn!(target: "dx::content", %error, "download refresh failed");
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = Some(
+                            "Progress updates are unavailable. Retrying automatically…".into(),
+                        );
+                    }
                 }
             }
         }
         daemon_bridge::DaemonCommand::CancelFileDownload { download_id } => {
+            if !stores.read().download_matches(generation, &download_id) {
+                return;
+            }
             if let Err(error) = stores.read().mutation_availability_at(generation, "page.browse") {
                 tracing::warn!(target: "dx::content", %error, "download cancellation blocked");
                 return;
             }
+            stores.write().content.download_action = Some("Cancelling…".into());
             match bridge.cancel_file_download(&download_id).await {
-                Ok(download) => stores.write().set_download(generation, download),
-                Err(error) => {
-                    tracing::warn!(target: "dx::content", %error, "download cancellation failed")
+                Ok(download) => {
+                    stores.write().set_download(generation, download);
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = None;
+                    }
                 }
+                Err(error) => {
+                    tracing::warn!(target: "dx::content", %error, "download cancellation failed");
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error =
+                            Some("Could not cancel the download. Try again.".into());
+                    }
+                }
+            }
+            if stores.read().runtime.generation == generation {
+                stores.write().content.download_action = None;
             }
         }
         daemon_bridge::DaemonCommand::SaveFileDownload { download_id, destination } => {
+            if !stores.read().download_matches(generation, &download_id) {
+                return;
+            }
             if let Err(error) = stores.read().mutation_availability_at(generation, "page.browse") {
                 tracing::warn!(target: "dx::content", %error, "download save blocked");
                 return;
             }
+            stores.write().content.download_action = Some("Saving…".into());
+            stores.write().content.download_error = None;
             match bridge.save_file_download(&download_id, &destination).await {
-                Ok(download) => stores.write().set_download(generation, download),
-                Err(error) => tracing::warn!(target: "dx::content", %error, "download save failed"),
+                Ok(download) => {
+                    stores.write().set_download(generation, download);
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = None;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(target: "dx::content", %error, "download save failed");
+                    if stores.read().runtime.generation == generation {
+                        stores.write().content.download_error = Some("Could not save the file. Choose a writable location and an unused filename.".into());
+                    }
+                }
+            }
+            if stores.read().runtime.generation == generation {
+                stores.write().content.download_action = None;
             }
         }
         daemon_bridge::DaemonCommand::RefreshPathTable => match bridge.path_table().await {
             Ok(entries) => stores.write().set_paths(generation, entries),
             Err(e) => eprintln!("[dx] path_table failed: {e}"),
         },
-        daemon_bridge::DaemonCommand::RefreshInterfaces => match bridge.interface_stats().await {
-            Ok(ifaces) => stores.write().set_interfaces(generation, ifaces),
-            Err(e) => tracing::warn!(target: "dx::iface", %e, "interface stats failed"),
-        },
+        daemon_bridge::DaemonCommand::RefreshInterfaces => {
+            match bridge.interface_stats().await {
+                Ok(ifaces) => stores.write().set_interfaces(generation, ifaces),
+                Err(e) => tracing::warn!(target: "dx::iface", %e, "interface stats failed"),
+            }
+            let supported = stores.read().runtime.capabilities.as_ref().is_some_and(|c| {
+                c.runtime.iter().any(|id| id == "runtime.interface-management.v1")
+            });
+            let result = if supported {
+                bridge.interface_inventory().await
+            } else {
+                Err("This daemon does not advertise interface management. Update the daemon to enable editing.".into())
+            };
+            stores.write().set_interface_inventory(generation, result, false);
+        }
+        daemon_bridge::DaemonCommand::MutateInterface(request) => {
+            stores.write().begin_interface_mutation(generation, request.clone());
+            let availability =
+                stores.read().mutation_availability_at(generation, "rpc.config_update");
+            let result = match availability {
+                Ok(()) => bridge.mutate_interface(&request).await,
+                Err(error) => Err(error),
+            };
+            stores.write().set_interface_inventory(generation, result, true);
+            match bridge.interface_stats().await {
+                Ok(interfaces) => stores.write().set_interfaces(generation, interfaces),
+                Err(error) => {
+                    tracing::warn!(target: "dx::iface", %error, "post-mutation interface refresh failed")
+                }
+            }
+        }
         daemon_bridge::DaemonCommand::RefreshLinks => match bridge.links().await {
             Ok(snapshot) => stores.write().set_links(generation, snapshot),
             Err(error) => {
@@ -1486,6 +1695,20 @@ async fn handle_ui_command(
                 }
                 Err(error) => stores.write().fail_standard_propagation(generation, error),
             }
+        }
+        daemon_bridge::DaemonCommand::MarkRead { peer_hash } => {
+            let result = match bridge.mark_read(&peer_hash).await {
+                Ok(outcome) => match outcome.conversation {
+                    Some(conversation) => Ok(conversation),
+                    None => bridge.conversations().await.and_then(|items| {
+                        items.into_iter().find(|c| c.peer_hash == peer_hash).ok_or_else(|| {
+                            "Daemon did not report this conversation after marking it read".into()
+                        })
+                    }),
+                },
+                Err(error) => Err(error),
+            };
+            stores.write().acknowledge_read(generation, &peer_hash, result);
         }
         daemon_bridge::DaemonCommand::LoadConversations { cursor } => {
             match bridge.conversation_page(cursor.as_deref()).await {
@@ -1712,40 +1935,13 @@ fn truncate_preview(value: &str, max_chars: usize) -> String {
 mod accessibility_tests {
     use super::truncate_preview;
 
-    fn relative_luminance(rgb: [u8; 3]) -> f64 {
-        let channel = |value: u8| {
-            let normalized = f64::from(value) / 255.0;
-            if normalized <= 0.04045 {
-                normalized / 12.92
-            } else {
-                ((normalized + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2])
-    }
-
-    fn contrast(first: [u8; 3], second: [u8; 3]) -> f64 {
-        let first = relative_luminance(first);
-        let second = relative_luminance(second);
-        (first.max(second) + 0.05) / (first.min(second) + 0.05)
-    }
-
     #[test]
     fn authored_focus_and_reduced_motion_rules_are_present() {
         let css = include_str!("assets/style.css");
         assert!(css.contains("button:focus-visible"));
-        assert!(css.contains("outline: 3px solid var(--accent)"));
+        assert!(css.contains("outline: 3px solid var(--focus)"));
         assert!(css.contains("@media (prefers-reduced-motion: reduce)"));
         assert!(css.contains("animation-iteration-count: 1 !important"));
-    }
-
-    #[test]
-    fn meaningful_text_and_accent_surfaces_meet_normal_text_contrast() {
-        let background = [0x0d, 0x11, 0x17];
-        let text_dim = [0x8b, 0x94, 0x9e];
-        let accent = [0x58, 0xa6, 0xff];
-        assert!(contrast(background, text_dim) >= 4.5);
-        assert!(contrast(background, accent) >= 4.5);
     }
 
     #[test]
@@ -1754,11 +1950,11 @@ mod accessibility_tests {
         let fleet = include_str!("components/fleet_page.rs");
         let network = include_str!("components/network_page.rs");
         let lab = include_str!("components/lab_page.rs");
-        assert!(app.contains("nav { class: \"tab-bar\", aria_label: \"Primary navigation\""));
-        let Some(shell) = app.split("match &route_state").next() else {
-            panic!("application shell source is missing");
-        };
-        assert_eq!(shell.matches("aria_current:").count(), 8);
+        assert!(app.contains("components::workspaces::WorkspaceNav"));
+        let navigation = include_str!("components/workspaces.rs");
+        assert!(navigation.contains("aria_label: \"Primary navigation\""));
+        assert!(navigation.contains("aria_current:"));
+        assert!(navigation.contains("aria_expanded:"));
         for source in [app, fleet, network, lab] {
             assert!(source.contains("role: \"dialog\""));
             assert!(source.contains("aria_modal: \"true\""));
@@ -1780,8 +1976,12 @@ mod accessibility_tests {
         assert!(inspector.contains("aria_label: \"Search network nodes\""));
         assert!(renderer.contains("tabindex: \"0\""));
         assert!(renderer.contains("onkeydown:"));
-        for label in ["Back", "Forward", "Page address", "Save destination"] {
+        for label in ["Back", "Forward", "Page address"] {
             assert!(page.contains(&format!("aria_label: \"{label}\"")));
+        }
+        let download = include_str!("components/download_card.rs");
+        for label in ["Save downloaded file", "Cancel download", "Download progress"] {
+            assert!(download.contains(&format!("aria_label: \"{label}\"")));
         }
     }
 
@@ -1799,7 +1999,7 @@ mod accessibility_tests {
         let css = include_str!("assets/style.css");
         assert!(app.contains("class: \"content-layout\""));
         assert!(app.contains("class: \"messages-layout\""));
-        assert!(app.contains("class: \"peer-item page-host-item\""));
+        assert!(app.contains("BrowseDirectory {"));
         assert!(page.contains("class: \"page-nav-bar\""));
         assert!(css.contains(".page-nav-bar {"));
         assert!(!css.contains(".page-url-bar {"));

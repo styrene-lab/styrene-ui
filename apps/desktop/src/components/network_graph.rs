@@ -7,12 +7,14 @@ use crate::state::{GraphEdge, GraphNode, GraphNodeType, MeshStatusInfo, PathEntr
 
 use super::network_inspector::NetworkInspector;
 use super::network_interaction::{self, Interaction};
-use super::network_renderer::{GraphRenderer, GraphTooltip};
-use super::{network_layout, network_model};
+use super::network_renderer::{GraphRenderer, GraphTooltip, MapLegend};
+use super::{network_layout, network_model, network_projection};
 
 #[component]
 pub fn NetworkGraph(
     peers: Vec<PeerEntry>,
+    inspection: Option<EventHandler<String>>,
+    search: String,
     paths: Vec<PathEntry>,
     status: MeshStatusInfo,
     local_hash: String,
@@ -21,37 +23,109 @@ pub fn NetworkGraph(
     on_browse_page: EventHandler<String>,
     links: Vec<crate::state::LinkInfo>,
     interfaces: Vec<crate::state::InterfaceInfo>,
+    interface_names: Vec<crate::state::MapInterface>,
 ) -> Element {
     let mut nodes = use_signal(Vec::<GraphNode>::new);
     let mut edges = use_signal(Vec::<GraphEdge>::new);
+    let mut selected = use_signal(|| None::<usize>);
     let mut model_key = use_signal(String::new);
-    let current_key = format!("{}|{:?}|{:?}|{:?}", peer_key(&peers), paths, interfaces, links);
+    let mut auto_fit = use_signal(|| true);
+    let mut interaction = use_signal(|| Interaction::None);
+    let mut expanded_group = use_signal(String::new);
+    let mut page = use_signal(|| 0_usize);
+    let mut projection = use_signal(network_projection::Projection::default);
+    let search_query = use_signal(String::new);
+    let query = if inspection.is_some() {
+        search.trim().to_ascii_lowercase()
+    } else {
+        search_query.read().trim().to_ascii_lowercase()
+    };
+    let mut previous_query = use_signal(String::new);
+    if *previous_query.read() != query {
+        page.set(0);
+        selected.set(None);
+        previous_query.set(query.clone());
+    }
+    let view_key = format!("{}|{}|{}", expanded_group.read(), query, page.read());
+    let mut previous_view = use_signal(String::new);
+    let current_key = format!(
+        "{local_hash}|{local_name:?}|{interface_names:?}|{view_key}|{}|{:?}|{:?}|{:?}",
+        peer_key(&peers),
+        paths
+            .iter()
+            .map(|p| (&p.destination_hash, &p.next_hop, &p.interface, p.hops, p.observation.stale))
+            .collect::<Vec<_>>(),
+        interfaces
+            .iter()
+            .map(|i| (
+                &i.hash,
+                &i.name,
+                &i.status,
+                &i.parent_hash,
+                &i.remote_endpoint,
+                i.observation.stale
+            ))
+            .collect::<Vec<_>>(),
+        links.iter().map(|l| (&l.peer_hash, &l.activity, l.observation.stale)).collect::<Vec<_>>()
+    );
     if *model_key.read() != current_key {
-        let (mut next_nodes, next_edges) = network_model::build_graph(
+        let next_projection = network_projection::project(
             &local_hash,
             local_name.as_deref(),
             &peers,
             &paths,
             &interfaces,
             &links,
-            &[],
+            &interface_names,
+            network_projection::View {
+                group: &expanded_group.read(),
+                query: &query,
+                page: *page.read(),
+            },
         );
-        network_model::preserve_positions(&nodes.read(), &mut next_nodes);
+        let mut next_nodes = next_projection.nodes.clone();
+        let next_edges = next_projection.edges.clone();
+        let selected_id =
+            selected.read().and_then(|index| nodes.read().get(index).map(|node| node.id.clone()));
+        if *previous_view.read() == view_key
+            && nodes.read().iter().map(|n| &n.id).eq(next_nodes.iter().map(|n| &n.id))
+        {
+            network_model::preserve_positions(&nodes.read(), &mut next_nodes);
+        } else if *previous_view.read() != view_key {
+            auto_fit.set(true);
+            interaction.set(Interaction::None);
+            previous_view.set(view_key);
+        }
+        projection.set(next_projection);
+        let next_selected =
+            selected_id.and_then(|id| next_nodes.iter().position(|node| node.id == id));
+        if *selected.peek() != next_selected {
+            selected.set(next_selected);
+        }
         nodes.set(next_nodes);
         edges.set(next_edges);
         model_key.set(current_key);
     }
 
-    let mut camera_x = use_signal(|| 0.0_f64);
-    let mut camera_y = use_signal(|| 0.0_f64);
-    let mut zoom = use_signal(|| 1.0_f64);
-    let mut interaction = use_signal(|| Interaction::None);
+    let initial_camera = fit_camera(&nodes.read(), (800.0, 600.0));
+    let mut camera_x = use_signal(move || initial_camera.0);
+    let mut camera_y = use_signal(move || initial_camera.1);
+    let mut zoom = use_signal(move || initial_camera.2);
     let mut container_size = use_signal(|| (800.0_f64, 600.0_f64));
+    let mut container_origin = use_signal(|| (0.0_f64, 0.0_f64));
+    use_effect(move || {
+        let _ = model_key();
+        let size = container_size();
+        if auto_fit() {
+            let (x, y, scale) = fit_camera(&nodes.peek(), size);
+            camera_x.set(x);
+            camera_y.set(y);
+            zoom.set(scale);
+        }
+    });
     let mut tooltip = use_signal(|| None::<GraphTooltip>);
-    let physics_on = use_signal(initial_physics_enabled);
-    let mut selected = use_signal(|| None::<usize>);
-    let search_query = use_signal(String::new);
-    let show_all = use_signal(|| false);
+    let mut physics_on = use_signal(initial_physics_enabled);
+    let show_all = use_signal(|| true);
 
     let visible: Vec<bool> =
         nodes.read().iter().map(|node| *show_all.read() || is_interesting(node)).collect();
@@ -64,7 +138,8 @@ pub fn NetworkGraph(
                 continue;
             }
             let mut pinned = vec![0];
-            if let Interaction::DraggingNode { idx, .. } = *interaction.read()
+            if let Interaction::DraggingNode { idx, .. } | Interaction::PressingNode { idx, .. } =
+                *interaction.read()
                 && !pinned.contains(&idx)
             {
                 pinned.push(idx);
@@ -85,8 +160,8 @@ pub fn NetworkGraph(
     });
 
     let zoom_value = *zoom.read();
-    let width = 800.0 / zoom_value;
-    let height = 600.0 / zoom_value;
+    let width = container_size.read().0 / zoom_value;
+    let height = container_size.read().1 / zoom_value;
     let viewbox = format!(
         "{} {} {width} {height}",
         *camera_x.read() - width / 2.0,
@@ -117,7 +192,6 @@ pub fn NetworkGraph(
             )
         })
         .unwrap_or_default();
-    let query = search_query.read().to_ascii_lowercase();
     let search_matches: Vec<usize> = if query.is_empty() {
         Vec::new()
     } else {
@@ -132,44 +206,200 @@ pub fn NetworkGraph(
             .map(|(index, _)| index)
             .collect()
     };
+    let focus_query = query.clone();
     let selected_detail = selected.read().and_then(|index| nodes.read().get(index).cloned());
+
+    use_effect(move || {
+        // Moving a selected node must not re-open its inspector.
+        let detail = selected.read().and_then(|index| nodes.peek().get(index).cloned());
+        if let Some(node) = detail {
+            if let Some(group) = node.id.strip_prefix("group:") {
+                // A group opens a neighborhood; it must not remain selected and
+                // dim all of the destinations that were just revealed.
+                selected.set(None);
+                expanded_group.set(group.to_string());
+                page.set(0);
+            } else if !matches!(node.node_type, GraphNodeType::Summary)
+                && let Some(callback) = inspection
+            {
+                callback.call(node.id.clone());
+            }
+        }
+    });
 
     rsx! {
         div { class: "network-view",
+            div { class: "network-map-overview",
+                div { class: "network-map-explore",
+                    label { r#for: "map-group", "Explore " }
+                    select { id: "map-group", value: "{expanded_group}",
+                        disabled: !query.is_empty(),
+                        onchange: move |event| { selected.set(None); expanded_group.set(event.value()); page.set(0); },
+                        option { value: "", "Local overview" }
+                        for group in &projection.read().groups {
+                            option { key: "{group.id}", value: "{group.id}", "{group.label} ({group.count})" }
+                        }
+                    }
+                    if !query.is_empty() {
+                        span { "Searching all groups" }
+                    } else if !expanded_group.read().is_empty() {
+                        button {
+                            onclick: move |_| { selected.set(None); expanded_group.set(String::new()); page.set(0); },
+                            "Back to overview"
+                        }
+                    }
+                    if !query.is_empty() || !expanded_group.read().is_empty() {
+                        if projection.read().matches == 0 {
+                            span { role: "status",
+                                if !query.is_empty() { "No destinations match this search." }
+                                else { "This group has no current destinations." }
+                            }
+                        } else {
+                            span { role: "status", "{projection.read().shown} of {projection.read().matches} destinations" }
+                            if projection.read().pages > 1 {
+                                button { disabled: projection.read().page == 0,
+                                    onclick: move |_| { let value = projection.peek().page.saturating_sub(1); page.set(value); }, "Previous" }
+                                span { "Page {projection.read().page + 1} of {projection.read().pages}" }
+                                button { disabled: projection.read().page + 1 >= projection.read().pages,
+                                    onclick: move |_| { let value = projection.peek().page + 1; page.set(value); }, "Next" }
+                            }
+                        }
+                    }
+                }
+                details { class: "network-map-context",
+                    summary { "Map details" }
+                    div { class: "network-map-heading",
+                        strong { "Local connectivity" }
+                        span { "Destinations: {projection.read().destinations} · Groups: {projection.read().groups.len()} · Visible items: {nodes.read().len()}" }
+                    }
+                    p { "Select a group to explore its destinations. Search covers all groups. Groups summarize observed routes, not physical machines." }
+                    small { "Historical observations: {projection.read().stale_routes} stale routes · {projection.read().offline_peers} offline peers · {projection.read().inactive_links} inactive link records. Full detail remains in the inventory tabs." }
+                }
+                if projection.read().omitted_interfaces > 0 || projection.read().omitted_links > 0 || projection.read().groups.len() > 16 {
+                    small { "Display limit: {projection.read().omitted_interfaces} additional interfaces · {projection.read().omitted_links} additional active links · {projection.read().groups.len().saturating_sub(16)} additional groups. Use the selector or inventory tabs." }
+                }
+            }
+            div { class: "network-map-tools",
+                button {
+                    onclick: move |_| {
+                        auto_fit.set(true);
+                        let (x, y, scale) = fit_camera(&nodes.read(), *container_size.read());
+                        camera_x.set(x);
+                        camera_y.set(y);
+                        zoom.set(scale);
+                    },
+                    "Fit to view"
+                }
+                if !search_matches.is_empty() {
+                    button { onclick: move |_| {
+                        auto_fit.set(false);
+                        let matching: Vec<_> = nodes.read().iter().filter(|n| n.label.to_ascii_lowercase().contains(&focus_query) || n.id.to_ascii_lowercase().contains(&focus_query)).cloned().collect();
+                        let (x,y,scale) = fit_camera(&matching, *container_size.read());
+                        camera_x.set(x);camera_y.set(y);zoom.set(scale);
+                    }, "Focus matches" }
+                }
+                span { class:"network-map-summary", "{edges.read().len()} visible relationships" }
+                button {
+                    aria_label: "Zoom in",
+                    onclick: move |_| {
+                        auto_fit.set(false);
+                        let value = *zoom.read();
+                        zoom.set((value * 1.25).min(5.0));
+                    },
+                    "+"
+                }
+                button {
+                    aria_label: "Zoom out",
+                    onclick: move |_| {
+                        auto_fit.set(false);
+                        let value = *zoom.read();
+                        zoom.set((value / 1.25).max(0.001));
+                    },
+                    "−"
+                }
+                details {
+                    summary { "Map settings" }
+                    button {
+                        aria_pressed: "{physics_on}",
+                        onclick: move |_| physics_on.toggle(),
+                        if *physics_on.read() {
+                            "Pause animation"
+                        } else {
+                            "Animate layout"
+                        }
+                    }
+                }
+                MapLegend {}
+            }
             div {
                 class: "graph-container",
+                id: "network-map-canvas",
                 onmounted: move |event| {
                     let data = event.data();
                     spawn(async move {
                         if let Ok(rect) = data.get_client_rect().await {
                             container_size.set((rect.size.width, rect.size.height));
+                            container_origin.set((rect.origin.x, rect.origin.y));
+                            let (x, y, scale) = fit_camera(&nodes.read(), (rect.size.width, rect.size.height));
+                            camera_x.set(x); camera_y.set(y); zoom.set(scale);
+                        }
+                        let mut observer = document::eval(r#"
+                            const canvas = document.getElementById('network-map-canvas');
+                            if (!canvas) return;
+                            const resize = new ResizeObserver(([entry]) => {
+                                const rect = canvas.getBoundingClientRect();
+                                dioxus.send([entry.contentRect.width, entry.contentRect.height, rect.left, rect.top]);
+                            });
+                            resize.observe(canvas);
+                            await new Promise(resolve => {
+                                const removal = new MutationObserver(() => {
+                                    if (!canvas.isConnected) {
+                                        resize.disconnect();
+                                        removal.disconnect();
+                                        resolve();
+                                    }
+                                });
+                                removal.observe(document.body, {childList: true, subtree: true});
+                            });
+                        "#);
+                        while let Ok((width, height, left, top)) = observer.recv::<(f64, f64, f64, f64)>().await {
+                            if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
+                                container_size.set((width, height));
+                                container_origin.set((left, top));
+                            }
                         }
                     });
                 },
                 onmousedown: move |event: MouseEvent| {
+                    if event.trigger_button() != Some(dioxus::html::input_data::MouseButton::Primary) { return; }
                     let client = event.client_coordinates();
                     let element = event.element_coordinates();
                     let (container_width, container_height) = *container_size.read();
                     let zoom_value = *zoom.read();
-                    let width = 800.0 / zoom_value;
-                    let height = 600.0 / zoom_value;
+                    let width = container_size.read().0 / zoom_value;
+                    let height = container_size.read().1 / zoom_value;
                     let world_x = (*camera_x.read() - width / 2.0)
                         + (element.x / container_width.max(1.0)) * width;
                     let world_y = (*camera_y.read() - height / 2.0)
                         + (element.y / container_height.max(1.0)) * height;
-                    if let Some(index) = network_interaction::hit_test(&nodes.read(), world_x, world_y) {
-                        selected.set(Some(index));
-                        interaction.set(Interaction::DraggingNode {
-                            idx: index,
-                            last_x: client.x,
-                            last_y: client.y,
-                        });
+                    if let Some(index) = network_interaction::hit_test(
+                        &nodes.read(),
+                        world_x,
+                        world_y,
+                    ) {
+                        interaction
+                            .set(Interaction::PressingNode {
+                                idx: index,
+                                start_x: client.x,
+                                start_y: client.y,
+                            });
                     } else {
                         selected.set(None);
-                        interaction.set(Interaction::Panning {
-                            last_x: client.x,
-                            last_y: client.y,
-                        });
+                        interaction
+                            .set(Interaction::Panning {
+                                last_x: client.x,
+                                last_y: client.y,
+                            });
                     }
                     tooltip.set(None);
                 },
@@ -178,38 +408,54 @@ pub fn NetworkGraph(
                     let current_interaction = interaction.read().clone();
                     match current_interaction {
                         Interaction::Panning { last_x, last_y } => {
+                            auto_fit.set(false);
                             camera_x -= (client.x - last_x) * pixel_to_world.0;
                             camera_y -= (client.y - last_y) * pixel_to_world.1;
-                            interaction.set(Interaction::Panning {
-                                last_x: client.x,
-                                last_y: client.y,
-                            });
+                            interaction
+                                .set(Interaction::Panning {
+                                    last_x: client.x,
+                                    last_y: client.y,
+                                });
                         }
-                        Interaction::DraggingNode { idx, last_x, last_y } => {
-                            if let Some(node) = nodes.write().get_mut(idx) {
-                                node.x += (client.x - last_x) * pixel_to_world.0;
-                                node.y += (client.y - last_y) * pixel_to_world.1;
-                                node.vx = 0.0;
-                                node.vy = 0.0;
+                        Interaction::PressingNode { .. } | Interaction::DraggingNode { .. } => {
+                            let mut next = current_interaction;
+                            if let Some((idx, dx, dy)) = next.move_node(client.x, client.y) {
+                                auto_fit.set(false);
+                                if let Some(node) = nodes.write().get_mut(idx) {
+                                    node.x += dx * pixel_to_world.0;
+                                    node.y += dy * pixel_to_world.1;
+                                    node.vx = 0.0;
+                                    node.vy = 0.0;
+                                }
+                                interaction.set(next);
                             }
-                            interaction.set(Interaction::DraggingNode {
-                                idx,
-                                last_x: client.x,
-                                last_y: client.y,
-                            });
                         }
                         Interaction::None => {}
                     }
                 },
-                onmouseup: move |_| interaction.set(Interaction::None),
+                onmouseup: move |event: MouseEvent| {
+                    if event.trigger_button() != Some(dioxus::html::input_data::MouseButton::Primary) { return; }
+                    let point = event.client_coordinates();
+                    let clicked = interaction.peek().clicked_node(point.x, point.y);
+                    interaction.set(Interaction::None);
+                    if let Some(index) = clicked { selected.set(Some(index)); }
+                },
                 onmouseleave: move |_| {
                     interaction.set(Interaction::None);
                     tooltip.set(None);
                 },
                 onwheel: move |event: WheelEvent| {
-                    let factor = if event.delta().strip_units().y < 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    event.prevent_default();
+                    event.stop_propagation();
+                    let delta = match event.delta() {
+                        dioxus::html::geometry::WheelDelta::Pixels(v) => v.y,
+                        dioxus::html::geometry::WheelDelta::Lines(v) => v.y * 16.0,
+                        dioxus::html::geometry::WheelDelta::Pages(v) => v.y * 240.0,
+                    };
+                    if delta == 0.0 || !delta.is_finite() { return; }
+                    auto_fit.set(false);
                     let current_zoom = *zoom.read();
-                    zoom.set((current_zoom * factor).clamp(0.15, 5.0));
+                    zoom.set(network_interaction::wheel_zoom(current_zoom, delta));
                 },
                 GraphRenderer {
                     nodes,
@@ -224,35 +470,81 @@ pub fn NetworkGraph(
                     interaction,
                     tooltip,
                 }
-                if let Some((x, y, label, hash, status, capabilities)) = tooltip.read().clone() {
-                    div {
-                        class: "graph-tooltip",
-                        style: "left: {x + 12.0}px; top: {y - 10.0}px;",
-                        div { class: "tt-label", "{label}" }
-                        div { class: "tt-hash", "{hash}" }
-                        div { class: "tt-status", "{status}" }
-                        if !capabilities.is_empty() {
-                            div { class: "tt-caps", "{capabilities}" }
-                        }
+                if let Some(detail) = tooltip.read().clone() {
+                    GraphHoverCard {
+                        key: "{detail.2}:{detail.3}:{detail.4}:{detail.5}:{container_size.read().0}",
+                        detail,
+                        origin: *container_origin.read(),
+                        bounds: *container_size.read(),
                     }
                 }
             }
-            NetworkInspector {
-                selected: selected_detail,
-                peers,
-                links,
-                status,
-                search_query,
-                search_count: search_matches.len(),
-                hidden_count,
-                show_all,
-                physics_on,
-                nodes,
-                on_select_peer,
-                on_browse_page,
+            if inspection.is_none() {
+                NetworkInspector {
+                    selected: selected_detail,
+                    peers,
+                    links,
+                    status,
+                    search_query,
+                    search_count: search_matches.len(),
+                    hidden_count,
+                    show_all,
+                    physics_on,
+                    nodes,
+                    on_select_peer,
+                    on_browse_page,
+                }
             }
         }
     }
+}
+
+#[component]
+fn GraphHoverCard(detail: GraphTooltip, origin: (f64, f64), bounds: (f64, f64)) -> Element {
+    let mut measured = use_signal(|| None::<(f64, f64)>);
+    let (x, y, label, hash, status, capabilities) = detail;
+    let (left, top) = network_interaction::tooltip_position(
+        (x - origin.0, y - origin.1),
+        bounds,
+        measured.read().unwrap_or_default(),
+    );
+    let visibility = if measured.read().is_some() { "visible" } else { "hidden" };
+    rsx! {
+        div {
+            class: "graph-tooltip",
+            role: "tooltip",
+            style: "left: {left}px; top: {top}px; visibility: {visibility};",
+            onmounted: move |event| {
+                let data = event.data();
+                spawn(async move {
+                    if let Ok(rect) = data.get_client_rect().await {
+                        measured.set(Some((rect.size.width, rect.size.height)));
+                    }
+                });
+            },
+            div { class: "tt-label", "{label}" }
+            div { class: "tt-hash", "{hash}" }
+            div { class: "tt-status", "{status}" }
+            if !capabilities.is_empty() { div { class: "tt-caps", "{capabilities}" } }
+        }
+    }
+}
+
+fn fit_camera(nodes: &[GraphNode], size: (f64, f64)) -> (f64, f64, f64) {
+    if nodes.is_empty() {
+        return (0.0, 0.0, 1.0);
+    }
+    let (mut left, mut right, mut top, mut bottom) =
+        (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
+    for node in nodes {
+        left = left.min(node.x);
+        right = right.max(node.x);
+        top = top.min(node.y);
+        bottom = bottom.max(node.y);
+    }
+    let zoom =
+        (size.0 / (right - left + 180.0)).min(size.1 / (bottom - top + 160.0)).clamp(0.000001, 2.0);
+    ((left + right) / 2.0, (top + bottom) / 2.0, zoom)
 }
 
 const fn initial_physics_enabled() -> bool {
@@ -261,14 +553,27 @@ const fn initial_physics_enabled() -> bool {
 }
 
 fn peer_key(peers: &[PeerEntry]) -> String {
-    let mut hashes: Vec<&str> = peers.iter().map(|peer| peer.hash.as_str()).collect();
+    let mut hashes: Vec<String> = peers
+        .iter()
+        .map(|peer| {
+            format!(
+                "{}:{:?}:{}:{:?}:{:?}",
+                peer.hash, peer.name, peer.status, peer.node_role, peer.capabilities
+            )
+        })
+        .collect();
     hashes.sort_unstable();
     hashes.join(",")
 }
 
 fn is_interesting(node: &GraphNode) -> bool {
     match &node.node_type {
-        GraphNodeType::Local | GraphNodeType::Interface { .. } | GraphNodeType::Hub { .. } => true,
+        GraphNodeType::Unknown
+        | GraphNodeType::Summary
+        | GraphNodeType::Remote { .. }
+        | GraphNodeType::Local
+        | GraphNodeType::Interface { .. }
+        | GraphNodeType::Hub { .. } => true,
         GraphNodeType::PageHost { .. } | GraphNodeType::Styrene { .. } => true,
         GraphNodeType::Rns { .. } => node.name_is_set(),
     }
@@ -277,6 +582,26 @@ fn is_interesting(node: &GraphNode) -> bool {
 #[cfg(test)]
 mod accessibility_tests {
     use super::*;
+
+    #[test]
+    fn fit_camera_encloses_even_extreme_route_extents() {
+        let node = |x, y| GraphNode {
+            id: "node".into(),
+            label: String::new(),
+            node_type: GraphNodeType::Unknown,
+            capabilities: Vec::new(),
+            x,
+            y,
+            vx: 0.0,
+            vy: 0.0,
+        };
+        let nodes = vec![node(-250.0, 0.0), node(100.0, 50000.0)];
+        let (x, y, zoom) = fit_camera(&nodes, (1200.0, 700.0));
+        for node in nodes {
+            assert!((node.x - x).abs() < 1200.0 / zoom / 2.0);
+            assert!((node.y - y).abs() < 700.0 / zoom / 2.0);
+        }
+    }
 
     #[test]
     fn force_layout_requires_explicit_operator_opt_in() {

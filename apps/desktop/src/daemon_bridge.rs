@@ -104,6 +104,9 @@ pub enum DaemonCommand {
         delivery_method: String,
         attachments: Vec<styrene_ipc::types::AttachmentInput>,
     },
+    MarkRead {
+        peer_hash: String,
+    },
     LoadDraft {
         peer_hash: String,
     },
@@ -123,6 +126,7 @@ pub enum DaemonCommand {
     BrowsePage {
         address: crate::state::PageAddress,
     },
+    StopBrowse,
     NavigatePage(styrene_ipc::types::PageNavigationRequest),
     ClosePage {
         session_id: String,
@@ -140,6 +144,7 @@ pub enum DaemonCommand {
     },
     RefreshPathTable,
     RefreshInterfaces,
+    MutateInterface(styrene_ipc::types::InterfaceMutation),
     RefreshLinks,
     RefreshOperations,
     RefreshRequests,
@@ -193,10 +198,12 @@ pub enum DaemonCommand {
 impl DaemonCommand {
     pub fn required_capability(&self) -> Option<&'static str> {
         match self {
+            Self::MutateInterface(_) => Some("rpc.config_update"),
             Self::SendChat { .. } => Some("chat.send"),
-            Self::LoadDraft { .. } | Self::SaveDraft { .. } | Self::DiscardDraft { .. } => {
-                Some("messaging.manage")
-            }
+            Self::MarkRead { .. }
+            | Self::LoadDraft { .. }
+            | Self::SaveDraft { .. }
+            | Self::DiscardDraft { .. } => Some("messaging.manage"),
             Self::RetryMessage { .. } | Self::CancelMessage { .. } => Some("messaging.lifecycle"),
             Self::BrowsePage { .. }
             | Self::NavigatePage(_)
@@ -205,7 +212,8 @@ impl DaemonCommand {
             | Self::QueryFileDownload { .. }
             | Self::CancelFileDownload { .. }
             | Self::SaveFileDownload { .. } => Some("page.browse"),
-            Self::RefreshPathTable
+            Self::StopBrowse
+            | Self::RefreshPathTable
             | Self::RefreshInterfaces
             | Self::RefreshLinks
             | Self::RefreshOperations
@@ -337,6 +345,13 @@ impl RequestBroker {
         self.client.set_draft(peer_hash, content).await.map_err(describe)
     }
 
+    pub(crate) async fn mark_read(
+        &self,
+        peer_hash: &str,
+    ) -> Result<styrene_ipc::types::MessagingOperationOutcome, String> {
+        self.client.mark_read(peer_hash).await.map_err(describe)
+    }
+
     pub(crate) async fn discard_draft(&self, peer_hash: &str) -> Result<(), String> {
         self.client.clear_draft(peer_hash).await.map_err(describe)
     }
@@ -410,6 +425,17 @@ impl RequestBroker {
         self.client.path_table().await.map(path_table_entries).map_err(describe)
     }
 
+    pub(crate) async fn interface_inventory(
+        &self,
+    ) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        self.client.interface_inventory().await.map_err(describe)
+    }
+    pub(crate) async fn mutate_interface(
+        &self,
+        request: &styrene_ipc::types::InterfaceMutation,
+    ) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        self.client.mutate_interface(request).await.map_err(describe)
+    }
     pub(crate) async fn interface_stats(&self) -> Result<Vec<InterfaceStats>, String> {
         self.client.interface_stats().await.map_err(describe)
     }

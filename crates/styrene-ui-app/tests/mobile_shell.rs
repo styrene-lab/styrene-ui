@@ -22,7 +22,11 @@ use styrene_ui_state::{
 };
 
 const FIXTURES: &str = include_str!("../../../tests/fixtures/mobile-minimum-v1/states.json");
-const MOBILE_CSS: &str = include_str!("../assets/mobile.css");
+const MOBILE_CSS: &str = concat!(
+    include_str!("../../../assets/theme/runtime.css"),
+    include_str!("../../../assets/theme/tokens.css"),
+    include_str!("../assets/mobile.css")
+);
 
 fn fixture(id: &str) -> MobileFixture {
     let corpus: MobileMinimumCorpus =

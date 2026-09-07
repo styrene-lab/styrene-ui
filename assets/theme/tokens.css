@@ -1,0 +1,82 @@
+/* Styrene semantic adapter. Layout and hit targets belong to each shell. */
+:root {
+  color-scheme: light dark;
+  /* Small action text needs 4.5:1 on the light canvas; preserve exported primary. */
+  --action-ink: #ac3c18;
+  --canvas: var(--background);
+  --surface: var(--card);
+  --surface-raised: var(--popover);
+  --ink: var(--foreground);
+  --ink-muted: var(--muted-foreground);
+  --line: var(--border);
+  --line-strong: var(--input);
+  --accent-ink: var(--primary-foreground);
+  --focus: var(--ring);
+  --navigation: var(--sidebar);
+  --navigation-ink: var(--sidebar-foreground);
+  --navigation-active: var(--sidebar-primary);
+  --navigation-active-ink: var(--sidebar-primary-foreground);
+  --font-interface: var(--font-sans);
+  --font-technical: var(--font-mono);
+  --bg: var(--background);
+  --text: var(--foreground);
+  --text-muted: var(--muted-foreground);
+  --text-dim: var(--muted-foreground);
+  --surface-hover: var(--secondary);
+  --green: var(--signal);
+  --red: var(--danger);
+  --orange: var(--warning);
+  --yellow: var(--warning);
+  --signal: #2c6b3c;
+  --signal-soft: #d9e6cf;
+  --warning: #7a4b0a;
+  --warning-soft: #f3e3b8;
+  --warning-line: #a7782c;
+  --danger: #8f2a20;
+  --danger-soft: #f1dbd5;
+  --danger-line: #b3574c;
+  --texture-ink: rgb(15 23 18 / 3.5%);
+  --stroke: 0.0625rem;
+  --stroke-strong: 0.125rem;
+  --shadow-panel: none;
+  --shadow-message: none;
+  --tick: 0.5rem;
+  --tick-ink: var(--line-strong);
+  --radius-control: var(--radius);
+  --radius-panel: var(--radius);
+  --radius-status: var(--radius);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+  /* Operator update 2026-09-07: registry snapshot has not refreshed yet. */
+  --primary: #68b145;
+  --sidebar-primary: #68b145;
+  --action-ink: var(--primary);
+  --signal: #8fdc93;
+  --signal-soft: #15301a;
+  --warning: #f2cf7a;
+  --warning-soft: #33260a;
+  --warning-line: #9a7328;
+  --danger: #ff9f92;
+  --danger-soft: #3c1612;
+  --danger-line: #a85a50;
+  --texture-ink: rgb(143 220 147 / 4%);
+  }
+}
+.dark {
+  /* Operator update 2026-09-07: registry snapshot has not refreshed yet. */
+  --primary: #68b145;
+  --sidebar-primary: #68b145;
+  --action-ink: var(--primary);
+  --signal: #8fdc93;
+  --signal-soft: #15301a;
+  --warning: #f2cf7a;
+  --warning-soft: #33260a;
+  --warning-line: #9a7328;
+  --danger: #ff9f92;
+  --danger-soft: #3c1612;
+  --danger-line: #a85a50;
+  --texture-ink: rgb(143 220 147 / 4%);
+}
+
+body { letter-spacing: var(--tracking-normal, 0em); }

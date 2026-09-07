@@ -39,7 +39,10 @@ pub(crate) fn build_graph(
             id: format!("iface:{}", interface.hash),
             label: interface.name.clone(),
             node_type: GraphNodeType::Interface {
-                online: interface.status == "online" || interface.status == "active",
+                online: matches!(
+                    interface.status.as_str(),
+                    "online" | "active" | "listening" | "connected"
+                ),
             },
             capabilities: Vec::new(),
             x: -150.0,
@@ -62,11 +65,15 @@ pub(crate) fn build_graph(
         let angle = (fraction - 0.5) * std::f64::consts::PI * 1.6;
         let online = peer.status != "offline" && !peer.status.is_empty();
         let (x, y) = initial_peer_position(peer, angle);
-        let node_type = match &peer.node_role {
-            PeerRole::Hub => GraphNodeType::Hub { online },
-            PeerRole::PageHost => GraphNodeType::PageHost { online },
-            PeerRole::Styrene => GraphNodeType::Styrene { online },
-            PeerRole::Rns => GraphNodeType::Rns { online },
+        let node_type = if peer.status.is_empty() || peer.status == "unknown" {
+            GraphNodeType::Unknown
+        } else {
+            match &peer.node_role {
+                PeerRole::Hub => GraphNodeType::Hub { online },
+                PeerRole::PageHost => GraphNodeType::PageHost { online },
+                PeerRole::Styrene => GraphNodeType::Styrene { online },
+                PeerRole::Rns => GraphNodeType::Rns { online },
+            }
         };
         let node_index = nodes.len();
         nodes.push(GraphNode {
@@ -85,7 +92,33 @@ pub(crate) fn build_graph(
         node_indices.insert(peer.hash.clone(), node_index);
     }
 
-    for path in paths {
+    // Routes and links are independent observations; discovery is not required.
+    for hash in paths
+        .iter()
+        .flat_map(|path| [&path.destination_hash, &path.next_hop])
+        .chain(links.iter().map(|link| &link.peer_hash))
+    {
+        if hash.is_empty() || node_indices.contains_key(hash) {
+            continue;
+        }
+        let index = nodes.len();
+        let slot = index.saturating_sub(1 + interfaces.len() + peers.len()) as f64;
+        let angle = slot * 2.399963229728653;
+        let radius = 80.0 * (slot + 1.0).sqrt();
+        nodes.push(GraphNode {
+            id: hash.clone(),
+            label: hash.chars().take(8).collect(),
+            node_type: GraphNodeType::Unknown,
+            capabilities: Vec::new(),
+            x: 450.0 + radius * angle.cos(),
+            y: radius * angle.sin(),
+            vx: 0.0,
+            vy: 0.0,
+        });
+        node_indices.insert(hash.clone(), index);
+    }
+
+    for path in paths.iter().filter(|path| !path.observation.stale) {
         let Some(&target) = node_indices.get(&path.destination_hash) else {
             continue;
         };
@@ -107,7 +140,9 @@ pub(crate) fn build_graph(
         }
     }
 
-    for link in links {
+    for link in links.iter().filter(|link| {
+        !link.observation.stale && link.activity == styrene_ipc::types::LinkActivity::Active
+    }) {
         if let Some(&target) = node_indices.get(&link.peer_hash) {
             edges.push(GraphEdge { source: 0, target, hops: 0, kind: GraphEdgeKind::Link });
         }
@@ -121,9 +156,29 @@ pub(crate) fn build_graph(
         }
     }
 
-    let pinned: Vec<usize> =
+    let mut pinned: Vec<usize> =
         std::iter::once(0).chain(interface_indices.values().copied()).collect();
-    network_layout::settle_layout(&mut nodes, &edges, &pinned);
+    if nodes.len() > 200 {
+        let mut outgoing = vec![0_usize; nodes.len()];
+        for edge in &edges {
+            if edge.kind == GraphEdgeKind::Route {
+                outgoing[edge.source] += 1;
+            }
+        }
+        for (index, count) in outgoing.iter().enumerate() {
+            if *count >= 8 && !pinned.contains(&index) {
+                pinned.push(index);
+            }
+        }
+    }
+    pinned.sort_unstable();
+    if nodes.len() > 200 {
+        // Large inventories need bounded two-dimensional geometry, not a column
+        // whose height grows linearly with the number of route-only endpoints.
+        network_layout::compact_layout(&mut nodes, &pinned);
+    } else {
+        network_layout::settle_layout(&mut nodes, &edges, &pinned);
+    }
     (nodes, edges)
 }
 
@@ -171,6 +226,23 @@ mod tests {
             last_announce: None,
             announce_count: 1,
         }
+    }
+
+    #[test]
+    fn undiscovered_destination_remains_visible_with_unknown_status() {
+        let path = PathEntry {
+            destination_hash: "unheard".into(),
+            hops: 1,
+            next_hop: "unheard".into(),
+            interface: "".into(),
+            expires: None,
+            observation: Default::default(),
+        };
+        let (nodes, edges) = build_graph("local", None, &[], &[path], &[], &[], &[]);
+        let unknown = nodes.iter().find(|node| node.id == "unheard").expect("observed destination");
+        assert_eq!(unknown.node_type, GraphNodeType::Unknown);
+        assert_eq!(unknown.type_label(), "Destination (status unknown)");
+        assert_eq!(edges.iter().filter(|edge| edge.kind == GraphEdgeKind::Route).count(), 1);
     }
 
     #[test]
@@ -228,6 +300,32 @@ mod tests {
         preserve_positions(&previous, &mut next);
         assert_eq!((next[1].x, next[1].y), (321.0, 123.0));
         assert!(matches!(next[1].node_type, GraphNodeType::Rns { online: false }));
+    }
+
+    #[test]
+    fn large_route_inventory_is_compact_and_preserves_all_destinations() {
+        let paths: Vec<_> = (0..1000)
+            .map(|index| {
+                let hash = format!("{index:032x}");
+                PathEntry {
+                    destination_hash: hash.clone(),
+                    next_hop: hash,
+                    hops: 1,
+                    interface: String::new(),
+                    expires: None,
+                    observation: Default::default(),
+                }
+            })
+            .collect();
+        let (nodes, edges) = build_graph("local", None, &[], &paths, &[], &[], &[]);
+        assert_eq!(nodes.len(), 1001);
+        assert_eq!(edges.len(), 1000);
+        let width = nodes.iter().map(|n| n.x).fold(f64::NEG_INFINITY, f64::max)
+            - nodes.iter().map(|n| n.x).fold(f64::INFINITY, f64::min);
+        let height = nodes.iter().map(|n| n.y).fold(f64::NEG_INFINITY, f64::max)
+            - nodes.iter().map(|n| n.y).fold(f64::INFINITY, f64::min);
+        assert!(width < 4000.0 && height < 4000.0);
+        assert!(width / height > 0.5 && width / height < 2.0);
     }
 
     #[test]

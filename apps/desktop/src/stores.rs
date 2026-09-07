@@ -50,6 +50,13 @@ pub struct NetworkStore {
     pub paths: Vec<state::PathEntry>,
     pub links: Vec<state::LinkInfo>,
     pub interfaces: Vec<state::InterfaceInfo>,
+    pub interface_inventory: Option<styrene_ipc::types::InterfaceInventory>,
+    pub interface_unavailable: Option<String>,
+    pub interface_error: Option<String>,
+    pub interface_result_serial: u64,
+    pub interface_action_notice: Option<String>,
+    pub interface_focus: Option<String>,
+    pub interface_pending: Option<styrene_ipc::types::InterfaceMutation>,
     pub announces: Vec<state::AnnounceEvent>,
     pub operations: Vec<styrene_ipc::types::NetworkOperationInfo>,
     pub requests: Vec<styrene_ipc::types::RequestObservationInfo>,
@@ -60,6 +67,7 @@ pub struct NetworkStore {
 #[derive(Clone, Debug, Default)]
 pub struct MessageStore {
     pub conversations: Vec<state::ConversationEntry>,
+    pub read_error: Option<(String, String)>,
     pub messages: Vec<state::ChatMessage>,
     pub state: DataState,
     pub conversation_cursor: Option<String>,
@@ -160,8 +168,12 @@ pub struct FleetJob {
 
 #[derive(Clone, Debug, Default)]
 pub struct ContentStore {
+    pub visits: std::collections::BTreeMap<String, String>,
+    visit_order: VecDeque<String>,
     pub page: Option<state::PageView>,
     pub download: Option<styrene_ipc::types::FileDownloadInfo>,
+    pub download_action: Option<String>,
+    pub download_error: Option<String>,
     pub local_inventory: Vec<styrene_ipc::types::PageInfo>,
     pub state: DataState,
 }
@@ -175,17 +187,6 @@ pub struct ScenarioStore {
 #[derive(Clone, Debug, Default)]
 pub struct ActivityStore {
     pub entries: Vec<state::ActivityEntry>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct CommandSummary {
-    pub transport_active: bool,
-    pub interface_count: u32,
-    pub observed_peers: usize,
-    pub route_count: usize,
-    pub active_links: u32,
-    pub link_records: usize,
-    pub propagation_enabled: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -480,6 +481,117 @@ impl DomainStores {
         self.refresh_network_state();
     }
 
+    fn interface_activity(&mut self, summary: String, error: bool) {
+        self.push_activity(state::ActivityEntry {
+            timestamp: now(),
+            severity: if error {
+                state::ActivitySeverity::Error
+            } else {
+                state::ActivitySeverity::Info
+            },
+            kind: "interface",
+            summary,
+            entity: None,
+            correlation_id: None,
+            provenance: "interface management".into(),
+        });
+    }
+
+    pub fn begin_interface_mutation(
+        &mut self,
+        generation: ConnectionGeneration,
+        request: styrene_ipc::types::InterfaceMutation,
+    ) {
+        if !self.accepts(generation) {
+            return;
+        }
+        let summary = format!("Interface {} requested: {}", request.action, request.settings.name);
+        self.network.interface_action_notice = Some(summary.clone());
+        self.network.interface_pending = Some(request);
+        self.interface_activity(summary, false);
+    }
+
+    pub fn set_interface_inventory(
+        &mut self,
+        generation: ConnectionGeneration,
+        result: Result<styrene_ipc::types::InterfaceInventory, String>,
+        mutation: bool,
+    ) {
+        if !self.accepts(generation) {
+            return;
+        }
+        if mutation {
+            self.network.interface_result_serial += 1;
+            self.network.interface_error = result.as_ref().err().cloned();
+            let pending = self.network.interface_pending.take();
+            let name = pending.as_ref().map(|p| p.settings.name.as_str()).unwrap_or("interface");
+            let summary = match &result {
+                Err(error) => format!("Interface change failed for {name}: {error}"),
+                Ok(inventory) => {
+                    let entry = pending.as_ref().and_then(|p| {
+                        inventory.entries.iter().find(|e| {
+                            if p.action == "create" {
+                                e.settings.name == p.settings.name.trim()
+                                    && e.settings.host == p.settings.host
+                                    && e.settings.port == p.settings.port
+                            } else {
+                                e.settings.id == p.settings.id
+                            }
+                        })
+                    });
+                    self.network.interface_focus = entry.map(|e| e.settings.id.clone());
+                    if pending.as_ref().is_some_and(|p| p.action == "delete") {
+                        format!("Deleted {name}.")
+                    } else {
+                        format!(
+                            "Saved {name}. Connection state and traffic refresh every 2 seconds."
+                        )
+                    }
+                }
+            };
+            self.network.interface_action_notice = Some(summary.clone());
+            self.interface_activity(summary, result.is_err());
+        }
+        match result {
+            Ok(inventory) => {
+                let changes: Vec<_> = inventory
+                    .entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let previous = self
+                            .network
+                            .interface_inventory
+                            .as_ref()?
+                            .entries
+                            .iter()
+                            .find(|p| p.settings.id == entry.settings.id)?;
+                        if previous.state == entry.state && previous.error == entry.error {
+                            return None;
+                        }
+                        Some((
+                            format!(
+                                "{}: {}{}",
+                                entry.settings.name,
+                                entry.state,
+                                entry.error.as_ref().map(|e| format!(" — {e}")).unwrap_or_default()
+                            ),
+                            entry.error.is_some(),
+                        ))
+                    })
+                    .collect();
+                for (summary, error) in changes {
+                    self.interface_activity(summary, error);
+                }
+                self.network.interface_inventory = Some(inventory);
+                self.network.interface_unavailable = None;
+            }
+            Err(error) if !mutation => {
+                self.network.interface_unavailable = Some(error);
+            }
+            Err(_) => {}
+        }
+    }
+
     pub fn set_interfaces(
         &mut self,
         generation: ConnectionGeneration,
@@ -670,6 +782,35 @@ impl DomainStores {
         }
     }
 
+    pub fn acknowledge_read(
+        &mut self,
+        generation: ConnectionGeneration,
+        peer: &str,
+        result: Result<styrene_ipc::types::ConversationInfo, String>,
+    ) {
+        if !self.accepts(generation) {
+            return;
+        }
+        match result {
+            Ok(conversation) if conversation.peer_hash == peer => {
+                self.messages.read_error = None;
+                // Preserve pagination and other conversations; do not synthesize a zero.
+                if let Some(existing) =
+                    self.messages.conversations.iter_mut().find(|c| c.peer_hash == peer)
+                {
+                    existing.unread_count = conversation.unread_count;
+                }
+            }
+            Ok(_) => {
+                self.messages.read_error = Some((
+                    peer.into(),
+                    "Read acknowledgement identified a different conversation".into(),
+                ))
+            }
+            Err(error) => self.messages.read_error = Some((peer.into(), error)),
+        }
+    }
+
     pub fn merge_conversation_page(
         &mut self,
         generation: ConnectionGeneration,
@@ -722,7 +863,9 @@ impl DomainStores {
             return;
         }
         self.messages.loaded_peer_hashes.insert(peer_hash.to_string());
-        for incoming in messages {
+        // History pages arrive newest first. Preserve their chronological order
+        // for legacy daemons without persistent sequence metadata as well.
+        for incoming in messages.into_iter().rev() {
             let incoming_id = incoming.id.clone();
             if let Some(existing) =
                 self.messages.messages.iter_mut().find(|item| item.id == incoming.id)
@@ -764,12 +907,19 @@ impl DomainStores {
         self.messages.message_cursors.remove(peer_hash);
     }
 
-    pub fn push_outgoing(&mut self, generation: ConnectionGeneration, message: state::ChatMessage) {
+    pub fn push_outgoing(
+        &mut self,
+        generation: ConnectionGeneration,
+        mut message: state::ChatMessage,
+    ) {
         if self.accepts(generation) {
             self.mark_message_live(message.id.clone());
             if let Some(existing) =
                 self.messages.messages.iter_mut().find(|item| item.id == message.id)
             {
+                // A degraded send acknowledgement must not discard a key that
+                // an authoritative event or history query already supplied.
+                message.ingest_sequence = message.ingest_sequence.or(existing.ingest_sequence);
                 *existing = message;
             } else {
                 self.messages.messages.push(message);
@@ -886,9 +1036,9 @@ impl DomainStores {
     fn sort_messages(&mut self) {
         let mut seen = HashSet::new();
         self.messages.messages.retain(|message| seen.insert(message.id.clone()));
-        self.messages
-            .messages
-            .sort_by(|left, right| (left.timestamp, &left.id).cmp(&(right.timestamp, &right.id)));
+        self.messages.messages.sort_by_key(|message| {
+            (message.timestamp, message.ingest_sequence.unwrap_or(u64::MAX))
+        });
     }
 
     pub fn set_page(&mut self, generation: ConnectionGeneration, mut page: state::PageView) {
@@ -905,6 +1055,22 @@ impl DomainStores {
         } else {
             DataState::Ready
         };
+        if !page.loading && !page.host.is_empty() {
+            let outcome = match page.wait_end {
+                Some(state::BrowseWaitEnd::TimedOut) => "Last wait timed out",
+                Some(state::BrowseWaitEnd::Stopped) => "Last wait stopped",
+                None if page.error.is_some() => "Last attempt failed",
+                None => "Page received this session",
+            };
+            self.content.visit_order.retain(|host| host != &page.host);
+            self.content.visit_order.push_back(page.host.clone());
+            while self.content.visit_order.len() > 128 {
+                if let Some(oldest) = self.content.visit_order.pop_front() {
+                    self.content.visits.remove(&oldest);
+                }
+            }
+            self.content.visits.insert(page.host.clone(), outcome.into());
+        }
         self.content.page = Some(page);
     }
 
@@ -912,8 +1078,23 @@ impl DomainStores {
         if self.accepts(generation) {
             self.content.page = None;
             self.content.download = None;
+            self.content.download_action = None;
+            self.content.download_error = None;
             self.content.state = DataState::Empty;
         }
+    }
+
+    pub fn pending_download_id(&self) -> Option<String> {
+        self.content
+            .download
+            .as_ref()
+            .filter(|d| !d.state.is_terminal())
+            .map(|d| d.download_id.clone())
+    }
+
+    pub fn download_matches(&self, generation: ConnectionGeneration, id: &str) -> bool {
+        self.accepts(generation)
+            && self.content.download.as_ref().is_some_and(|d| d.download_id == id)
     }
 
     pub fn set_download(
@@ -1091,7 +1272,8 @@ impl DomainStores {
         capabilities: BackendCapabilities,
     ) -> DataState {
         match route {
-            state::AppRoute::Command | state::AppRoute::System => self.runtime.state.clone(),
+            state::AppRoute::Identity => DataState::Ready,
+            state::AppRoute::Overview | state::AppRoute::System => self.runtime.state.clone(),
             state::AppRoute::Network => self.network.state.clone(),
             state::AppRoute::Messages if !capabilities.messaging => {
                 DataState::Degraded { reason: "messaging is unsupported by this backend".into() }
@@ -1101,30 +1283,18 @@ impl DomainStores {
                 reason: "fleet operations are unsupported by this backend".into(),
             },
             state::AppRoute::Fleet => self.fleet.state.clone(),
-            state::AppRoute::Propagation if !capabilities.propagation => DataState::Degraded {
+            state::AppRoute::Delivery if !capabilities.propagation => DataState::Degraded {
                 reason: "propagation inspection is unsupported by this backend".into(),
             },
-            state::AppRoute::Propagation => self.propagation.state.clone(),
-            state::AppRoute::Content if !capabilities.content => DataState::Degraded {
+            state::AppRoute::Delivery => self.propagation.state.clone(),
+            state::AppRoute::Browse if !capabilities.content => DataState::Degraded {
                 reason: "content browsing is unsupported by this backend".into(),
             },
-            state::AppRoute::Content => self.content.state.clone(),
+            state::AppRoute::Browse => self.content.state.clone(),
             state::AppRoute::Lab if !capabilities.scenarios => DataState::Degraded {
                 reason: "scenario execution is unsupported by this backend".into(),
             },
             state::AppRoute::Lab => self.scenario.state.clone(),
-        }
-    }
-
-    pub fn command_summary(&self) -> CommandSummary {
-        CommandSummary {
-            transport_active: self.network.status.transport_active,
-            interface_count: self.network.status.interface_count,
-            observed_peers: self.network.peers.len(),
-            route_count: self.network.paths.len(),
-            active_links: self.network.status.link_count,
-            link_records: self.network.links.len(),
-            propagation_enabled: self.propagation.enabled,
         }
     }
 
@@ -1356,7 +1526,7 @@ fn session_failure_message(error: &str) -> &'static str {
     } else if error.contains("permission denied") || error.contains("unauthorized") {
         "daemon socket access denied"
     } else if error.contains("connection refused") {
-        "daemon refused the connection"
+        "no daemon is listening at the selected socket"
     } else if error.contains("not responsive")
         || error.contains("timeout")
         || error.contains("timed out")
@@ -1587,6 +1757,57 @@ mod tests {
     use super::*;
     use styrene_ipc::types::{DeviceInfo, ObservationMetadata};
 
+    #[test]
+    fn read_acknowledgement_is_authoritative_and_generation_scoped() {
+        let mut store = stores();
+        let entry = state::ConversationEntry {
+            peer_hash: "peer".into(),
+            peer_name: None,
+            last_message: None,
+            last_timestamp: None,
+            unread_count: 7,
+            message_count: 7,
+            pinned: false,
+            muted: false,
+        };
+        store.messages.conversations.push(entry);
+        store.acknowledge_read(ConnectionGeneration(2), "peer", Err("offline".into()));
+        assert_eq!(store.messages.conversations[0].unread_count, 7);
+        assert!(store.messages.read_error.is_some());
+        let mut conversation = styrene_ipc::types::ConversationInfo::default();
+        conversation.peer_hash = "peer".into();
+        conversation.unread_count = 2;
+        store.acknowledge_read(ConnectionGeneration(1), "peer", Ok(conversation.clone()));
+        assert_eq!(store.messages.conversations[0].unread_count, 7);
+        store.acknowledge_read(ConnectionGeneration(2), "peer", Ok(conversation.clone()));
+        assert_eq!(store.messages.conversations[0].unread_count, 2, "never invent a zero");
+        conversation.unread_count = 0;
+        store.acknowledge_read(ConnectionGeneration(2), "peer", Ok(conversation));
+        assert_eq!(store.messages.conversations[0].unread_count, 0);
+        assert!(store.messages.read_error.is_none());
+    }
+
+    #[test]
+    fn download_polling_stops_at_completion_and_commands_follow_current_session_and_id() {
+        use styrene_ipc::types::{FileDownloadInfo, FileDownloadState};
+        let mut stores = DomainStores::default();
+        stores.begin_session("Live", ConnectionGeneration(2));
+        let mut info = FileDownloadInfo::default();
+        info.download_id = "current".into();
+        info.state = FileDownloadState::Receiving;
+        stores.set_download(ConnectionGeneration(2), info.clone());
+        assert_eq!(stores.pending_download_id().as_deref(), Some("current"));
+        assert!(stores.download_matches(ConnectionGeneration(2), "current"));
+        assert!(!stores.download_matches(ConnectionGeneration(1), "current"));
+        assert!(!stores.download_matches(ConnectionGeneration(2), "replaced"));
+        info.state = FileDownloadState::Completed;
+        stores.set_download(ConnectionGeneration(2), info);
+        assert_eq!(stores.pending_download_id(), None);
+        stores.begin_session("Replacement", ConnectionGeneration(3));
+        assert_eq!(stores.pending_download_id(), None);
+        assert!(!stores.download_matches(ConnectionGeneration(2), "current"));
+    }
+
     fn stores() -> DomainStores {
         let mut stores = DomainStores::default();
         stores.begin_session("Fixture", ConnectionGeneration(2));
@@ -1610,6 +1831,32 @@ mod tests {
         ));
         assert!(stores.runtime.connected);
         assert!(stores.activity.entries.iter().all(|entry| !entry.summary.contains("old")));
+    }
+
+    #[test]
+    fn browse_attempts_are_bounded_recent_and_session_scoped() {
+        let mut stores = stores();
+        let failed = |host: String| {
+            state::PageView::failed_at(
+                host,
+                "/page/index.mu".into(),
+                "browse-local-deadline".into(),
+                15000,
+            )
+        };
+        for i in 0..128 {
+            stores.set_page(ConnectionGeneration(2), failed(format!("host-{i}")));
+        }
+        stores.set_page(ConnectionGeneration(2), failed("host-0".into()));
+        stores.set_page(ConnectionGeneration(2), failed("new".into()));
+        assert_eq!(stores.content.visits.len(), 128);
+        assert!(stores.content.visits.contains_key("host-0"));
+        assert!(!stores.content.visits.contains_key("host-1"));
+        assert_eq!(stores.content.visits["new"], "Last wait timed out");
+        stores.begin_session("new", ConnectionGeneration(3));
+        stores.set_page(ConnectionGeneration(2), failed("stale".into()));
+        assert!(stores.content.visits.is_empty());
+        assert!(stores.content.page.is_none());
     }
 
     #[test]
@@ -1867,12 +2114,12 @@ mod tests {
             administration: true,
         };
         for route in [
-            state::AppRoute::Command,
+            state::AppRoute::Overview,
             state::AppRoute::Network,
             state::AppRoute::Messages,
             state::AppRoute::Fleet,
-            state::AppRoute::Propagation,
-            state::AppRoute::Content,
+            state::AppRoute::Delivery,
+            state::AppRoute::Browse,
             state::AppRoute::Lab,
             state::AppRoute::System,
         ] {
@@ -1888,7 +2135,10 @@ mod tests {
         for (raw, expected) in [
             ("connect: No such file or directory (os error 2)", "daemon socket not found"),
             ("connect: Permission denied; token=secret", "daemon socket access denied"),
-            ("connect: Connection refused (os error 61)", "daemon refused the connection"),
+            (
+                "connect: Connection refused (os error 61)",
+                "no daemon is listening at the selected socket",
+            ),
             (
                 "rpc timeout; /Users/operator/private.sock",
                 "daemon did not complete session negotiation",
@@ -1911,12 +2161,12 @@ mod tests {
     #[test]
     fn every_route_preserves_explicit_state_classes() {
         let routes = [
-            state::AppRoute::Command,
+            state::AppRoute::Overview,
             state::AppRoute::Network,
             state::AppRoute::Messages,
             state::AppRoute::Fleet,
-            state::AppRoute::Propagation,
-            state::AppRoute::Content,
+            state::AppRoute::Delivery,
+            state::AppRoute::Browse,
             state::AppRoute::Lab,
             state::AppRoute::System,
         ];
@@ -1967,29 +2217,6 @@ mod tests {
             stores.route_state(&state::AppRoute::Fleet, BackendCapabilities::default());
         assert!(matches!(route_state, DataState::Degraded { .. }));
         assert_eq!(stores.network.peers.len(), 1);
-    }
-
-    #[test]
-    fn command_summary_is_derived_from_authoritative_stores() {
-        let mut stores = stores();
-        stores.network.status.transport_active = true;
-        stores.network.status.interface_count = 2;
-        stores.network.status.link_count = 1;
-        stores.propagation.enabled = true;
-        stores.network.paths.push(state::PathEntry {
-            destination_hash: "peer".into(),
-            hops: 1,
-            next_hop: "peer".into(),
-            interface: "tcp".into(),
-            expires: None,
-            observation: Default::default(),
-        });
-        let summary = stores.command_summary();
-        assert!(summary.transport_active);
-        assert_eq!(summary.interface_count, 2);
-        assert_eq!(summary.route_count, 1);
-        assert_eq!(summary.active_links, 1);
-        assert!(summary.propagation_enabled);
     }
 
     #[test]
@@ -2047,6 +2274,50 @@ mod tests {
         info.timestamp = timestamp;
         info.status = status.into();
         state::ChatMessage::from(info)
+    }
+
+    #[test]
+    fn same_second_reply_stays_after_send_through_events_pages_and_reload() {
+        let generation = ConnectionGeneration(2);
+        let mut stores = stores();
+        let mut sent = chat("d8-sent", 100, "sending");
+        sent.is_outgoing = true;
+        sent.ingest_sequence = Some(17);
+        let mut reply = styrene_ipc::types::MessageInfo::default();
+        reply.id = "c1-reply".into();
+        reply.source_hash = "peer".into();
+        reply.timestamp = 100;
+        reply.ingest_sequence = Some(18);
+        reply.projection_complete = true;
+        // Deliberately deliver the reply event before the send acknowledgement.
+        stores
+            .apply_daemon_event(generation, DaemonEvent::MessageReceived(Box::new(reply.clone())));
+        stores.push_outgoing(generation, sent.clone());
+        let assert_order = |stores: &DomainStores| {
+            assert_eq!(
+                stores.messages.messages.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+                vec!["d8-sent", "c1-reply"]
+            );
+        };
+        assert_order(&stores);
+        stores.merge_peer_message_page(
+            generation,
+            "peer",
+            vec![reply.clone().into()],
+            Some("older".into()),
+        );
+        stores.merge_peer_message_page(generation, "peer", vec![sent.clone()], None);
+        assert_order(&stores);
+        sent.status = "delivered".into();
+        stores.push_outgoing(generation, sent.clone());
+        assert_order(&stores);
+        let mut degraded = sent.clone();
+        degraded.ingest_sequence = None;
+        stores.push_outgoing(generation, degraded);
+        assert_order(&stores);
+        stores.messages.messages.clear();
+        stores.merge_peer_message_page(generation, "peer", vec![reply.into(), sent], None);
+        assert_order(&stores);
     }
 
     #[test]
@@ -2963,5 +3234,120 @@ mod backend_profile_tests {
             stores.runtime.backend_profile.as_ref().map(|p| p.display_name.as_str()),
             Some("Field kit")
         );
+    }
+}
+
+#[cfg(test)]
+mod interface_management_tests {
+    use super::*;
+    #[test]
+    fn interface_results_reject_old_sessions_and_preserve_apply_errors_on_refresh() {
+        let mut stores = DomainStores::default();
+        stores.runtime.generation = ConnectionGeneration(2);
+        stores.set_interface_inventory(ConnectionGeneration(1), Ok(Default::default()), true);
+        assert!(stores.network.interface_inventory.is_none());
+        assert_eq!(stores.network.interface_result_serial, 0);
+        stores.set_interface_inventory(ConnectionGeneration(2), Err("port invalid".into()), true);
+        stores.set_interface_inventory(ConnectionGeneration(2), Ok(Default::default()), false);
+        assert_eq!(stores.network.interface_error.as_deref(), Some("port invalid"));
+        assert_eq!(stores.network.interface_result_serial, 1);
+        stores.set_interface_inventory(ConnectionGeneration(2), Ok(Default::default()), true);
+        assert!(stores.network.interface_error.is_none());
+        assert_eq!(stores.network.interface_result_serial, 2);
+    }
+}
+
+#[cfg(test)]
+mod interface_feedback_tests {
+    use super::*;
+    use styrene_ipc::types::{InterfaceInventory, InterfaceMutation, ManagedInterface};
+
+    #[test]
+    fn create_result_focuses_saved_interface_and_tracks_state_without_traffic_log_spam() {
+        let generation = ConnectionGeneration(7);
+        let mut stores = DomainStores::default();
+        stores.runtime.generation = generation;
+        let mut request = InterfaceMutation::default();
+        request.action = "create".into();
+        request.settings.name = "Community hub".into();
+        request.settings.host = "hub.invalid".into();
+        request.settings.port = 4242;
+        stores.begin_interface_mutation(generation, request.clone());
+        assert!(
+            stores
+                .network
+                .interface_action_notice
+                .as_ref()
+                .expect("request notice")
+                .contains("requested")
+        );
+        let mut entry = ManagedInterface::default();
+        entry.settings = request.settings;
+        entry.settings.id = "saved-hub".into();
+        entry.state = "connecting".into();
+        let mut inventory = InterfaceInventory::default();
+        inventory.entries.push(entry);
+        stores.set_interface_inventory(generation, Ok(inventory.clone()), true);
+        assert_eq!(stores.network.interface_focus.as_deref(), Some("saved-hub"));
+        assert!(stores.network.interface_pending.is_none());
+        assert!(
+            stores
+                .network
+                .interface_action_notice
+                .as_ref()
+                .expect("saved interface notice")
+                .starts_with("Saved Community hub")
+        );
+        let count = stores.activity.entries.len();
+        inventory.entries[0].state = "connected".into();
+        inventory.entries[0].rx_bytes = 1234;
+        stores.set_interface_inventory(generation, Ok(inventory.clone()), false);
+        assert_eq!(stores.activity.entries.len(), count + 1);
+        assert!(
+            stores
+                .activity
+                .entries
+                .last()
+                .expect("connection activity")
+                .summary
+                .contains("connected")
+        );
+        inventory.entries[0].rx_bytes += 321;
+        stores.set_interface_inventory(generation, Ok(inventory), false);
+        assert_eq!(stores.activity.entries.len(), count + 1);
+        assert_eq!(
+            stores.network.interface_inventory.as_ref().expect("interface inventory").entries[0]
+                .rx_bytes,
+            1555
+        );
+        assert_eq!(stores.network.interface_result_serial, 1);
+    }
+
+    #[test]
+    fn failed_actions_remain_visible_and_old_sessions_cannot_start_actions() {
+        let mut stores = DomainStores::default();
+        stores.runtime.generation = ConnectionGeneration(2);
+        stores.begin_interface_mutation(ConnectionGeneration(1), Default::default());
+        assert!(stores.network.interface_pending.is_none());
+        assert!(stores.activity.entries.is_empty());
+        stores.begin_interface_mutation(ConnectionGeneration(2), Default::default());
+        stores.set_interface_inventory(
+            ConnectionGeneration(2),
+            Err("configuration changed".into()),
+            true,
+        );
+        stores.set_interface_inventory(ConnectionGeneration(2), Ok(Default::default()), false);
+        assert!(
+            stores
+                .network
+                .interface_action_notice
+                .as_ref()
+                .expect("failure notice")
+                .contains("failed")
+        );
+        assert!(matches!(
+            stores.activity.entries.last().expect("failure activity").severity,
+            state::ActivitySeverity::Error
+        ));
     }
 }

@@ -8,13 +8,17 @@ repository.workspace = true
 description = "Styrene desktop operator console and protocol testing scaffold"
 publish = false
 
+[features]
+default = ["identity-extension"]
+identity-extension = ["dep:styrene-identity", "dep:styrene-identity-ui", "dep:tempfile"]
+
 [[bin]]
 name = "styrene-dx"
 path = "src/main.rs"
 
 [dependencies]
 # Dioxus core + platform renderer
-dioxus = { workspace = true, features = ["desktop", "hooks", "launch"] }
+dioxus = { workspace = true, features = ["desktop", "hooks", "launch", "document"] }
 
 # Daemon integration through the public client and session contracts
 styrene-ipc.workspace = true
@@ -27,6 +31,9 @@ styrene-interop-runner.workspace = true
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
 
+# Native file dialogs (already pinned transitively by Dioxus)
+rfd = { version = "=0.17.2", default-features = false, features = ["xdg-portal"] }
+
 # Utilities
 log.workspace = true
 tracing.workspace = true
@@ -37,6 +44,13 @@ async-trait.workspace = true
 base64.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+styrene-identity = { git = "https://github.com/styrene-lab/styrene-identity.git", rev = "eaa5223ddafa28a5de88caa6e132bf6df1cc3eb1", default-features = false, optional = true }
+styrene-identity-ui = { git = "https://github.com/styrene-lab/styrene-identity.git", rev = "eaa5223ddafa28a5de88caa6e132bf6df1cc3eb1", optional = true }
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+dioxus-ssr.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints.rust]
 unsafe_code = "forbid"

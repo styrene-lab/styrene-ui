@@ -20,6 +20,14 @@ pub(crate) fn GraphRenderer(
     interaction: Signal<Interaction>,
     mut tooltip: Signal<Option<GraphTooltip>>,
 ) -> Element {
+    let mut route_sources = std::collections::HashMap::<usize, usize>::new();
+    for edge in edges.read().iter().filter(|edge| edge.kind == GraphEdgeKind::Route) {
+        *route_sources.entry(edge.source).or_default() += 1;
+    }
+    let route_sources: std::collections::HashSet<_> = route_sources
+        .into_iter()
+        .filter_map(|(index, count)| (count >= 8).then_some(index))
+        .collect();
     let show_all_labels = zoom > 1.5;
     let show_named_labels = zoom > 0.6;
     rsx! {
@@ -43,32 +51,33 @@ pub(crate) fn GraphRenderer(
                             matches!(source, GraphNodeType::Local | GraphNodeType::Interface { .. } | GraphNodeType::Hub { .. })
                                 || matches!(target, GraphNodeType::Local | GraphNodeType::Interface { .. } | GraphNodeType::Hub { .. })
                         };
-                        let show = structural || match selected_index {
+                        let show = structural || route_sources.contains(&edge.source) || match selected_index {
                             Some(index) => edge.source == index || edge.target == index,
                             None => zoom > 0.8,
                         };
                         if show {
                             let source = &nodes[edge.source];
                             let target = &nodes[edge.target];
-                            let state_class = if source.node_type.is_online() || target.node_type.is_online() {
-                                "active"
-                            } else {
-                                "inactive"
-                            };
                             let kind_class = match edge.kind {
                                 GraphEdgeKind::Interface => "interface",
                                 GraphEdgeKind::Route => "route",
                                 GraphEdgeKind::Link => "link",
                                 GraphEdgeKind::Association => "association",
                             };
-                            let class = format!("graph-edge {state_class} {kind_class}");
+                            let class = format!("graph-edge {kind_class}");
                             rsx! {
                                 line {
                                     class: "{class}",
+                                    vector_effect: "non-scaling-stroke",
+
                                     x1: "{source.x}",
                                     y1: "{source.y}",
                                     x2: "{target.x}",
                                     y2: "{target.y}",
+                                }
+                                if edge.kind == GraphEdgeKind::Link {
+                                    line { class: "graph-link-core", vector_effect: "non-scaling-stroke",
+                                        x1: "{source.x}", y1: "{source.y}", x2: "{target.x}", y2: "{target.y}" }
                                 }
                             }
                         } else {
@@ -89,31 +98,21 @@ pub(crate) fn GraphRenderer(
                                 let radius = node.radius();
                                 let x = node.x;
                                 let y = node.y;
-                                let label = node.label.clone();
-                                let short_hash = if node.id.len() > 12 {
-                                    format!("{}...", &node.id[..12])
-                                } else {
-                                    node.id.clone()
-                                };
+                                let label = node.label.lines().next().unwrap_or_default().to_string();
+                                let summary_detail = node.label.lines().nth(1).unwrap_or_default().to_string();
                                 let local = node.node_type == GraphNodeType::Local;
-                                let label_offset = radius + 14.0;
+                                let anchor = local || matches!(node.node_type, GraphNodeType::Interface { .. } | GraphNodeType::Summary | GraphNodeType::Remote { .. }) || route_sources.contains(&index);
+                                let label_offset = radius + if nodes.len() <= 100 || anchor { 14.0 / zoom.max(0.01) } else { 14.0 };
+                                let label_style = if nodes.len() <= 100 || anchor { format!("font-size: {}px; paint-order: stroke; stroke: var(--background); stroke-width: {}px;", 12.0 / zoom.max(0.01), 3.0 / zoom.max(0.01)) } else { String::new() };
                                 let custom_path = node.shape_path(x, y);
                                 let tooltip_label = label.clone();
                                 let tooltip_hash = node.id.clone();
                                 let tooltip_type = node.type_label().to_string();
                                 let tooltip_capabilities = node.capabilities.join(", ");
-                                let accessible_label = format!(
-                                    "{}; {}; {}",
-                                    node.label,
-                                    node.type_label(),
-                                    if node.node_type.is_online() { "online" } else { "offline" }
-                                );
-                                let icon = match &node.node_type {
-                                    GraphNodeType::Local => Some("⬡"),
-                                    GraphNodeType::Hub { .. } => Some("⬢"),
-                                    GraphNodeType::PageHost { .. } => Some("☰"),
-                                    _ => None,
-                                };
+                                let status_label = node.status_label();
+                                let accessible_label = format!("{}; {}; {}", node.label, node.type_label(), status_label);
+                                let icon = node.role_badge();
+                                let unknown = node.node_type == GraphNodeType::Unknown;
                                 let is_selected = selected_index == Some(index);
                                 let neighbor = selected_index.is_some() && selected_neighbors.contains(&index);
                                 let search_match = has_search && search_matches.contains(&index);
@@ -121,13 +120,11 @@ pub(crate) fn GraphRenderer(
                                 let opacity = if dragging {
                                     "0.85"
                                 } else if has_search && !search_match {
-                                    "0.15"
-                                } else if selected_index.is_some() && !is_selected && !neighbor && !local {
-                                    "0.25"
+                                    "0.5"
                                 } else {
                                     "1"
                                 };
-                                let show_label = is_selected
+                                let show_label = nodes.len() <= 100 || anchor || is_selected
                                     || neighbor
                                     || search_match
                                     || show_all_labels
@@ -167,42 +164,50 @@ pub(crate) fn GraphRenderer(
                                                 tooltip.set(None);
                                             }
                                         },
-                                        if is_selected || local || matches!(node.node_type, GraphNodeType::Hub { .. }) {
+                                        if is_selected {
                                             circle {
                                                 cx: "{x}", cy: "{y}", r: "{radius + 6.0}", fill: "none",
-                                                stroke: if is_selected { "#fff" } else { color },
-                                                stroke_opacity: if is_selected { "0.5" } else { "0.2" },
-                                                stroke_width: if is_selected { "3" } else { "2" },
+                                                stroke: "var(--focus)",
+                                                stroke_opacity: "1",
+                                                stroke_width: "2",
+                                                vector_effect: "non-scaling-stroke",
                                             }
                                         }
                                         if let Some(ref path) = custom_path {
                                             path {
                                                 d: "{path}", fill: "{color}",
-                                                stroke: if is_selected { "#fff" } else { border },
-                                                stroke_width: if is_selected { "3" } else { "2" },
+                                                stroke: "{border}",
+                                                stroke_dasharray: if unknown { "3 3" } else { "none" },
+                                                stroke_width: "2",
+                                                vector_effect: "non-scaling-stroke",
                                             }
                                         } else {
                                             circle {
                                                 cx: "{x}", cy: "{y}", r: "{radius}", fill: "{color}",
-                                                stroke: if is_selected { "#fff" } else { border },
-                                                stroke_width: if is_selected { "3" } else { "2" },
+                                                stroke: "{border}",
+                                                stroke_dasharray: if unknown { "3 3" } else { "none" },
+                                                stroke_width: "2",
+                                                vector_effect: "non-scaling-stroke",
                                             }
                                         }
                                         if let Some(glyph) = icon {
+                                            rect { x: "{x + 6.0}", y: "{y - 17.0}", width: "14", height: "14", rx: "3",
+                                                fill: "var(--surface)", stroke: "var(--text-muted)", stroke_width: "1", vector_effect: "non-scaling-stroke" }
                                             text {
-                                                x: "{x}", y: "{y + 3.0}", text_anchor: "middle",
-                                                fill: "white", font_size: "10", font_weight: "bold",
+                                                x: "{x + 13.0}", y: "{y - 7.0}", text_anchor: "middle",
+                                                fill: "var(--text)", font_size: "10", font_weight: "bold",
                                                 pointer_events: "none", "{glyph}"
                                             }
                                         }
                                         if show_label {
-                                            text { class: "graph-label", x: "{x}", y: "{y + label_offset}", "{label}" }
-                                            if !local {
-                                                text {
-                                                    class: "graph-label-hash", x: "{x}",
-                                                    y: "{y + label_offset + 13.0}", "{short_hash}"
-                                                }
+                                            text { class: "graph-label", style:"{label_style}", x: "{x}", y: "{y + label_offset}", "{label}" }
+                                            if !summary_detail.is_empty() {
+                                                text { class: "graph-label", style:"{label_style}", x: "{x}", y: "{y + label_offset + 18.0 / zoom.max(0.01)}", "{summary_detail}" }
                                             }
+                                            if summary_detail.is_empty() {
+                                                text { class: "graph-label graph-status-label", style:"{label_style}", x: "{x}", y: "{y + label_offset + 18.0 / zoom.max(0.01)}", "{status_label}" }
+                                            }
+
                                         }
                                     }
                                 }
@@ -223,4 +228,42 @@ fn is_notable(node: &GraphNode) -> bool {
             | GraphNodeType::Hub { .. }
             | GraphNodeType::PageHost { .. }
     )
+}
+
+#[component]
+pub(crate) fn MapLegend() -> Element {
+    let samples = [
+        ("This device", GraphNodeType::Local),
+        ("Interface", GraphNodeType::Interface { online: false }),
+        ("Remote entity", GraphNodeType::Remote { online: true }),
+        ("Destination", GraphNodeType::Unknown),
+        ("Group", GraphNodeType::Summary),
+    ];
+    rsx! {
+        details { class: "network-symbol-key",
+            summary { "Map key · symbols and states" }
+            div { class: "network-key-row",
+                for (label, kind) in samples {
+                    {
+                        let node = GraphNode { id: String::new(), label: String::new(), node_type: kind, capabilities: Vec::new(), x: 0.0, y: 0.0, vx: 0.0, vy: 0.0 };
+                        rsx! { span { class: "network-key-item",
+                            svg { view_box: "-18 -16 36 32", "aria-hidden": "true",
+                                if let Some(path) = node.shape_path(0.0, 0.0) {
+                                    path { d: "{path}", fill: "var(--surface)", stroke: "var(--text-muted)", stroke_width: "2" }
+                                } else { circle { r: "11", fill: "var(--surface)", stroke: "var(--text-muted)", stroke_width: "2" } }
+                            }
+                            "{label}"
+                        } }
+                    }
+                }
+            }
+            div { class: "network-key-row",
+                for (class, label) in [("interface", "Attachment"), ("route", "Observed route"), ("link", "Active link"), ("association", "Group membership")] {
+                    span { class: "network-key-item", span { class: "network-key-line {class}" } "{label}" }
+                }
+            }
+            p { "Green outline: active / reported online. Gray: offline, unavailable, or no status applicable. Dashed destination outline: unknown status. White outer ring: selected." }
+            p { "Role badges: H Hub · P Page host · S Styrene · R RNS. Lines describe relationships; they do not indicate packet flow." }
+        }
+    }
 }

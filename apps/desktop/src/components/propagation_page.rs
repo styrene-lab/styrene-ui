@@ -20,8 +20,8 @@ pub fn PropagationPage(
         main { class: "main propagation-page",
             div { class: "propagation-header",
                 div {
-                    h2 { "Propagation" }
-                    p { "Local store-and-forward queue and synchronization capabilities." }
+                    h2 { "Delivery" }
+                    p { "Message propagation, store-and-forward queues, and synchronization." }
                 }
                 button { disabled: !available, onclick: move |_| on_refresh.call(None), "Refresh" }
             }

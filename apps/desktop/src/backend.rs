@@ -205,6 +205,12 @@ pub trait BackendSession: Send + Sync {
         peer_hash: &str,
         content: &str,
     ) -> Result<styrene_ipc::types::ConversationDraft, String>;
+    async fn mark_read(
+        &self,
+        _peer_hash: &str,
+    ) -> Result<styrene_ipc::types::MessagingOperationOutcome, String> {
+        Err("This session does not support marking conversations read".into())
+    }
     async fn discard_draft(&self, peer_hash: &str) -> Result<(), String>;
     async fn retry_message(
         &self,
@@ -260,6 +266,15 @@ pub trait BackendSession: Send + Sync {
         Err("file downloads are unavailable in this backend".into())
     }
     async fn path_table(&self) -> Result<Vec<PathTableEntry>, String>;
+    async fn interface_inventory(&self) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        Err("This backend does not support interface management".into())
+    }
+    async fn mutate_interface(
+        &self,
+        _request: &styrene_ipc::types::InterfaceMutation,
+    ) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        Err("This backend does not support interface management".into())
+    }
     async fn interface_stats(&self) -> Result<Vec<InterfaceStats>, String>;
     async fn links(&self) -> Result<styrene_ipc::types::LinkSnapshot, String>;
     async fn conversations(&self) -> Result<Vec<ConversationInfo>, String>;
@@ -431,6 +446,12 @@ impl BackendSession for IpcBackend {
         self.broker.save_draft(peer_hash, content).await
     }
 
+    async fn mark_read(
+        &self,
+        peer_hash: &str,
+    ) -> Result<styrene_ipc::types::MessagingOperationOutcome, String> {
+        self.broker.mark_read(peer_hash).await
+    }
     async fn discard_draft(&self, peer_hash: &str) -> Result<(), String> {
         self.broker.discard_draft(peer_hash).await
     }
@@ -501,6 +522,15 @@ impl BackendSession for IpcBackend {
         self.broker.path_table().await
     }
 
+    async fn interface_inventory(&self) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        self.broker.interface_inventory().await
+    }
+    async fn mutate_interface(
+        &self,
+        request: &styrene_ipc::types::InterfaceMutation,
+    ) -> Result<styrene_ipc::types::InterfaceInventory, String> {
+        self.broker.mutate_interface(request).await
+    }
     async fn interface_stats(&self) -> Result<Vec<InterfaceStats>, String> {
         self.broker.interface_stats().await
     }

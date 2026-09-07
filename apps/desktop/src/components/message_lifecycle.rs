@@ -4,27 +4,85 @@ use crate::state::ChatMessage;
 
 #[component]
 pub fn MessageBubble(message: ChatMessage) -> Element {
-    let status_mark = match message.lifecycle.state {
-        styrene_ipc::types::MessageLifecycleState::Delivered => "✓✓",
-        styrene_ipc::types::MessageLifecycleState::Failed
-        | styrene_ipc::types::MessageLifecycleState::Expired
-        | styrene_ipc::types::MessageLifecycleState::Rejected => "✗",
-        styrene_ipc::types::MessageLifecycleState::Queued
-        | styrene_ipc::types::MessageLifecycleState::Sending
-        | styrene_ipc::types::MessageLifecycleState::Sent => "✓",
-        _ => "?",
+    let mut details_open = use_signal(|| false);
+    let status_label = match message.lifecycle.state {
+        styrene_ipc::types::MessageLifecycleState::Delivered => "Delivered",
+        styrene_ipc::types::MessageLifecycleState::Failed => "Failed",
+        styrene_ipc::types::MessageLifecycleState::Expired => "Expired",
+        styrene_ipc::types::MessageLifecycleState::Rejected => "Rejected",
+        styrene_ipc::types::MessageLifecycleState::Queued => "Queued",
+        styrene_ipc::types::MessageLifecycleState::Sending => "Sending…",
+        styrene_ipc::types::MessageLifecycleState::Sent => "Sent",
+        _ => "Delivery status",
     };
     rsx! {
-        div { class: if message.is_outgoing { "message sent" } else { "message received" },
-            div { class: "message-content", "{message.content}" }
-            div { class: "message-meta",
-                span { {format_timestamp(message.timestamp)} }
-                if message.is_outgoing {
-                    span { class: "message-status", "{status_mark}" }
+        article {
+            class: if message.is_outgoing { "message-item outgoing" } else { "message-item incoming" },
+            "data-message-id": message.id.clone(),
+            "data-outgoing": message.is_outgoing.to_string(),
+            div { class: if message.is_outgoing { "message sent" } else { "message received" },
+                if !message.content.is_empty() {
+                    div { class: "message-content", "{message.content}" }
+                }
+                if !message.lifecycle.attachments.is_empty() {
+                    div { class: "message-attachments", aria_label: "Attachments",
+                        for attachment in &message.lifecycle.attachments {
+                            div { class: "message-attachment", key: "{attachment.ordinal}",
+                                span { class: "attachment-file-icon", aria_hidden: "true", "▤" }
+                                div {
+                                    strong { "{attachment.name}" }
+                                    span { "{attachment_size(attachment.size)} · {attachment_availability(&attachment.availability)}" }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            details { class: "message-lifecycle",
-                summary { "Delivery details" }
+            footer { class: "message-caption",
+                time { "data-message-time": message.timestamp.to_string(), "…" }
+                button {
+                    class: "message-details-link",
+                    r#type: "button",
+                    aria_haspopup: "dialog",
+                    aria_label: if message.is_outgoing { format!("{status_label}. Delivery details") } else { "Message details".into() },
+                    onclick: move |_| details_open.set(true),
+                    if message.is_outgoing { "{status_label} · Details" } else { "Details" }
+                }
+            }
+            if details_open() {
+                dialog {
+                    class: "message-detail-dialog",
+                    aria_label: "Message delivery details",
+                    onmounted: move |_| {
+                        spawn(async move {
+                            let _ = document::eval(r#"
+                                const dialog = document.querySelector('.message-detail-dialog:not([open])');
+                                if (dialog) {
+                                    await new Promise(resolve => {
+                                        const finish = () => { removal.disconnect(); resolve(); };
+                                        const removal = new MutationObserver(() => { if (!dialog.isConnected) finish(); });
+                                        removal.observe(document.body, {childList:true, subtree:true});
+                                        dialog.addEventListener('close', finish, {once:true});
+                                        dialog.showModal();
+                                    });
+                                }
+                                return null;
+                            "#).join::<()>().await;
+                            details_open.set(false);
+                        });
+                    },
+                    header {
+                        h2 { "Delivery details" }
+                        button {
+                            r#type: "button", autofocus: true, aria_label: "Close delivery details",
+                            onclick: move |_| {
+                                spawn(async move {
+                                    let _ = document::eval("document.querySelector('.message-detail-dialog[open]')?.close();").join::<()>().await;
+                                });
+                            },
+                            "Close"
+                        }
+                    }
                 div { class: "message-lifecycle-grid",
                     Field { label: "Status", value: message.status.clone() }
                     Field { label: "Lifecycle", value: format!("{:?}", message.lifecycle.state) }
@@ -95,8 +153,27 @@ pub fn MessageBubble(message: ChatMessage) -> Element {
                         }
                     }
                 }
+                }
             }
         }
+    }
+}
+
+fn attachment_size(bytes: u64) -> String {
+    if bytes < 1024 {
+        format!("{bytes} B")
+    } else if bytes < 1024 * 1024 {
+        format!("{} KiB", bytes.div_ceil(1024))
+    } else {
+        format!("{} MiB", bytes.div_ceil(1024 * 1024))
+    }
+}
+
+fn attachment_availability(value: &str) -> &'static str {
+    match value {
+        "available" => "Available on this device",
+        "unavailable" => "Not available on this device",
+        _ => "Availability unknown",
     }
 }
 
@@ -110,18 +187,41 @@ fn Field(label: &'static str, value: String) -> Element {
     }
 }
 
-fn format_timestamp(timestamp: i64) -> String {
-    if timestamp == 0 {
-        return String::new();
-    }
-    let seconds = timestamp % 86_400;
-    format!("{:02}:{:02}", seconds / 3600, (seconds % 3600) / 60)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::state::MessageLifecycle;
+
+    #[test]
+    fn content_and_attachments_are_visible_without_delivery_diagnostics() {
+        let mut attachment = styrene_ipc::types::AttachmentInfo::default();
+        attachment.name = "field-notes.txt".into();
+        attachment.size = 128;
+        attachment.availability = "unavailable".into();
+        let message = ChatMessage {
+            id: "test-message".into(),
+            source: String::new(),
+            destination: "peer".into(),
+            content: "First line\nSecond line".into(),
+            timestamp: 1_788_777_000,
+            ingest_sequence: None,
+            is_outgoing: true,
+            status: "queued".into(),
+            lifecycle: MessageLifecycle { attachments: vec![attachment], ..Default::default() },
+        };
+        let mut dom = VirtualDom::new_with_props(MessageBubble, MessageBubbleProps { message });
+        dom.rebuild_in_place();
+        let html = dioxus_ssr::render(&dom);
+        assert!(html.contains("First line\nSecond line"));
+        assert!(html.contains("field-notes.txt"));
+        assert!(html.contains("Not available on this device"));
+        assert!(!html.contains("<dialog"), "diagnostics are not mounted until requested");
+        assert!(!html.contains("Delivery evidence"));
+        let caption = html.find("<footer").expect("caption outside bubble");
+        assert!(html[..caption].contains("</div>"));
+        assert!(html[caption..].contains("data-message-time"));
+        assert!(html[caption..].contains("aria-haspopup=\"dialog\""));
+    }
 
     #[test]
     fn lifecycle_view_keeps_missing_daemon_fields_explicit() {
@@ -131,6 +231,7 @@ mod tests {
             destination: "peer".into(),
             content: "message".into(),
             timestamp: 0,
+            ingest_sequence: None,
             is_outgoing: true,
             status: "pending".into(),
             lifecycle: MessageLifecycle::default(),

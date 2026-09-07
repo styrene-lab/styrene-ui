@@ -40,22 +40,33 @@ pub fn SystemPage(
                 div {
                     span { class: "system-kicker", "Authoritative local runtime state" }
                     h2 { "System" }
-                    p { "This IPC version has no typed local configuration mutation contract. Runtime state is read-only." }
+                    p { "Runtime and host diagnostics. Manage saved interfaces in Network → Interfaces." }
                 }
                 span { class: if connected { "system-connection ready" } else { "system-connection degraded" },
-                    if connected { "Connected" } else { "Disconnected" }
+                    if connected { "Session ready" } else { "Session unavailable" }
                 }
             }
             section { class: "system-grid",
-                SettingsPanel { title: "Runtime profile", rows: profile_rows, unavailable: None }
+                SettingsPanel { title: "Session and storage", rows: profile_rows, unavailable: None }
                 SettingsPanel {
-                    title: "Identity",
+                    title: "RNS identity and LXMF addressing",
                     rows: identity_rows,
                     unavailable: identity.is_none().then(|| "Identity has not been reported for this session.".to_string()),
                 }
+                SettingsPanel {
+                    title: "Public node metadata",
+                    rows: metadata_rows(identity.as_ref()),
+                    unavailable: identity.is_none().then(|| "Metadata unavailable for this session.".to_string()),
+                }
+                article { class: "system-panel wide",
+                    h3 { "What these identifiers mean" }
+                    p { class: "system-note", "The RNS identity identifies the node's cryptographic keys. Its LXMF delivery address identifies the messaging service. Names and icons are optional metadata; they are not required to connect." }
+                    p { class: "system-note", "A Styrene Identity ID identifies the canonical Styrene signing public key. This identity response does not report that ID or a binding to it; the RNS hash is not a substitute." }
+                    p { class: "system-note", "Session ready means this app has an active backend session. Interface connectivity, destination reachability, message delivery, and Fleet authorization have separate evidence." }
+                }
                 article { class: "system-panel wide",
                     h3 { "Runtime interfaces" }
-                    p { class: "system-note", "Observed daemon interfaces. Editing and rebinding are not supported by this IPC version." }
+                    p { class: "system-note", "Observed daemon interfaces. Open Network → Interfaces for configuration and runtime controls." }
                     if interfaces.is_empty() {
                         p { class: "system-unavailable", "No runtime interfaces reported." }
                     } else {
@@ -191,7 +202,7 @@ fn profile_rows(
     }
     match profile {
         Some(RuntimeProfile::Live { socket_path }) => vec![
-            ("Profile".into(), "Live".into()),
+            ("Session mode".into(), "Live".into()),
             (
                 "Socket".into(),
                 if socket_path.as_os_str().is_empty() {
@@ -230,10 +241,30 @@ fn profile_rows(
 fn identity_rows(identity: Option<&IdentityInfo>) -> Vec<(String, String)> {
     identity
         .map(|identity| {
+            let mut rows = vec![
+                ("RNS identity hash".into(), empty_as_unreported(&identity.identity_hash)),
+                (
+                    "LXMF delivery address".into(),
+                    empty_as_unreported(&identity.lxmf_destination_hash),
+                ),
+            ];
+            if !identity.destination_hash.is_empty()
+                && identity.destination_hash != identity.lxmf_destination_hash
+            {
+                rows.push((
+                    "Other reported delivery destination".into(),
+                    identity.destination_hash.clone(),
+                ));
+            }
+            rows
+        })
+        .unwrap_or_default()
+}
+
+fn metadata_rows(identity: Option<&IdentityInfo>) -> Vec<(String, String)> {
+    identity
+        .map(|identity| {
             vec![
-                ("Identity hash".into(), identity.identity_hash.clone()),
-                ("Delivery destination".into(), identity.destination_hash.clone()),
-                ("LXMF destination".into(), identity.lxmf_destination_hash.clone()),
                 ("Display name".into(), empty_as_unreported(&identity.display_name)),
                 ("Short name".into(), optional(identity.short_name.as_deref())),
                 ("Icon".into(), optional(identity.icon.as_deref())),
@@ -367,11 +398,28 @@ mod tests {
         identity.destination_hash = "delivery".into();
         identity.lxmf_destination_hash = "lxmf".into();
         let rows = identity_rows(Some(&identity));
-        assert_eq!(rows.len(), 6);
+        assert_eq!(rows.len(), 3);
         let rendered = format!("{rows:?}");
         assert!(rendered.contains("identity"));
         assert!(!rendered.contains("private"));
         assert!(!rendered.contains("signing key"));
+    }
+
+    #[test]
+    fn addresses_do_not_duplicate_delivery_or_imply_styrene_identity() {
+        let mut identity = IdentityInfo::default();
+        identity.identity_hash = "rns-key-pair".into();
+        identity.destination_hash = "lxmf-service".into();
+        identity.lxmf_destination_hash = "lxmf-service".into();
+        identity.display_name = "Operator's node".into();
+        let rows = identity_rows(Some(&identity));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], ("RNS identity hash".into(), "rns-key-pair".into()));
+        assert_eq!(rows[1], ("LXMF delivery address".into(), "lxmf-service".into()));
+        assert!(!format!("{rows:?}").contains("Operator's node"));
+        assert_eq!(metadata_rows(Some(&identity))[0].1, "Operator's node");
+        assert!(identity_rows(None).is_empty());
+        assert!(metadata_rows(None).is_empty());
     }
 
     #[test]

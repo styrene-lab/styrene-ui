@@ -56,14 +56,41 @@ pub struct MeshStatusInfo {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum AppRoute {
     #[default]
-    Command,
+    Overview,
     Network,
     Messages,
     Fleet,
-    Propagation,
-    Content,
+    Delivery,
+    Browse,
     Lab,
     System,
+    Identity,
+}
+
+impl AppRoute {
+    pub fn from_hint(hint: &str) -> Self {
+        match hint.split('/').next().unwrap_or_default() {
+            "network" => Self::Network,
+            "messages" => {
+                if hint == "messages/delivery" {
+                    Self::Delivery
+                } else {
+                    Self::Messages
+                }
+            }
+            "propagation" => Self::Delivery,
+            "browse" | "content" => Self::Browse,
+            "fleet" => Self::Fleet,
+            "lab" => Self::Lab,
+            "system" => Self::System,
+            "identity" if cfg!(feature = "identity-extension") => Self::Identity,
+            _ => Self::Overview,
+        }
+    }
+
+    pub fn primary(&self) -> Self {
+        if *self == Self::Delivery { Self::Messages } else { self.clone() }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
@@ -85,6 +112,12 @@ pub struct ActivityEntry {
     pub provenance: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BrowseWaitEnd {
+    TimedOut,
+    Stopped,
+}
+
 /// State for the page browser.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PageView {
@@ -94,6 +127,7 @@ pub struct PageView {
     pub loading: bool,
     pub error: Option<String>,
     pub elapsed_ms: Option<u64>,
+    pub wait_end: Option<BrowseWaitEnd>,
     pub retryable: bool,
 }
 
@@ -106,6 +140,7 @@ impl PageView {
             loading: true,
             error: None,
             elapsed_ms: None,
+            wait_end: None,
             retryable: false,
         }
     }
@@ -122,7 +157,16 @@ impl PageView {
         let error = page.failure.as_ref().map(|failure| failure.message.clone());
         let retryable = page.failure.as_ref().is_some_and(|failure| failure.retryable);
         let elapsed_ms = page.elapsed_ms;
-        Self { host, path, authoritative: Some(page), loading: false, error, elapsed_ms, retryable }
+        Self {
+            host,
+            path,
+            authoritative: Some(page),
+            loading: false,
+            error,
+            elapsed_ms,
+            wait_end: None,
+            retryable,
+        }
     }
 
     pub fn failed_at(host: String, path: String, message: String, elapsed_ms: u64) -> Self {
@@ -132,7 +176,8 @@ impl PageView {
         page.error = Some("page request failed before daemon evidence".into());
         page.elapsed_ms = Some(elapsed_ms);
         // An IPC failure has no daemon terminal observation from which to infer retryability.
-        page.retryable = false;
+        page.wait_end = (message == "browse-local-deadline").then_some(BrowseWaitEnd::TimedOut);
+        page.retryable = page.wait_end.is_some();
         page
     }
 }
@@ -154,6 +199,12 @@ pub struct GraphNode {
 /// Node type for the graph — determines shape, color, size, and click behavior.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GraphNodeType {
+    /// Observed destination whose discovery/status metadata is unavailable.
+    Unknown,
+    /// Presentation aggregate; never a physical node.
+    Summary,
+    /// Operator-configured remote entity; transports are its connection details.
+    Remote { online: bool },
     /// The local node (center of the graph).
     Local,
     /// A transport interface (TCP, UDP, Serial).
@@ -172,6 +223,8 @@ impl GraphNodeType {
     pub fn is_online(&self) -> bool {
         match self {
             Self::Local => true,
+            Self::Unknown | Self::Summary => false,
+            Self::Remote { online } => *online,
             Self::Interface { online }
             | Self::Rns { online }
             | Self::Styrene { online }
@@ -182,54 +235,56 @@ impl GraphNodeType {
 }
 
 impl GraphNode {
+    /// Neutral fill leaves operational state to the outline.
     pub fn color(&self) -> &'static str {
-        match &self.node_type {
-            GraphNodeType::Local => "#58a6ff",                       // blue
-            GraphNodeType::Interface { online: true } => "#3fb950",  // green
-            GraphNodeType::Interface { online: false } => "#f85149", // red
-            GraphNodeType::Hub { online: true } => "#bc8cff",        // purple
-            GraphNodeType::Hub { online: false } => "#6e40aa",       // dim purple
-            GraphNodeType::PageHost { online: true } => "#39d2c0",   // teal
-            GraphNodeType::PageHost { online: false } => "#1a7f72",  // dim teal
-            GraphNodeType::Styrene { online: true } => "#3fb950",    // green
-            GraphNodeType::Styrene { online: false } => "#2ea043",   // dim green
-            GraphNodeType::Rns { online: true } => "#d29922",        // amber
-            GraphNodeType::Rns { online: false } => "#484f58",       // grey
-        }
+        "var(--surface)"
     }
 
-    /// Base radius — small enough that 400 nodes don't overlap.
     pub fn radius(&self) -> f64 {
-        match self.node_type {
-            GraphNodeType::Local => 12.0,
-            GraphNodeType::Interface { .. } => 8.0,
-            GraphNodeType::Hub { .. } => 10.0,
-            GraphNodeType::PageHost { .. } => 7.0,
-            GraphNodeType::Styrene { .. } => 6.0,
-            GraphNodeType::Rns { .. } => 5.0,
-        }
+        11.0
     }
 
     pub fn border_color(&self) -> &'static str {
-        match &self.node_type {
-            GraphNodeType::Local => "#79c0ff",
-            GraphNodeType::Interface { online: true } => "#56d364",
-            GraphNodeType::Interface { online: false } => "#f85149",
-            GraphNodeType::Hub { online: true } => "#d2a8ff",
-            GraphNodeType::Hub { online: false } => "#6e40aa",
-            GraphNodeType::PageHost { online: true } => "#56ead6",
-            GraphNodeType::PageHost { online: false } => "#1a7f72",
-            GraphNodeType::Styrene { online: true } => "#56d364",
-            GraphNodeType::Styrene { online: false } => "#2ea043",
-            GraphNodeType::Rns { online: true } => "#e3b341",
-            GraphNodeType::Rns { online: false } => "#30363d",
+        match self.node_type {
+            GraphNodeType::Local | GraphNodeType::Summary | GraphNodeType::Unknown => {
+                "var(--text-muted)"
+            }
+            _ if self.node_type.is_online() => "var(--signal)",
+            _ => "var(--text-muted)",
+        }
+    }
+
+    pub fn status_label(&self) -> &'static str {
+        match self.node_type {
+            GraphNodeType::Local => "This device",
+            GraphNodeType::Summary => "Destination group",
+            GraphNodeType::Unknown => "Status unknown",
+            GraphNodeType::Remote { online: true } => "Connected",
+            GraphNodeType::Remote { online: false } => "Disconnected / unavailable",
+            GraphNodeType::Interface { online: true } => "Active",
+            GraphNodeType::Interface { online: false } => "Disconnected / unavailable",
+            _ if self.node_type.is_online() => "Reported online",
+            _ => "Reported offline",
+        }
+    }
+
+    pub fn role_badge(&self) -> Option<&'static str> {
+        match self.node_type {
+            GraphNodeType::Hub { .. } => Some("H"),
+            GraphNodeType::PageHost { .. } => Some("P"),
+            GraphNodeType::Styrene { .. } => Some("S"),
+            GraphNodeType::Rns { .. } => Some("R"),
+            _ => None,
         }
     }
 
     pub fn type_label(&self) -> &'static str {
         match &self.node_type {
+            GraphNodeType::Unknown => "Destination (status unknown)",
+            GraphNodeType::Summary => "Destination group · select to explore",
+            GraphNodeType::Remote { .. } => "Configured remote entity",
             GraphNodeType::Local => "Local Node",
-            GraphNodeType::Interface { online: true } => "Interface (connected)",
+            GraphNodeType::Interface { online: true } => "Interface (active)",
             GraphNodeType::Interface { online: false } => "Interface (disconnected)",
             GraphNodeType::Hub { online: true } => "Hub (online)",
             GraphNodeType::Hub { online: false } => "Hub (offline)",
@@ -248,95 +303,34 @@ impl GraphNode {
         self.label.len() != 8 || self.label.chars().any(|c| !c.is_ascii_hexdigit())
     }
 
-    /// SVG shape for this node type. Returns None for circle (default).
-    /// Some(path_d) for custom shapes (diamond, hexagon, etc.).
+    /// Geometry encodes object type. All remote roles share the destination circle.
     pub fn shape_path(&self, cx: f64, cy: f64) -> Option<String> {
         let r = self.radius();
-        match &self.node_type {
-            // Hexagon for local node
+        match self.node_type {
             GraphNodeType::Local => {
-                let mut d = String::new();
-                for i in 0..6 {
-                    let angle =
-                        std::f64::consts::FRAC_PI_3 * i as f64 - std::f64::consts::FRAC_PI_6;
-                    let hx = cx + r * angle.cos();
-                    let hy = cy + r * angle.sin();
-                    if i == 0 {
-                        d.push_str(&format!("M{hx},{hy}"));
-                    } else {
-                        d.push_str(&format!("L{hx},{hy}"));
-                    }
-                }
-                d.push('Z');
-                Some(d)
+                let points: Vec<_> = (0..6)
+                    .map(|i| {
+                        let angle = std::f64::consts::FRAC_PI_3 * i as f64;
+                        format!("{},{}", cx + r * angle.cos(), cy + r * angle.sin())
+                    })
+                    .collect();
+                Some(format!("M{}Z", points.join("L")))
             }
-            // Diamond for hub
-            GraphNodeType::Hub { .. } => {
-                let d = format!(
-                    "M{},{} L{},{} L{},{} L{},{} Z",
-                    cx,
-                    cy - r, // top
-                    cx + r,
-                    cy, // right
-                    cx,
-                    cy + r, // bottom
-                    cx - r,
-                    cy, // left
-                );
-                Some(d)
-            }
-            // Rounded square for page hosts
-            GraphNodeType::PageHost { .. } => {
-                let half = r * 0.8;
-                let cr = r * 0.25; // corner radius
-                let d = format!(
-                    "M{},{} L{},{} Q{},{} {},{} L{},{} Q{},{} {},{} L{},{} Q{},{} {},{} L{},{} Q{},{} {},{} Z",
-                    cx - half + cr,
-                    cy - half, // top-left after corner
-                    cx + half - cr,
-                    cy - half, // top-right before corner
-                    cx + half,
-                    cy - half,
-                    cx + half,
-                    cy - half + cr, // top-right corner
-                    cx + half,
-                    cy + half - cr, // bottom-right before corner
-                    cx + half,
-                    cy + half,
-                    cx + half - cr,
-                    cy + half, // bottom-right corner
-                    cx - half + cr,
-                    cy + half, // bottom-left before corner
-                    cx - half,
-                    cy + half,
-                    cx - half,
-                    cy + half - cr, // bottom-left corner
-                    cx - half,
-                    cy - half + cr, // top-left before corner
-                    cx - half,
-                    cy - half,
-                    cx - half + cr,
-                    cy - half, // top-left corner
-                );
-                Some(d)
-            }
-            // Small square for interfaces
             GraphNodeType::Interface { .. } => {
-                let half = r * 0.85;
-                let d = format!(
-                    "M{},{} L{},{} L{},{} L{},{} Z",
-                    cx - half,
-                    cy - half,
-                    cx + half,
-                    cy - half,
-                    cx + half,
-                    cy + half,
-                    cx - half,
-                    cy + half,
-                );
-                Some(d)
+                Some(format!("M{},{}h{}v{}h{}Z", cx - r, cy - r, r * 2.0, r * 2.0, -r * 2.0))
             }
-            // Circle for everything else
+            GraphNodeType::Summary => Some(format!(
+                "M{},{}h{}v{}h{}Z M{},{}v{}h{}",
+                cx - r,
+                cy - r,
+                r * 2.0,
+                r * 2.0,
+                -r * 2.0,
+                cx - r - 4.0,
+                cy - r + 4.0,
+                r * 2.0,
+                r * 2.0
+            )),
             _ => None,
         }
     }
@@ -416,6 +410,7 @@ pub struct ChatMessage {
     pub destination: String,
     pub content: String,
     pub timestamp: i64,
+    pub ingest_sequence: Option<u64>,
     pub is_outgoing: bool,
     /// Delivery status: "pending", "delivered", "read", "failed", or empty.
     pub status: String,
@@ -424,6 +419,7 @@ pub struct ChatMessage {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MessageLifecycle {
+    pub retry_eligible: Option<bool>,
     pub state: styrene_ipc::types::MessageLifecycleState,
     pub terminal_detail: Option<String>,
     pub requested_method: Option<String>,
@@ -440,6 +436,20 @@ pub struct MessageLifecycle {
     pub propagation: Vec<styrene_ipc::types::MessagePropagationCorrelationInfo>,
 }
 
+impl ChatMessage {
+    /// Presentation eligibility. The daemon still authorizes and validates each command.
+    pub fn lifecycle_actions(&self) -> (bool, bool) {
+        use styrene_ipc::types::MessageLifecycleState as State;
+        if !self.is_outgoing {
+            return (false, false);
+        }
+        let retry = self.lifecycle.retry_eligible == Some(true)
+            && matches!(self.lifecycle.state, State::Failed | State::Expired | State::Queued);
+        let cancel = matches!(self.lifecycle.state, State::Queued | State::Sending);
+        (retry, cancel)
+    }
+}
+
 impl From<styrene_ipc::types::MessageInfo> for ChatMessage {
     fn from(message: styrene_ipc::types::MessageInfo) -> Self {
         Self {
@@ -448,9 +458,11 @@ impl From<styrene_ipc::types::MessageInfo> for ChatMessage {
             destination: message.destination_hash,
             content: message.content,
             timestamp: message.timestamp,
+            ingest_sequence: message.ingest_sequence,
             is_outgoing: message.is_outgoing,
             status: message.status,
             lifecycle: MessageLifecycle {
+                retry_eligible: message.retry_eligible,
                 state: message.lifecycle_state,
                 terminal_detail: message.terminal_detail,
                 requested_method: message.requested_delivery_method,
@@ -588,6 +600,24 @@ mod tests {
     }
 
     #[test]
+    fn message_actions_respect_direction_terminal_state_and_retry_eligibility() {
+        use styrene_ipc::types::MessageLifecycleState as State;
+        let mut info = styrene_ipc::types::MessageInfo::default();
+        info.is_outgoing = true;
+        info.lifecycle_state = State::Delivered;
+        info.retry_eligible = Some(true);
+        assert_eq!(ChatMessage::from(info.clone()).lifecycle_actions(), (false, false));
+        info.lifecycle_state = State::Failed;
+        assert_eq!(ChatMessage::from(info.clone()).lifecycle_actions(), (true, false));
+        info.retry_eligible = Some(false);
+        assert_eq!(ChatMessage::from(info.clone()).lifecycle_actions(), (false, false));
+        info.lifecycle_state = State::Sending;
+        assert_eq!(ChatMessage::from(info.clone()).lifecycle_actions(), (false, true));
+        info.is_outgoing = false;
+        assert_eq!(ChatMessage::from(info).lifecycle_actions(), (false, false));
+    }
+
+    #[test]
     fn message_lifecycle_preserves_authoritative_ipc_details() {
         let mut info = styrene_ipc::types::MessageInfo::default();
         info.id = "message".into();
@@ -672,4 +702,17 @@ mod tests {
         assert!(!rendered.contains("structured-secret"));
         assert!(!rendered.contains("/private/key"));
     }
+}
+
+/// Operator configuration joins a runtime connection to a remote target.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MapInterface {
+    pub hash: String,
+    pub name: String,
+    /// Configured hostname, never the resolved socket address or a display name.
+    pub remote_target: Option<String>,
+}
+
+pub fn remote_target_key(host: &str) -> String {
+    host.trim().trim_end_matches('.').to_ascii_lowercase()
 }
