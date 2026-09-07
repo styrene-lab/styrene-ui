@@ -44,16 +44,20 @@ enum FreshnessFilter {
     #[default]
     All,
     Recent,
+    Day,
+    Week,
     Stale,
     Unknown,
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
 enum PeerSort {
-    #[default]
     Reachable,
+    #[default]
     Recent,
     Name,
+    Role,
+    Interface,
 }
 
 #[derive(Clone)]
@@ -125,6 +129,8 @@ pub fn NetworkPage(
     let mut peer_status = use_signal(StatusFilter::default);
     let mut freshness = use_signal(FreshnessFilter::default);
     let mut peer_sort = use_signal(PeerSort::default);
+    let mut route_filter = use_signal(|| "all".to_string());
+    let mut interface_filter = use_signal(String::new);
     let mut target = use_signal(String::new);
     let mut link_control_id = use_signal(String::new);
     let mut request_link_id = use_signal(String::new);
@@ -285,6 +291,9 @@ pub fn NetworkPage(
             row.mode == *mode.read()
                 && if row.mode == NetworkMode::Discovery {
                     filtered_peers.iter().any(|peer| peer.hash == row.destination)
+                        && route_matches(row, &route_filter.read())
+                        && (interface_filter.read().is_empty()
+                            || row.cells.get(3) == Some(&*interface_filter.read()))
                 } else {
                     row.matches(&query_value)
                 }
@@ -292,8 +301,16 @@ pub fn NetworkPage(
         .cloned()
         .collect();
     if *mode.read() == NetworkMode::Discovery {
-        sort_peer_rows(&mut visible_rows, &peers, *peer_sort.read());
+        sort_peer_rows(&mut visible_rows, &peers, *peer_sort.read(), now);
     }
+    let interface_options: std::collections::BTreeSet<_> = all_rows
+        .iter()
+        .filter(|row| row.mode == NetworkMode::Discovery)
+        .filter_map(|row| row.cells.get(3))
+        .filter(|name| name.as_str() != "—")
+        .cloned()
+        .collect();
+    let extra_filters = *route_filter.read() != "all" || !interface_filter.read().is_empty();
     let mut selected_for_map = all_rows.clone();
     if let Some(inventory) = &interface_inventory {
         let mut entities = std::collections::BTreeMap::<String, Vec<_>>::new();
@@ -440,24 +457,28 @@ pub fn NetworkPage(
                 if *mode.read() == NetworkMode::Discovery {
                     select {
                         aria_label: "Sort peers",
-                        value: match *peer_sort.read() { PeerSort::Reachable => "reachable", PeerSort::Recent => "recent", PeerSort::Name => "name" },
-                        onchange: move |event| peer_sort.set(match event.value().as_str() { "recent" => PeerSort::Recent, "name" => PeerSort::Name, _ => PeerSort::Reachable }),
+                        value: match *peer_sort.read() { PeerSort::Reachable => "reachable", PeerSort::Recent => "recent", PeerSort::Name => "name", PeerSort::Role => "role", PeerSort::Interface => "interface" },
+                        onchange: move |event| peer_sort.set(match event.value().as_str() { "recent" => PeerSort::Recent, "name" => PeerSort::Name, "role" => PeerSort::Role, "interface" => PeerSort::Interface, _ => PeerSort::Reachable }),
                         option { value: "reachable", "Reachable first" }
-                        option { value: "recent", "Recently heard" }
+                        option { value: "recent", "Newest announces" }
                         option { value: "name", "Name A–Z" }
+                        option { value: "role", "Role A–Z" }
+                        option { value: "interface", "Interface A–Z" }
                     }
                     button {
                         class: "network-mode",
                         aria_expanded: "{filters_open}",
                         onclick: move |_| filters_open.toggle(),
-                        if *role.read() != RoleFilter::All || *peer_status.read() != StatusFilter::All || *freshness.read() != FreshnessFilter::All || !capability_value.is_empty() { "Filters · active" } else { "Filters" }
+                        if extra_filters || *role.read() != RoleFilter::All || *peer_status.read() != StatusFilter::All || *freshness.read() != FreshnessFilter::All || !capability_value.is_empty() { "Filters · active" } else { "Filters" }
                     }
-                    if !query_value.is_empty() || !capability_value.is_empty() || *role.read() != RoleFilter::All || *peer_status.read() != StatusFilter::All || *freshness.read() != FreshnessFilter::All {
+                    if extra_filters || *peer_sort.read() != PeerSort::Recent || !query_value.is_empty() || !capability_value.is_empty() || *role.read() != RoleFilter::All || *peer_status.read() != StatusFilter::All || *freshness.read() != FreshnessFilter::All {
                         button { class: "network-mode", onclick: move |_| {
-                            query.set(String::new()); capability.set(String::new()); role.set(RoleFilter::All); peer_status.set(StatusFilter::All); freshness.set(FreshnessFilter::All);
-                        }, "Clear filters" }
+                            query.set(String::new()); capability.set(String::new()); role.set(RoleFilter::All); peer_status.set(StatusFilter::All); freshness.set(FreshnessFilter::All); route_filter.set("all".into()); interface_filter.set(String::new()); peer_sort.set(PeerSort::Recent);
+                        }, "Reset" }
                     }
                     if *filters_open.read() {
+                        div { class: "peer-filter-grid",
+                        label { "Role"
                         select {
                             aria_label: "Filter by role",
                             value: match *role.read() { RoleFilter::All => "all", RoleFilter::Styrene => "styrene", RoleFilter::Hub => "hub", RoleFilter::PageHost => "pages", RoleFilter::Rns => "rns" },
@@ -468,6 +489,8 @@ pub fn NetworkPage(
                             option { value: "pages", "Page host" }
                             option { value: "rns", "RNS" }
                         }
+                        }
+                        label { "Reported status"
                         select {
                             aria_label: "Filter by status",
                             value: match *peer_status.read() { StatusFilter::All => "all", StatusFilter::Online => "online", StatusFilter::Offline => "offline" },
@@ -476,20 +499,43 @@ pub fn NetworkPage(
                             option { value: "online", "Reported online" }
                             option { value: "offline", "Reported offline" }
                         }
+                        }
+                        label { "Last announced"
                         select {
                             aria_label: "Filter by freshness",
-                            value: match *freshness.read() { FreshnessFilter::All => "all", FreshnessFilter::Recent => "recent", FreshnessFilter::Stale => "stale", FreshnessFilter::Unknown => "unknown" },
+                            value: match *freshness.read() { FreshnessFilter::All => "all", FreshnessFilter::Recent => "recent", FreshnessFilter::Day => "day", FreshnessFilter::Week => "week", FreshnessFilter::Stale => "stale", FreshnessFilter::Unknown => "unknown" },
                             onchange: move |event| freshness.set(parse_freshness(&event.value())),
-                            option { value: "all", "All freshness" }
-                            option { value: "recent", "Recent <1h" }
-                            option { value: "stale", "Stale ≥1h" }
+                            option { value: "all", "Any time" }
+                            option { value: "recent", "Past hour" }
+                            option { value: "day", "Past 24 hours" }
+                            option { value: "week", "Past 7 days" }
+                            option { value: "stale", "Older than 1 hour" }
                             option { value: "unknown", "Unknown" }
                         }
+                        }
+                        label { "Capability"
                         input {
                             aria_label: "Filter by capability",
                             placeholder: "Capability",
                             value: "{capability}",
                             oninput: move |event| capability.set(event.value()),
+                        }
+                        }
+                        label { "Route evidence"
+                            select { value: "{route_filter}", onchange: move |event| route_filter.set(event.value()),
+                                option { value: "all", "Any evidence" }
+                                option { value: "link", "Active link" }
+                                option { value: "route", "Known route or active link" }
+                                option { value: "none", "No current route" }
+                            }
+                        }
+                        label { "Route interface"
+                            select { value: "{interface_filter}", onchange: move |event| interface_filter.set(event.value()),
+                                option { value: "", "Any interface" }
+                                option { value: "—", "No route interface" }
+                                for name in &interface_options { option { value: "{name}", "{name}" } }
+                            }
+                        }
                         }
                     }
                 }
@@ -585,6 +631,9 @@ pub fn NetworkPage(
                             mode: *mode.read(),
                             selected: selected.read().clone(),
                             on_select: select_row,
+                            peer_sort: *peer_sort.read(),
+                            on_sort: move |order| peer_sort.set(order),
+                            filter_key: format!("{query_value}|{capability_value}|{:?}|{:?}|{:?}|{}|{}", *role.read(), *peer_status.read(), *freshness.read(), route_filter.read(), interface_filter.read()),
                         }
                     }
                 }
@@ -946,6 +995,7 @@ pub fn NetworkPage(
                 if operations.is_empty() && requests.is_empty() && resources.is_empty() {
                     p { "No operations recorded in this session." }
                 }
+                p { class: "network-observation-empty", "Last reported observations · showing up to 10 recent records per category. Route or link evidence does not guarantee delivery." }
                 div { class: "network-observation-grid",
                     if !operations.is_empty() {
                         div { class: "network-observation-panel",
@@ -955,10 +1005,9 @@ pub fn NetworkPage(
                                     "None recorded in this session."
                                 }
                             }
-                            for operation in operations.iter().rev() {
+                            for operation in operations.iter().rev().take(10) {
                                 article { class: "network-observation",
                                     strong { "{operation.kind.as_str()}" }
-                                    code { "{operation.operation_id}" }
                                     span {
                                         {
                                             operation
@@ -967,6 +1016,9 @@ pub fn NetworkPage(
                                                 .unwrap_or(operation.progress.as_str())
                                         }
                                     }
+                                    details { class: "network-observation-details",
+                                        summary { "Details" }
+                                        code { "{operation.operation_id}" }
                                     p { class: "network-observation-relations",
                                         span {
                                             {relationship_label("Link", operation.link_id.as_deref())}
@@ -979,6 +1031,7 @@ pub fn NetworkPage(
                                                 )
                                             }
                                         }
+                                    }
                                     }
                                     if let Some(detail) = &operation.detail {
                                         p { "{detail}" }
@@ -1031,13 +1084,15 @@ pub fn NetworkPage(
                                     "None recorded in this session."
                                 }
                             }
-                            for request in requests.iter().rev() {
+                            for request in requests.iter().rev().take(10) {
                                 article { class: "network-observation",
-                                    strong { "{request.path_hash}" }
-                                    code { "{request.request_id}" }
+                                    strong { "Native request" }
                                     span {
-                                        {format!("{:?} · {:.0}%", request.state, request.progress * 100.0)}
+                                        {format!("{:?}", request.state)}
                                     }
+                                    details { class: "network-observation-details",
+                                        summary { "Details" }
+                                        code { "Request: {request.request_id} · Path: {request.path_hash}" }
                                     p { class: "network-observation-relations",
                                         span { {relationship_label("Link", nonempty(&request.link_id))} }
                                         span {
@@ -1049,6 +1104,10 @@ pub fn NetworkPage(
                                         span {
                                             {relationship_label("Correlation", request.observation.correlation_id.as_deref())}
                                         }
+                                    }
+                                    }
+                                    if !request.state.is_terminal() {
+                                        progress { class: "network-observation-progress", aria_label: "Transfer progress", max: "1", value: "{bounded_progress(f64::from(request.progress))}" }
                                     }
                                     if !request.state.is_terminal() {
                                         button {
@@ -1104,14 +1163,16 @@ pub fn NetworkPage(
                                     "None recorded in this session."
                                 }
                             }
-                            for resource in resources.iter().rev() {
+                            for resource in resources.iter().rev().take(10) {
                                 article { class: "network-observation",
                                     strong { {format!("{:?}", resource.direction)} }
-                                    code { "{resource.resource_hash}" }
                                     span {
-                                        {format!("{:?} · {:.0}%", resource.state, resource.progress * 100.0)}
+                                        {format!("{:?}", resource.state)}
                                     }
-                                    span { "{resource.received_bytes}/{resource.total_bytes} bytes" }
+                                    span { "{format_bytes(resource.received_bytes)} / {format_bytes(resource.total_bytes)}" }
+                                    details { class: "network-observation-details",
+                                        summary { "Details" }
+                                        code { "{resource.resource_hash}" }
                                     p { class: "network-observation-relations",
                                         span { {relationship_label("Link", nonempty(&resource.link_id))} }
                                         span {
@@ -1119,6 +1180,10 @@ pub fn NetworkPage(
                                                 relationship_label("Correlation", resource.observation.correlation_id.as_deref())
                                             }
                                         }
+                                    }
+                                    }
+                                    if !resource.state.is_terminal() {
+                                        progress { class: "network-observation-progress", aria_label: "Transfer progress", max: "1", value: "{bounded_progress(f64::from(resource.progress))}" }
                                     }
                                     if resource.cancellable && !resource.state.is_terminal() {
                                         button {
@@ -1384,10 +1449,15 @@ fn peer_matches_query(peer: &PeerEntry, query: &str) -> bool {
         || peer.capabilities.iter().any(|value| value.to_ascii_lowercase().contains(query))
 }
 
-fn sort_peer_rows(rows: &mut [InventoryRow], peers: &[PeerEntry], order: PeerSort) {
+fn sort_peer_rows(rows: &mut [InventoryRow], peers: &[PeerEntry], order: PeerSort, now: i64) {
     let heard: std::collections::HashMap<_, _> = peers
         .iter()
-        .map(|peer| (peer.hash.as_str(), peer.last_announce.filter(|time| *time > 0).unwrap_or(0)))
+        .map(|peer| {
+            (
+                peer.hash.as_str(),
+                peer.last_announce.filter(|time| *time > 0 && *time <= now).unwrap_or(0),
+            )
+        })
         .collect();
     let rank = |row: &InventoryRow| match row.cells.get(1).map(String::as_str) {
         Some("Link active") => 0,
@@ -1400,6 +1470,8 @@ fn sort_peer_rows(rows: &mut [InventoryRow], peers: &[PeerEntry], order: PeerSor
             PeerSort::Reachable => rank(a).cmp(&rank(b)).then_with(recent),
             PeerSort::Recent => recent(),
             PeerSort::Name => std::cmp::Ordering::Equal,
+            PeerSort::Role => a.cells.first().cmp(&b.cells.first()),
+            PeerSort::Interface => a.cells.get(3).cmp(&b.cells.get(3)),
         };
         primary
             .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
@@ -1431,7 +1503,7 @@ fn inventory_rows(
         } else {
             "No current route"
         };
-        let heard = match peer.last_announce.filter(|time| *time > 0) {
+        let heard = match peer.last_announce.filter(|time| *time > 0 && *time <= now) {
             Some(time) => {
                 let age = now.saturating_sub(time);
                 if age < 60 {
@@ -1610,9 +1682,33 @@ fn InventoryTable(
     mode: NetworkMode,
     selected: Option<String>,
     on_select: EventHandler<InventoryRow>,
+    peer_sort: PeerSort,
+    on_sort: EventHandler<PeerSort>,
+    filter_key: String,
 ) -> Element {
+    let mut page = use_signal(|| 0_usize);
+    let mut previous = use_signal(|| (filter_key.clone(), peer_sort, mode));
+    if *previous.peek() != (filter_key.clone(), peer_sort, mode) {
+        previous.set((filter_key, peer_sort, mode));
+        page.set(0);
+    }
+    let count = rows.len();
+    let bounded = mode == NetworkMode::Discovery;
+    let page_size = if bounded { 50 } else { count.max(1) };
+    let last_page = count.saturating_sub(1) / page_size;
+    let current_page = (*page.read()).min(last_page);
+    let (start, end) = page_bounds(count, current_page, page_size);
+    let orders = [
+        PeerSort::Name,
+        PeerSort::Role,
+        PeerSort::Reachable,
+        PeerSort::Recent,
+        PeerSort::Interface,
+    ];
     let headings = match mode {
-        NetworkMode::Discovery => ["Peer", "Role", "Reachability", "Last heard", "Interface"],
+        NetworkMode::Discovery => {
+            ["Peer / destination", "Role", "Route evidence", "Last announced", "Route interface"]
+        }
         NetworkMode::Routes => ["Destination", "Next hop", "Hops", "Interface", "Observation"],
         NetworkMode::Links => ["Peer", "State", "RTT", "Observation", "Link"],
         NetworkMode::Interfaces => ["Interface", "Type", "State", "Sent", "Received"],
@@ -1623,13 +1719,21 @@ fn InventoryTable(
             caption { class: "sr-only", "Network inventory. Select a name to inspect its details." }
             thead {
                 tr {
-                    for heading in headings {
-                        th { scope: "col", "{heading}" }
+                    for (index, heading) in headings.iter().enumerate() {
+                        th { scope: "col",
+                            aria_sort: if bounded && peer_sort == orders[index] { if peer_sort == PeerSort::Recent { "descending" } else { "ascending" } } else { "none" },
+                            if bounded {
+                                button { class: "peer-sort-heading", onclick: move |_| on_sort.call(orders[index]),
+                                    "{heading}"
+                                    if peer_sort == orders[index] { if peer_sort == PeerSort::Recent { " ↓" } else { " ↑" } }
+                                }
+                            } else { "{heading}" }
+                        }
                     }
                 }
             }
             tbody {
-                for row in rows {
+                for row in rows.into_iter().skip(start).take(page_size) {
                     tr {
                         key: "{row.key}",
                         class:
@@ -1658,6 +1762,33 @@ fn InventoryTable(
                 }
             }
         }
+        if bounded {
+            div { class: "peer-pagination",
+                span { "{start + 1}–{end} of {count} destinations" }
+                button { class: "network-mode", disabled: current_page == 0, onclick: move |_| page.set(current_page.saturating_sub(1)), "Previous" }
+                button { class: "network-mode", disabled: current_page >= last_page, onclick: move |_| page.set(current_page + 1), "Next" }
+            }
+        }
+    }
+}
+
+fn page_bounds(count: usize, page: usize, size: usize) -> (usize, usize) {
+    let size = size.max(1);
+    let start = page.min(count.saturating_sub(1) / size) * size;
+    (start, (start + size).min(count))
+}
+
+fn bounded_progress(value: f64) -> f64 {
+    if value.is_finite() { value.clamp(0.0, 1.0) } else { 0.0 }
+}
+
+fn route_matches(row: &InventoryRow, filter: &str) -> bool {
+    let evidence = row.cells.get(1).map(String::as_str).unwrap_or("");
+    match filter {
+        "link" => evidence == "Link active",
+        "route" => matches!(evidence, "Link active" | "Route known"),
+        "none" => evidence == "No current route",
+        _ => true,
     }
 }
 
@@ -1681,10 +1812,12 @@ fn status_matches(peer: &PeerEntry, filter: StatusFilter) -> bool {
 }
 
 fn freshness_matches(peer: &PeerEntry, filter: FreshnessFilter, now: i64) -> bool {
-    match (filter, peer.last_announce) {
+    match (filter, peer.last_announce.filter(|time| *time > 0 && *time <= now)) {
         (FreshnessFilter::All, _) => true,
         (FreshnessFilter::Unknown, None) => true,
         (FreshnessFilter::Recent, Some(timestamp)) => now.saturating_sub(timestamp) < 3600,
+        (FreshnessFilter::Day, Some(timestamp)) => now.saturating_sub(timestamp) < 86400,
+        (FreshnessFilter::Week, Some(timestamp)) => now.saturating_sub(timestamp) < 604800,
         (FreshnessFilter::Stale, Some(timestamp)) => now.saturating_sub(timestamp) >= 3600,
         _ => false,
     }
@@ -1711,6 +1844,8 @@ fn parse_status(value: &str) -> StatusFilter {
 fn parse_freshness(value: &str) -> FreshnessFilter {
     match value {
         "recent" => FreshnessFilter::Recent,
+        "day" => FreshnessFilter::Day,
+        "week" => FreshnessFilter::Week,
         "stale" => FreshnessFilter::Stale,
         "unknown" => FreshnessFilter::Unknown,
         _ => FreshnessFilter::All,
@@ -1763,6 +1898,51 @@ mod tests {
     }
 
     #[test]
+    fn announce_windows_reject_unknown_and_future_times() {
+        for timestamp in [None, Some(0), Some(-1), Some(100_001)] {
+            let value = peer(PeerRole::Rns, "online", timestamp);
+            assert!(freshness_matches(&value, FreshnessFilter::Unknown, 100_000));
+            for window in [FreshnessFilter::Recent, FreshnessFilter::Day, FreshnessFilter::Week] {
+                assert!(!freshness_matches(&value, window, 100_000));
+            }
+        }
+        let value = peer(PeerRole::Rns, "online", Some(20_000));
+        assert!(freshness_matches(&value, FreshnessFilter::Day, 100_000));
+        assert!(!freshness_matches(&value, FreshnessFilter::Recent, 100_000));
+    }
+
+    #[test]
+    fn route_filter_does_not_infer_routes_from_reported_online_status() {
+        let value = peer(PeerRole::PageHost, "online", Some(900));
+        let rows = inventory_rows(&[value], &[], &[], &[], 1000);
+        let row = &rows[0];
+        assert!(route_matches(row, "none"));
+        assert!(!route_matches(row, "route"));
+        assert!(!route_matches(row, "link"));
+        let mut linked = row.clone();
+        linked.cells[1] = "Link active".into();
+        assert!(route_matches(&linked, "route"));
+        assert!(route_matches(&linked, "link"));
+    }
+
+    #[test]
+    fn pagination_is_bounded_when_inventory_shrinks() {
+        assert_eq!(page_bounds(1031, 0, 50), (0, 50));
+        assert_eq!(page_bounds(1031, 20, 50), (1000, 1031));
+        assert_eq!(page_bounds(3, 20, 50), (0, 3));
+        assert_eq!(page_bounds(0, 20, 50), (0, 0));
+    }
+
+    #[test]
+    fn activity_progress_tolerates_invalid_observations() {
+        assert_eq!(bounded_progress(f64::NAN), 0.0);
+        assert_eq!(bounded_progress(f64::INFINITY), 0.0);
+        assert_eq!(bounded_progress(-1.0), 0.0);
+        assert_eq!(bounded_progress(2.0), 1.0);
+        assert_eq!(bounded_progress(0.5), 0.5);
+    }
+
+    #[test]
     fn peer_search_includes_identity_and_capabilities() {
         let mut value = peer(PeerRole::Rns, "", None);
         value.identity_hash = Some("abc123identity".into());
@@ -1790,9 +1970,9 @@ mod tests {
         };
         let mut rows = inventory_rows(&peers, &[path.clone()], &[], &[], 1000);
         rows.retain(|row| row.mode == NetworkMode::Discovery);
-        sort_peer_rows(&mut rows, &peers, PeerSort::Reachable);
+        sort_peer_rows(&mut rows, &peers, PeerSort::Reachable, 1000);
         assert_eq!(rows[0].destination, "routed");
-        sort_peer_rows(&mut rows, &peers, PeerSort::Recent);
+        sort_peer_rows(&mut rows, &peers, PeerSort::Recent, 1000);
         assert_eq!(rows[0].destination, "recent");
         path.expires = Some(1000);
         let rows = inventory_rows(&peers, &[path], &[], &[], 1000);

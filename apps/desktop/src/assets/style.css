@@ -3181,3 +3181,27 @@ body {
 .download-details summary { cursor: pointer; }
 .download-details dl { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 6px 12px; margin-top: 10px; }
 .download-details dd { margin: 0; overflow-wrap: anywhere; }
+
+/* Peer directory and network activity */
+.peer-filter-grid { order: 3; flex: 1 0 100%; display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px 16px; padding-top: 8px; }
+.peer-filter-grid label { display: flex; flex-direction: column; gap: 5px; color: var(--text-muted); font-size: 12px; }
+.network-filter-bar .peer-filter-grid input, .peer-filter-grid select { min-width: 0; width: 100%; min-height: 34px; box-sizing: border-box; }
+.peer-sort-heading { border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; padding: 0; text-align: left; cursor: pointer; }
+.peer-sort-heading:hover, .peer-sort-heading:focus-visible { color: var(--accent); }
+.network-table td { padding: 10px 20px; }
+.network-peer-address { font-size: 11px; margin-top: 3px; }
+.peer-pagination { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 20px; border-top: 1px solid var(--border); background: var(--bg-secondary, #171c22); position: sticky; bottom: 0; }
+.peer-pagination span { margin-right: auto; font-size: 12px; color: var(--text-muted); }
+.network-observation { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; }
+.network-observation > strong { min-width: 130px; }
+.network-observation > span { color: var(--text-muted); }
+.network-observation > button { margin-left: auto; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; font: inherit; }
+.network-observation > button:hover { border-color: var(--accent); }
+.network-observation > button:disabled { opacity: .45; cursor: not-allowed; }
+.network-observation-details { order: 3; flex-basis: 100%; color: var(--text-muted); font-size: 11px; }
+.network-observation-details summary { width: fit-content; font-size: 12px; cursor: pointer; }
+.network-observation-details code { display: block; margin: 6px 0; }
+.network-observation-progress { width: 120px; height: 5px; accent-color: var(--accent); }
+@media (max-width: 850px) { .peer-filter-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); } }
+.network-peers-page .network-table td { padding-top: 8px; padding-bottom: 8px; }
+.network-peers-page .network-filter-bar .peer-filter-grid input { width: 100%; }
