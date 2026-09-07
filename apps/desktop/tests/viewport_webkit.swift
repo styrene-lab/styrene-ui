@@ -62,7 +62,7 @@ let html = """
 body { height:500px; } .peer-detail { width:650px; height:450px; }
 </style></head><body><div class="peer-detail"><button hidden class="chat-jump-latest">Latest</button>
 <div class="chat-area" id="chat-viewport"><div class="message-stream"></div></div></div>
-<script>\(script)</script></body></html>
+<script>(async () => {\(script)})();</script></body></html>
 """
 web.loadHTMLString(html, baseURL: nil)
 window.orderFront(nil)

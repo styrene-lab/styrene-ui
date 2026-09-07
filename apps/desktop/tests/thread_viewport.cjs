@@ -1,6 +1,6 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {scrollIntent, timestampLabel} = require('../src/assets/thread_viewport.js');
+const {scrollIntent, timestampLabel, shouldMarkRead} = require('../src/assets/thread_viewport.js');
 
 test('opening a populated thread anchors to the newest message', () => {
   assert.equal(scrollIntent(null, {id:'a', outgoing:false}, false), 'latest');
@@ -29,4 +29,13 @@ test('recency changes at the minute and hour boundaries', () => {
   assert.equal(timestampLabel(0,now), 'Time unavailable');
   assert.equal(timestampLabel(NaN,now), 'Time unavailable');
   assert.doesNotMatch(timestampLabel(now+3600,now,'en-US'), /ago/);
+});
+
+test('only a focused visible latest incoming message is marked read', () => {
+  const context = {pinned:true, focused:true, visible:true, modal:false, incomingId:'m1', reportedId:null};
+  assert.equal(shouldMarkRead(context), true);
+  for (const change of [{pinned:false},{focused:false},{visible:false},{modal:true},{incomingId:null},{reportedId:'m1'}]) {
+    assert.equal(shouldMarkRead({...context,...change}), false);
+  }
+  assert.equal(shouldMarkRead({...context,incomingId:'m2',reportedId:'m1'}), true);
 });

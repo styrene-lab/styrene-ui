@@ -215,6 +215,11 @@ fn App() -> Element {
                                     }
                                     _ => None,
                                 };
+                                let refresh_conversations = matches!(
+                                    &ev,
+                                    daemon_bridge::DaemonEvent::MessageReceived(_)
+                                        | daemon_bridge::DaemonEvent::MessagingOperation(_)
+                                );
                                 let refresh_paths =
                                     matches!(&ev, daemon_bridge::DaemonEvent::RouteLifecycle(_));
                                 let reconcile_requests = matches!(
@@ -240,6 +245,13 @@ fn App() -> Element {
                                 }
                                 if !applied {
                                     continue;
+                                }
+                                if refresh_conversations {
+                                    let _ = tx_init.try_send(
+                                        daemon_bridge::DaemonCommand::LoadConversations {
+                                            cursor: None,
+                                        },
+                                    );
                                 }
                                 if refresh_paths {
                                     let _ = tx_init
@@ -719,17 +731,36 @@ fn App() -> Element {
                                         .unwrap_or_else(|| peer_hash[..8].to_string());
                                     let ph = peer_hash.clone();
                                     rsx! {
-                                        div { class: "peer-detail", key: "{peer_hash}",
+                                        div { class: "peer-detail", key: "{peer_hash}:{view.runtime.generation.0}",
                                             div { class: "chat-header",
                                                 h2 { "{peer_name}" }
                                                 p { class: "peer-hash", "{peer_hash}" }
                                             }
+                                            if let Some((failed_peer, error)) = &view.messages.read_error {
+                                                if failed_peer == peer_hash {
+                                                    p { class: "control-disabled-reason", "Could not mark this conversation read: {error}" }
+                                                    button { class: "load-older", onclick: {
+                                                        let peer = peer_hash.clone();
+                                                        move |_| send_cmd(daemon_bridge::DaemonCommand::MarkRead { peer_hash: peer.clone() })
+                                                    }, "Retry marking read" }
+                                                }
+                                            }
                                             button { class: "chat-jump-latest", hidden: true, r#type: "button", "Jump to latest messages ↓" }
                                             div { class: "chat-area", id: "chat-viewport",
-                                                onmounted: move |_| {
+                                                onmounted: {
+                                                    let peer = peer_hash.clone();
+                                                    move |_| {
+                                                    let peer = peer.clone();
                                                     spawn(async move {
-                                                        let _ = document::eval(include_str!("assets/thread_viewport.js")).join::<()>().await;
+                                                        let mounted_generation = stores.read().runtime.generation;
+                                                        let mut viewport = document::eval(include_str!("assets/thread_viewport.js"));
+                                                        while let Ok(_message_id) = viewport.recv::<String>().await {
+                                                            if stores.read().runtime.generation == mounted_generation {
+                                                                send_cmd(daemon_bridge::DaemonCommand::MarkRead { peer_hash: peer.clone() });
+                                                            }
+                                                        }
                                                     });
+                                                    }
                                                 },
                                                 div { class: "message-stream",
                                                 for msg in view.messages.messages.iter().filter(|m|
@@ -1650,6 +1681,20 @@ async fn handle_ui_command(
                 }
                 Err(error) => stores.write().fail_standard_propagation(generation, error),
             }
+        }
+        daemon_bridge::DaemonCommand::MarkRead { peer_hash } => {
+            let result = match bridge.mark_read(&peer_hash).await {
+                Ok(outcome) => match outcome.conversation {
+                    Some(conversation) => Ok(conversation),
+                    None => bridge.conversations().await.and_then(|items| {
+                        items.into_iter().find(|c| c.peer_hash == peer_hash).ok_or_else(|| {
+                            "Daemon did not report this conversation after marking it read".into()
+                        })
+                    }),
+                },
+                Err(error) => Err(error),
+            };
+            stores.write().acknowledge_read(generation, &peer_hash, result);
         }
         daemon_bridge::DaemonCommand::LoadConversations { cursor } => {
             match bridge.conversation_page(cursor.as_deref()).await {

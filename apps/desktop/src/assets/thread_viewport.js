@@ -16,15 +16,31 @@ function timestampLabel(timestamp, now = Date.now()/1000, locale) {
     hour:'numeric', minute:'2-digit'
   }).format(date);
 }
+function shouldMarkRead({pinned, focused, visible, modal, incomingId, reportedId}) {
+  return pinned && focused && visible && !modal && Boolean(incomingId) && incomingId !== reportedId;
+}
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {scrollIntent, timestampLabel};
-} else {
+  module.exports = {scrollIntent, timestampLabel, shouldMarkRead};
+} else { return mountViewport(); }
+async function mountViewport() {
   const viewport = document.getElementById('chat-viewport');
   if (viewport && !viewport.dataset.scrollBound) {
     viewport.dataset.scrollBound = 'true';
     const stream = viewport.querySelector('.message-stream');
     const jump = viewport.parentElement.querySelector('.chat-jump-latest');
     let pinned = true, previousLastId = null, anchor = null, anchorTop = 0, frame = 0;
+    let reportedId = null;
+    const reportVisible = () => {
+      const incoming = [...stream.querySelectorAll('.message-item[data-outgoing="false"]')].at(-1);
+      const incomingId = incoming?.dataset.messageId;
+      if (typeof dioxus !== 'undefined' && shouldMarkRead({pinned, focused:document.hasFocus(), visible:document.visibilityState === 'visible', modal:Boolean(document.querySelector('dialog[open]')), incomingId, reportedId})) {
+        dioxus.send(incomingId);
+        reportedId = incomingId;
+      }
+    };
+    const onFocus = () => { reportedId = null; reportVisible(); };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
     const messages = () => [...stream.querySelectorAll('.message-item')];
     const remember = () => {
       const top = viewport.getBoundingClientRect().top;
@@ -62,12 +78,14 @@ if (typeof module !== 'undefined' && module.exports) {
       }
       previousLastId = last?.id ?? null;
       updateTimes();
+      reportVisible();
     };
     const schedule = () => { if (!frame) frame = requestAnimationFrame(reconcile); };
     const onScroll = () => {
       pinned = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop < 48;
       if (pinned && jump) jump.hidden = true;
       remember();
+      reportVisible();
     };
     viewport.addEventListener('scroll', onScroll, {passive:true});
     jump?.addEventListener('click', latest);
@@ -79,15 +97,22 @@ if (typeof module !== 'undefined' && module.exports) {
     resize.observe(stream);
     resize.observe(viewport);
     const timer = setInterval(updateTimes, 30000);
+    let release;
+    const lifetime = new Promise(resolve => { release = resolve; });
     const removal = new MutationObserver(() => {
       if (!viewport.isConnected) {
         changes.disconnect(); resize.disconnect(); removal.disconnect();
         clearInterval(timer); cancelAnimationFrame(frame);
         viewport.removeEventListener('scroll', onScroll);
         jump?.removeEventListener('click', latest);
+        window.removeEventListener('focus', onFocus);
+        document.removeEventListener('visibilitychange', onFocus);
+        release();
       }
     });
     removal.observe(document.body, {childList:true, subtree:true});
     schedule();
+    await lifetime;
   }
+  return null;
 }

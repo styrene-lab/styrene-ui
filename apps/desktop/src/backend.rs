@@ -205,6 +205,12 @@ pub trait BackendSession: Send + Sync {
         peer_hash: &str,
         content: &str,
     ) -> Result<styrene_ipc::types::ConversationDraft, String>;
+    async fn mark_read(
+        &self,
+        _peer_hash: &str,
+    ) -> Result<styrene_ipc::types::MessagingOperationOutcome, String> {
+        Err("This session does not support marking conversations read".into())
+    }
     async fn discard_draft(&self, peer_hash: &str) -> Result<(), String>;
     async fn retry_message(
         &self,
@@ -440,6 +446,12 @@ impl BackendSession for IpcBackend {
         self.broker.save_draft(peer_hash, content).await
     }
 
+    async fn mark_read(
+        &self,
+        peer_hash: &str,
+    ) -> Result<styrene_ipc::types::MessagingOperationOutcome, String> {
+        self.broker.mark_read(peer_hash).await
+    }
     async fn discard_draft(&self, peer_hash: &str) -> Result<(), String> {
         self.broker.discard_draft(peer_hash).await
     }

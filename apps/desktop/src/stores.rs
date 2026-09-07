@@ -67,6 +67,7 @@ pub struct NetworkStore {
 #[derive(Clone, Debug, Default)]
 pub struct MessageStore {
     pub conversations: Vec<state::ConversationEntry>,
+    pub read_error: Option<(String, String)>,
     pub messages: Vec<state::ChatMessage>,
     pub state: DataState,
     pub conversation_cursor: Option<String>,
@@ -778,6 +779,35 @@ impl DomainStores {
             None => {
                 self.messages.drafts.remove(peer_hash);
             }
+        }
+    }
+
+    pub fn acknowledge_read(
+        &mut self,
+        generation: ConnectionGeneration,
+        peer: &str,
+        result: Result<styrene_ipc::types::ConversationInfo, String>,
+    ) {
+        if !self.accepts(generation) {
+            return;
+        }
+        match result {
+            Ok(conversation) if conversation.peer_hash == peer => {
+                self.messages.read_error = None;
+                // Preserve pagination and other conversations; do not synthesize a zero.
+                if let Some(existing) =
+                    self.messages.conversations.iter_mut().find(|c| c.peer_hash == peer)
+                {
+                    existing.unread_count = conversation.unread_count;
+                }
+            }
+            Ok(_) => {
+                self.messages.read_error = Some((
+                    peer.into(),
+                    "Read acknowledgement identified a different conversation".into(),
+                ))
+            }
+            Err(error) => self.messages.read_error = Some((peer.into(), error)),
         }
     }
 
@@ -1716,6 +1746,36 @@ fn link_info(event: styrene_ipc::types::LinkEvent) -> state::LinkInfo {
 mod tests {
     use super::*;
     use styrene_ipc::types::{DeviceInfo, ObservationMetadata};
+
+    #[test]
+    fn read_acknowledgement_is_authoritative_and_generation_scoped() {
+        let mut store = stores();
+        let entry = state::ConversationEntry {
+            peer_hash: "peer".into(),
+            peer_name: None,
+            last_message: None,
+            last_timestamp: None,
+            unread_count: 7,
+            message_count: 7,
+            pinned: false,
+            muted: false,
+        };
+        store.messages.conversations.push(entry);
+        store.acknowledge_read(ConnectionGeneration(2), "peer", Err("offline".into()));
+        assert_eq!(store.messages.conversations[0].unread_count, 7);
+        assert!(store.messages.read_error.is_some());
+        let mut conversation = styrene_ipc::types::ConversationInfo::default();
+        conversation.peer_hash = "peer".into();
+        conversation.unread_count = 2;
+        store.acknowledge_read(ConnectionGeneration(1), "peer", Ok(conversation.clone()));
+        assert_eq!(store.messages.conversations[0].unread_count, 7);
+        store.acknowledge_read(ConnectionGeneration(2), "peer", Ok(conversation.clone()));
+        assert_eq!(store.messages.conversations[0].unread_count, 2, "never invent a zero");
+        conversation.unread_count = 0;
+        store.acknowledge_read(ConnectionGeneration(2), "peer", Ok(conversation));
+        assert_eq!(store.messages.conversations[0].unread_count, 0);
+        assert!(store.messages.read_error.is_none());
+    }
 
     #[test]
     fn download_polling_stops_at_completion_and_commands_follow_current_session_and_id() {
