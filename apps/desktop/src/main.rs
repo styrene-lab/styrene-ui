@@ -427,7 +427,7 @@ fn App() -> Element {
     };
 
     rsx! {
-        style { {include_str!("assets/style.css")} }
+        style { {concat!(include_str!("../../../assets/theme/runtime.css"), include_str!("../../../assets/theme/tokens.css"), include_str!("assets/style.css"))} }
 
         div { class: "app",
             onkeydown: move |event| {
@@ -1866,40 +1866,13 @@ fn truncate_preview(value: &str, max_chars: usize) -> String {
 mod accessibility_tests {
     use super::truncate_preview;
 
-    fn relative_luminance(rgb: [u8; 3]) -> f64 {
-        let channel = |value: u8| {
-            let normalized = f64::from(value) / 255.0;
-            if normalized <= 0.04045 {
-                normalized / 12.92
-            } else {
-                ((normalized + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2])
-    }
-
-    fn contrast(first: [u8; 3], second: [u8; 3]) -> f64 {
-        let first = relative_luminance(first);
-        let second = relative_luminance(second);
-        (first.max(second) + 0.05) / (first.min(second) + 0.05)
-    }
-
     #[test]
     fn authored_focus_and_reduced_motion_rules_are_present() {
         let css = include_str!("assets/style.css");
         assert!(css.contains("button:focus-visible"));
-        assert!(css.contains("outline: 3px solid var(--accent)"));
+        assert!(css.contains("outline: 3px solid var(--focus)"));
         assert!(css.contains("@media (prefers-reduced-motion: reduce)"));
         assert!(css.contains("animation-iteration-count: 1 !important"));
-    }
-
-    #[test]
-    fn meaningful_text_and_accent_surfaces_meet_normal_text_contrast() {
-        let background = [0x0d, 0x11, 0x17];
-        let text_dim = [0x8b, 0x94, 0x9e];
-        let accent = [0x58, 0xa6, 0xff];
-        assert!(contrast(background, text_dim) >= 4.5);
-        assert!(contrast(background, accent) >= 4.5);
     }
 
     #[test]

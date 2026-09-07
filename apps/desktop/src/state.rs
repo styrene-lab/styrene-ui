@@ -235,7 +235,7 @@ impl GraphNodeType {
 impl GraphNode {
     /// Neutral fill leaves operational state to the outline.
     pub fn color(&self) -> &'static str {
-        "#171c22"
+        "var(--surface)"
     }
 
     pub fn radius(&self) -> f64 {
@@ -244,9 +244,11 @@ impl GraphNode {
 
     pub fn border_color(&self) -> &'static str {
         match self.node_type {
-            GraphNodeType::Local | GraphNodeType::Summary | GraphNodeType::Unknown => "#9aa8b8",
-            _ if self.node_type.is_online() => "#56d364",
-            _ => "#9aa8b8",
+            GraphNodeType::Local | GraphNodeType::Summary | GraphNodeType::Unknown => {
+                "var(--text-muted)"
+            }
+            _ if self.node_type.is_online() => "var(--signal)",
+            _ => "var(--text-muted)",
         }
     }
 

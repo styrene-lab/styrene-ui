@@ -1,50 +1,6 @@
 :root {
-  color-scheme: light dark;
   font-family: var(--font-interface);
   font-synthesis: none;
-
-  /* Typography */
-  --font-interface: "Arial Narrow", "Roboto Condensed", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-  --font-technical: ui-monospace, "SFMono-Regular", "Cascadia Mono", monospace;
-
-  /* Surfaces and content */
-  --canvas: #e6e2d3;
-  --surface: #f1eee3;
-  --surface-raised: #f9f7ef;
-  --ink: #0f1712;
-  --ink-muted: #4b564f;
-  --line: #7c827a;
-  --line-strong: #4a554d;
-  --accent: #c0481f;
-  --accent-ink: #ffffff;
-  --signal: #2c6b3c;
-  --signal-soft: #d9e6cf;
-  --warning: #7a4b0a;
-  --warning-soft: #f3e3b8;
-  --warning-line: #a7782c;
-  --danger: #8f2a20;
-  --danger-soft: #f1dbd5;
-  --danger-line: #b3574c;
-  --focus: #0a6fa3;
-  --navigation: #0b0f0d;
-  --navigation-ink: #a9b3a6;
-  --navigation-active: #c0481f;
-  --navigation-active-ink: #ffffff;
-  --texture-ink: rgb(15 23 18 / 3.5%);
-
-  /* Shape and interaction sizing. Field-kit surfaces are hard-edged and
-     unelevated: every radius is zero and no component casts a shadow. The
-     tokens stay declared because the contract and the high-contrast query
-     hook into them. */
-  --stroke: 0.0625rem;
-  --stroke-strong: 0.125rem;
-  --radius-control: 0;
-  --radius-panel: 0;
-  --radius-status: 0;
-  --shadow-panel: none;
-  --shadow-message: none;
-  --tick: 0.5rem;
-  --tick-ink: var(--line-strong);
   --size-touch-ios: 2.75rem;
   --size-touch-android: 3.25rem;
   --size-workspace-compact: 32rem;
@@ -240,8 +196,8 @@ label {
 }
 
 .primary-action {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: var(--primary);
+  background: var(--primary);
   color: var(--accent-ink);
 }
 
@@ -300,7 +256,7 @@ label {
   flex: 1 1 14rem;
   min-inline-size: 14rem;
   padding-inline-start: 0.6rem;
-  border-inline-start: 0.1875rem solid var(--accent);
+  border-inline-start: 0.1875rem solid var(--primary);
 }
 
 .app-kicker,
@@ -595,7 +551,7 @@ label {
 .unread-badge {
   min-inline-size: 1.75rem;
   padding-inline: 0.45rem;
-  background: var(--accent);
+  background: var(--primary);
   color: var(--accent-ink);
 }
 
@@ -698,7 +654,7 @@ label {
 .message-card[data-direction="outgoing"] {
   margin-inline-start: 12%;
   border-inline-start: var(--stroke) solid var(--line);
-  border-inline-end: 0.25rem solid var(--accent);
+  border-inline-end: 0.25rem solid var(--primary);
 }
 
 .message-context {
@@ -880,7 +836,7 @@ label {
   position: absolute;
   inset-block: 0;
   inline-size: 42%;
-  background: repeating-linear-gradient(135deg, var(--accent) 0 0.35rem, transparent 0.35rem 0.7rem);
+  background: repeating-linear-gradient(135deg, var(--primary) 0 0.35rem, transparent 0.35rem 0.7rem);
   animation: bluetooth-scan 1.15s ease-in-out infinite alternate;
 }
 
@@ -1209,31 +1165,6 @@ label {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --canvas: #070907;
-    --surface: #0d110e;
-    --surface-raised: #141a15;
-    --ink: #e3e7dc;
-    --ink-muted: #a3ae9f;
-    --line: #606662;
-    --line-strong: #8a978c;
-    --accent: #ff7a4a;
-    --accent-ink: #1f0c05;
-    --signal: #8fdc93;
-    --signal-soft: #15301a;
-    --warning: #f2cf7a;
-    --warning-soft: #33260a;
-    --warning-line: #9a7328;
-    --danger: #ff9f92;
-    --danger-soft: #3c1612;
-    --danger-line: #a85a50;
-    --focus: #62c3ff;
-    --navigation: #030504;
-    --navigation-ink: #9fa99b;
-    --navigation-active: #ff7a4a;
-    --navigation-active-ink: #ffffff;
-    --texture-ink: rgb(143 220 147 / 4%);
-  }
 
   .hash-glyph {
     background: var(--navigation);
@@ -1820,8 +1751,8 @@ label {
 /* A send in flight reads as busy, not as disabled: the accent stays, the
    label changes, and the button cannot be tapped again. */
 .composer .primary-action[data-sending="true"] {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: var(--primary);
+  background: var(--primary);
   color: var(--accent-ink);
   opacity: 0.7;
   cursor: progress;
@@ -1931,8 +1862,8 @@ label {
 }
 
 .contact-toggle[aria-pressed="true"] {
-  border-color: var(--accent);
-  color: var(--accent);
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .contact-toggle:disabled {
@@ -1983,7 +1914,7 @@ label {
 }
 
 .delivery-preference button[aria-pressed="true"] {
-  background: var(--accent);
+  background: var(--primary);
   color: var(--accent-ink);
 }
 

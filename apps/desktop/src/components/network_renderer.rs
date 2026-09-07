@@ -103,7 +103,7 @@ pub(crate) fn GraphRenderer(
                                 let local = node.node_type == GraphNodeType::Local;
                                 let anchor = local || matches!(node.node_type, GraphNodeType::Interface { .. } | GraphNodeType::Summary | GraphNodeType::Remote { .. }) || route_sources.contains(&index);
                                 let label_offset = radius + if nodes.len() <= 100 || anchor { 14.0 / zoom.max(0.01) } else { 14.0 };
-                                let label_style = if nodes.len() <= 100 || anchor { format!("font-size: {}px; paint-order: stroke; stroke: #0e1319; stroke-width: {}px;", 12.0 / zoom.max(0.01), 3.0 / zoom.max(0.01)) } else { String::new() };
+                                let label_style = if nodes.len() <= 100 || anchor { format!("font-size: {}px; paint-order: stroke; stroke: var(--background); stroke-width: {}px;", 12.0 / zoom.max(0.01), 3.0 / zoom.max(0.01)) } else { String::new() };
                                 let custom_path = node.shape_path(x, y);
                                 let tooltip_label = label.clone();
                                 let tooltip_hash = node.id.clone();
@@ -167,7 +167,7 @@ pub(crate) fn GraphRenderer(
                                         if is_selected {
                                             circle {
                                                 cx: "{x}", cy: "{y}", r: "{radius + 6.0}", fill: "none",
-                                                stroke: "#f0f6fc",
+                                                stroke: "var(--focus)",
                                                 stroke_opacity: "1",
                                                 stroke_width: "2",
                                                 vector_effect: "non-scaling-stroke",
@@ -192,10 +192,10 @@ pub(crate) fn GraphRenderer(
                                         }
                                         if let Some(glyph) = icon {
                                             rect { x: "{x + 6.0}", y: "{y - 17.0}", width: "14", height: "14", rx: "3",
-                                                fill: "#171c22", stroke: "#9aa8b8", stroke_width: "1", vector_effect: "non-scaling-stroke" }
+                                                fill: "var(--surface)", stroke: "var(--text-muted)", stroke_width: "1", vector_effect: "non-scaling-stroke" }
                                             text {
                                                 x: "{x + 13.0}", y: "{y - 7.0}", text_anchor: "middle",
-                                                fill: "white", font_size: "10", font_weight: "bold",
+                                                fill: "var(--text)", font_size: "10", font_weight: "bold",
                                                 pointer_events: "none", "{glyph}"
                                             }
                                         }
@@ -249,8 +249,8 @@ pub(crate) fn MapLegend() -> Element {
                         rsx! { span { class: "network-key-item",
                             svg { view_box: "-18 -16 36 32", "aria-hidden": "true",
                                 if let Some(path) = node.shape_path(0.0, 0.0) {
-                                    path { d: "{path}", fill: "#171c22", stroke: "#9aa8b8", stroke_width: "2" }
-                                } else { circle { r: "11", fill: "#171c22", stroke: "#9aa8b8", stroke_width: "2" } }
+                                    path { d: "{path}", fill: "var(--surface)", stroke: "var(--text-muted)", stroke_width: "2" }
+                                } else { circle { r: "11", fill: "var(--surface)", stroke: "var(--text-muted)", stroke_width: "2" } }
                             }
                             "{label}"
                         } }
